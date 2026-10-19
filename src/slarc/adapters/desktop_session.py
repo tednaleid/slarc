@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable, Mapping
 from contextlib import closing
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from slarc.adapters.chromium import (
@@ -82,22 +83,32 @@ def copy_leveldb(source_dir: Path, target_dir: Path) -> None:
             shutil.copyfile(path, target_dir / path.name)
 
 
-def secret_service_passwords() -> list[bytes]:
-    """Return the Slack Safe Storage key from the Secret Service, or nothing if unavailable."""
+@dataclass(frozen=True)
+class SecretServiceResult:
+    """Slack Safe Storage keys found, and whether the Secret Service was locked or unreachable."""
+
+    passwords: list[bytes] = field(repr=False)
+    refused: bool
+
+
+def secret_service_passwords() -> SecretServiceResult:
     try:
         secretstorage = importlib.import_module("secretstorage")
     except ImportError:
-        return []
+        return SecretServiceResult([], refused=True)
+    locked = False
     try:
         with closing(secretstorage.dbus_init()) as connection:
             for attributes in SECRET_SERVICE_QUERIES:
                 for item in secretstorage.search_items(connection, attributes):
-                    if not item.is_locked():
-                        return [item.get_secret()]
+                    if item.is_locked():
+                        locked = True
+                    else:
+                        return SecretServiceResult([item.get_secret()], refused=False)
     except Exception:
-        # Any Secret Service failure leaves the fixed Linux password as the only candidate.
-        return []
-    return []
+        # D-Bus and Secret Service failures surface as many exception types; all mean unreachable.
+        return SecretServiceResult([], refused=True)
+    return SecretServiceResult([], refused=locked)
 
 
 class DesktopSessionSource:
@@ -110,7 +121,7 @@ class DesktopSessionSource:
         run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
         *,
         env: Mapping[str, str] = os.environ,
-        secret_lookup: Callable[[], list[bytes]] = secret_service_passwords,
+        secret_lookup: Callable[[], SecretServiceResult] = secret_service_passwords,
     ) -> None:
         self._home = home
         self._platform = platform
@@ -142,11 +153,14 @@ class DesktopSessionSource:
         return list(by_team.values())
 
     def _read_cookie(self, data_dir: Path) -> str:
+        keychain_refused = False
         if self._platform == "darwin":
             passwords, iterations = self._keychain_passwords(), MACOS_ITERATIONS
         else:
-            passwords = [*self._secret_lookup(), LINUX_FIXED_PASSWORD]
+            lookup = self._secret_lookup()
+            passwords = [*lookup.passwords, LINUX_FIXED_PASSWORD]
             iterations = LINUX_ITERATIONS
+            keychain_refused = lookup.refused
         cookies = next(
             (data_dir / c for c in COOKIES_CANDIDATES if (data_dir / c).is_file()),
             data_dir / COOKIES_CANDIDATES[0],
@@ -155,6 +169,8 @@ class DesktopSessionSource:
             return read_d_cookie(cookies, passwords, iterations)
         except ValueError as error:
             step = COOKIE_STEPS.get(str(error), COOKIES_UNREADABLE)
+            if step == DECRYPT_FAILED and keychain_refused:
+                step = KEYCHAIN_REFUSED
             raise CredentialReadError(SOURCE, step) from None
         except READ_ERRORS:
             raise CredentialReadError(SOURCE, COOKIES_UNREADABLE) from None

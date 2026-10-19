@@ -45,12 +45,14 @@ def session(team_id: str, source: str, xoxc: str = "xoxc-1") -> Session:
 
 def test_env_source_requires_both_values():
     with pytest.raises(CredentialReadError) as exc:
-        EnvSource({"SLARC_XOXC": "xoxc-secret", "SLARC_DOMAIN": "acme"}).sessions()
+        EnvSource({"SLARC_XOXC": "xoxc-secret"}).sessions()
     assert exc.value.source == "env"
     assert "SLARC_XOXD" in str(exc.value)
     assert "xoxc-secret" not in str(exc.value)
-    with pytest.raises(CredentialReadError):
-        EnvSource({"SLARC_XOXD": "xoxd-1", "SLARC_DOMAIN": "acme"}).sessions()
+    with pytest.raises(CredentialReadError) as exc:
+        EnvSource({"SLARC_XOXD": "xoxd-secret", "SLARC_DOMAIN": "acme"}).sessions()
+    assert "SLARC_XOXC" in str(exc.value)
+    assert "xoxd-secret" not in str(exc.value)
 
 
 def test_env_source_without_variables_has_no_sessions():
@@ -62,10 +64,9 @@ def test_env_source_names_workspace_by_domain():
     assert EnvSource(env).sessions() == [Session("", "acme", "", "env", "xoxc-1", "xoxd-1")]
 
 
-def test_env_source_requires_domain():
-    with pytest.raises(CredentialReadError) as exc:
-        EnvSource({"SLARC_XOXC": "xoxc-1", "SLARC_XOXD": "xoxd-1"}).sessions()
-    assert "SLARC_DOMAIN" in str(exc.value)
+def test_env_source_without_domain_applies_to_any_workspace():
+    env = {"SLARC_XOXC": "xoxc-1", "SLARC_XOXD": "xoxd-1"}
+    assert EnvSource(env).sessions() == [Session("", "", "", "env", "xoxc-1", "xoxd-1")]
 
 
 def test_keyring_store_and_read_round_trip():

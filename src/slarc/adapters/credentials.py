@@ -19,7 +19,7 @@ KEYCHAIN_INDEX = "teams"
 
 
 class EnvSource:
-    """A session from SLARC_XOXC and SLARC_XOXD for the workspace SLARC_DOMAIN names."""
+    """A session from SLARC_XOXC and SLARC_XOXD, for SLARC_DOMAIN or any workspace if unset."""
 
     source = ENV_SOURCE
 
@@ -27,16 +27,16 @@ class EnvSource:
         self._env = env
 
     def sessions(self) -> list[Session]:
-        names = (ENV_XOXC, ENV_XOXD, ENV_DOMAIN)
+        names = (ENV_XOXC, ENV_XOXD)
         missing = [name for name in names if not self._env.get(name)]
         if len(missing) == len(names):
             return []
         if missing:
-            raise CredentialReadError(ENV_SOURCE, f"{' and '.join(missing)} not set")
+            raise CredentialReadError(ENV_SOURCE, f"{missing[0]} not set")
         return [
             Session(
                 team_id="",
-                domain=self._env[ENV_DOMAIN],
+                domain=self._env.get(ENV_DOMAIN, ""),
                 name="",
                 source=ENV_SOURCE,
                 xoxc=self._env[ENV_XOXC],

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from slarc.adapters.desktop_session import DesktopSessionSource
+from slarc.adapters.desktop_session import DesktopSessionSource, SecretServiceResult
 from slarc.ports import CredentialReadError, Session
 from tests.cookies_writer import encrypt, make_cookies_db
 from tests.leveldb_writer import write_log
@@ -151,7 +151,7 @@ def test_unreadable_local_storage_does_not_echo_contents(tmp_path: Path):
     with pytest.raises(CredentialReadError) as exc:
         source.sessions()
     assert exc.value.step == "Local Storage could not be read"
-    assert exc.value.__cause__ is None
+    assert exc.value.__suppress_context__ is True
     assert "xoxc-secret" not in str(exc.value)
 
 
@@ -159,7 +159,11 @@ def test_linux_source_uses_secret_service_then_peanuts(tmp_path: Path):
     teams = {"T1": team("xoxc-1", "one", "One")}
     write_slack_dir(tmp_path / ".config/Slack", teams, b"peanuts", 1)
     source = DesktopSessionSource(
-        tmp_path, "linux", run=FakeRun({}), env={}, secret_lookup=lambda: [b"stale"]
+        tmp_path,
+        "linux",
+        run=FakeRun({}),
+        env={},
+        secret_lookup=lambda: SecretServiceResult([b"stale"], refused=False),
     )
     assert [s.xoxd for s in source.sessions()] == [COOKIE]
 
@@ -171,7 +175,7 @@ def test_linux_source_prefers_xdg_config_home(tmp_path: Path):
         tmp_path,
         "linux",
         env={"XDG_CONFIG_HOME": str(tmp_path / "xdg")},
-        secret_lookup=lambda: [b"pw"],
+        secret_lookup=lambda: SecretServiceResult([b"pw"], refused=False),
     )
     assert [s.team_id for s in source.sessions()] == ["T1"]
 
@@ -179,5 +183,30 @@ def test_linux_source_prefers_xdg_config_home(tmp_path: Path):
 def test_linux_source_finds_flatpak_dir(tmp_path: Path):
     teams = {"T1": team("xoxc-1", "one", "One")}
     write_slack_dir(tmp_path / ".var/app/com.slack.Slack/config/Slack", teams, b"pw", 1)
-    source = DesktopSessionSource(tmp_path, "linux", env={}, secret_lookup=lambda: [b"pw"])
+    source = DesktopSessionSource(
+        tmp_path, "linux", env={}, secret_lookup=lambda: SecretServiceResult([b"pw"], refused=False)
+    )
     assert [s.team_id for s in source.sessions()] == ["T1"]
+
+
+def test_linux_locked_keyring_names_keychain_step(tmp_path: Path):
+    teams = {"T1": team("xoxc-1", "one", "One")}
+    write_slack_dir(tmp_path / ".config/Slack", teams, b"secret-service-key", 1)
+    source = DesktopSessionSource(
+        tmp_path, "linux", env={}, secret_lookup=lambda: SecretServiceResult([], refused=True)
+    )
+    with pytest.raises(CredentialReadError) as exc:
+        source.sessions()
+    assert exc.value.step == "keychain read refused"
+    assert "slarc auth --paste" in str(exc.value)
+
+
+def test_linux_missing_secret_with_wrong_peanuts_names_decrypt_step(tmp_path: Path):
+    teams = {"T1": team("xoxc-1", "one", "One")}
+    write_slack_dir(tmp_path / ".config/Slack", teams, b"secret-service-key", 1)
+    source = DesktopSessionSource(
+        tmp_path, "linux", env={}, secret_lookup=lambda: SecretServiceResult([], refused=False)
+    )
+    with pytest.raises(CredentialReadError) as exc:
+        source.sessions()
+    assert exc.value.step == "cookie did not decrypt"
