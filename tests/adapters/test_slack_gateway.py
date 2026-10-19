@@ -252,6 +252,14 @@ def test_gateway_reports_other_failures_as_slarc_errors():
         gateway.emoji()
 
 
+def test_gateway_reports_channel_errors_without_a_channel_as_slarc_errors():
+    gateway, _ = make_gateway(FakeWebApi(errors={"search.messages": "channel_not_found"}))
+    with pytest.raises(SlarcError) as exc:
+        list(gateway.search(f"in:<#{CHANNEL}>"))
+    assert type(exc.value) is SlarcError
+    assert str(exc.value) == "Slack returned channel_not_found for search.messages."
+
+
 def test_gateway_never_calls_mutating_methods():
     api = FakeWebApi()
     gateway, limiter = make_gateway(api)

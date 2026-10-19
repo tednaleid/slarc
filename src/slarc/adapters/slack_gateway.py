@@ -161,7 +161,7 @@ class SessionTokenGateway:
             raise SlarcError(f"Could not reach Slack to call {method}.") from None
 
     def _api_error(self, method: str, params: dict[str, Any], code: str | None) -> SlarcError:
-        if code in NOT_VISIBLE_ERRORS:
+        if code in NOT_VISIBLE_ERRORS and "channel" in params:
             return NotVisible(params["channel"])
         if code == "thread_not_found":
             return ThreadNotFound(params["channel"], params["ts"])

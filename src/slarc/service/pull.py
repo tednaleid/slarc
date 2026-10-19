@@ -436,13 +436,13 @@ class _PullRun:
         item: TrackedItem,
         view: DirectoryView,
     ) -> TrackedItem:
-        """Re-reads each thread search finds a message in since the day before the last search.
+        """Re-reads each thread search finds a message in since two days before the last search.
 
         last_search_at moves only when the search succeeds, so a failed one is retried.
         """
         searched_at = _now(self.uow)
         if item.last_search_at is not None:
-            since_date = _day_before(item.last_search_at)
+            since_date = _two_days_before(item.last_search_at)
             try:
                 threads = discover_reply_threads(connection.gateway, item.channel, since_date)
             except AuthFailed:
@@ -652,10 +652,14 @@ def _within(item: TrackedItem, stamps: set[str]) -> set[str]:
     }
 
 
-def _day_before(timestamp: str) -> str:
-    """The YYYY-MM-DD date in UTC of the day before a fetched_at timestamp."""
+def _two_days_before(timestamp: str) -> str:
+    """The YYYY-MM-DD date in UTC two days before a fetched_at timestamp.
+
+    Search's after: excludes the named date and reads it in the user's Slack timezone, so one
+    day of margin misses replies posted late in the day west of UTC.
+    """
     moment = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
-    return (moment - timedelta(days=1)).strftime("%Y-%m-%d")
+    return (moment - timedelta(days=2)).strftime("%Y-%m-%d")
 
 
 def _outermost(current: str | None, page: list[dict], *, newest: bool) -> str | None:

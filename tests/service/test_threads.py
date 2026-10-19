@@ -20,7 +20,7 @@ from tests.service.pull_harness import (
 )
 
 OTHER = "C0OTHER0001"
-FIRST_SEARCH = f"in:<#{CHANNEL}> after:2026-10-18"
+FIRST_SEARCH = f"in:<#{CHANNEL}> after:2026-10-17"
 NOW = datetime(2026, 10, 19, 13, 40, 11, tzinfo=UTC)
 
 
@@ -84,7 +84,7 @@ def test_new_reply_under_old_parent_found_by_search(h: Harness):
     assert item.last_search_at == "2026-10-19T14:40:11Z"
 
 
-def test_search_query_uses_last_search_date_minus_one_day(h: Harness):
+def test_search_query_uses_last_search_date_minus_two_days(h: Harness):
     h.serve([ts_on(18, 9)])
     h.pull(BASE)
     [item] = h.tracked()
@@ -95,7 +95,7 @@ def test_search_query_uses_last_search_date_minus_one_day(h: Harness):
     h.pull()
     h.pull()
 
-    assert search_calls(h) == [FIRST_SEARCH, f"in:<#{CHANNEL}> after:2026-10-20"]
+    assert search_calls(h) == [FIRST_SEARCH, f"in:<#{CHANNEL}> after:2026-10-19"]
 
 
 def test_active_threads_reread(h: Harness):
