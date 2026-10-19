@@ -37,6 +37,8 @@ TIM_AVATAR = "087e94c62cad8dfcddba69985fadf8ebfbbf7b4cb40440de4dc5b471ec22b33c"
 GIPHY_ICON_72 = "ba81bb4fb2e71c7f50e287551060940989b4f154f392bbf8aa5031ee508191c6"
 SEED_RED = "58740087ec4166d3a49129823287f4849866cc82328a5997f6d7ef96fea8800b"
 TED = "U0CA538UEN7"
+JIM = "U0CA61XJF2R"
+ITS_TRUE = "985b5d5aa6b5f64d2822b031a1f94f15ee2f46b5bd46282061e4dd2f0cc722da"
 SYNTHETIC = "1792500000.000100"
 LATER = "2026-10-20T00:00:00Z"
 LATER_RUN = "r_20261020T000000Z"
@@ -258,22 +260,72 @@ def test_tombstone_file_placeholder(archive, store, blobs) -> None:
     assert "(edited)" in message
 
 
+def reactions_html(message: str) -> str:
+    """The reactions row of one message's HTML."""
+    start = message.index('<div class="reactions">')
+    return message[start : message.index("</div>", start)]
+
+
 def test_reactions_grouped_by_base_name(archive, store, blobs) -> None:
     _, writer = run_export(archive, store, blobs, "#all-naleid")
     message = article(writer.text(OUT / f"{ALL_NALEID}.html"), ALL_NALEID, "1792410693.663869")
-    reactions = re.findall(
-        r'<span class="reaction" title="([^"]*)">(.*?<span class="count">\d+</span>)</span>',
-        message,
+    reactions = reactions_html(message)
+    assert reactions.count('<span class="reaction"') == 1
+    assert "\U0001f44b\U0001f3fc" in reactions
+    assert reactions.count('class="emoji"') == 4
+    assert '<span class="count">2</span>' in reactions
+
+
+def test_reaction_popup_names_each_variant(archive, store, blobs) -> None:
+    _, writer = run_export(archive, store, blobs, "#all-naleid")
+    message = article(writer.text(OUT / f"{ALL_NALEID}.html"), ALL_NALEID, "1792410693.663869")
+    reactions = reactions_html(message)
+    toned = "Ted Naleid reacted with :wave::skin-tone-3:"
+    plain = "Jim reacted with :wave:"
+    assert f'<span class="reaction-popup-line">{toned}</span>' in reactions
+    assert f'<span class="reaction-popup-line">{plain}</span>' in reactions
+    assert f'tabindex="0" role="img" aria-label="{toned}. {plain}"' in reactions
+    assert '<span class="reaction-popup" aria-hidden="true">' in reactions
+    assert "title=" not in reactions
+
+
+def test_reaction_popup_joins_names_and_shows_custom_emoji(archive, store, blobs) -> None:
+    _, writer = run_export(archive, store, blobs, "#all-naleid")
+    message = article(writer.text(OUT / f"{ALL_NALEID}.html"), ALL_NALEID, "1792410743.787639")
+    reactions = reactions_html(message)
+    assert reactions.count('<span class="reaction"') == 2
+    assert "Jim reacted with :100:" in reactions
+    assert "Jim and Ted Naleid reacted with :its-true-all-of-it:" in reactions
+    assert (
+        '<span class="reaction-popup-emoji"><img class="emoji" '
+        f'src="assets/{ITS_TRUE}.png" alt=":its-true-all-of-it:"></span>'
+    ) in reactions
+
+
+def test_reaction_popup_counts_others_and_escapes_names(archive, store, blobs) -> None:
+    append_line(
+        store, "user", {"id": "UXSS", "profile": {"display_name": "<script>x</script>"}}, id="UXSS"
     )
-    assert len(reactions) == 1
-    title, content = reactions[0]
-    assert "Jim" in title
-    assert "Ted Naleid" in title
-    assert ":wave:" in title
-    assert ":wave::skin-tone-3:" in title
-    assert "\U0001f44b\U0001f3fc" in content
-    assert content.count('class="emoji"') == 2
-    assert '<span class="count">2</span>' in content
+    append_message(
+        store,
+        {
+            "user": TED,
+            "text": ":tada: synthetic reactions",
+            "reactions": [
+                {"name": "eyes", "users": [TED, JIM, "UXSS"], "count": 5},
+                {"name": "tada", "users": [TED], "count": 2},
+            ],
+        },
+    )
+    _, writer = run_export(archive, store, blobs, "#slarc-fixtures")
+    message = article(writer.text(OUT / f"{FIXTURES}.html"), FIXTURES, SYNTHETIC)
+    reactions = reactions_html(message)
+    eyes = "Ted Naleid, Jim, &lt;script&gt;x&lt;/script&gt; and 2 others reacted with :eyes:"
+    assert f'<span class="reaction-popup-line">{eyes}</span>' in reactions
+    assert f'aria-label="{eyes}"' in reactions
+    assert "Ted Naleid and 1 other reacted with :tada:" in reactions
+    assert "<script>" not in message
+    assert '<span class="emoji" title=":tada:">' in message
 
 
 def test_named_dm_included(archive, store, blobs) -> None:

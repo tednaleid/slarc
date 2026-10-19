@@ -36,14 +36,16 @@ def render_mrkdwn_html(text: str, view: DirectoryView, assets: AssetResolver) ->
     return Markup(_PLACEHOLDER.sub(lambda m: held[int(m.group(1))], html))
 
 
-def emoji_html(name: str, render: EmojiRender) -> Markup:
-    title = f":{name}:"
+def emoji_html(name: str, render: EmojiRender, titled: bool = True) -> Markup:
+    """The emoji's markup, with a :name: tooltip unless titled is False."""
+    shortcode = f":{name}:"
+    title = Markup(' title="{}"').format(shortcode) if titled else Markup("")
     match render.kind:
         case "unicode":
-            return Markup('<span class="emoji" title="{}">{}</span>').format(title, render.value)
+            return Markup('<span class="emoji"{}>{}</span>').format(title, render.value)
         case "image":
-            return Markup('<img class="emoji" src="{}" alt="{}" title="{}">').format(
-                render.value, title, title
+            return Markup('<img class="emoji" src="{}" alt="{}"{}>').format(
+                render.value, shortcode, title
             )
         case _:
             return escape(render.value)

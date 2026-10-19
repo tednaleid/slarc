@@ -107,9 +107,16 @@ class Avatar:
 
 @dataclass(frozen=True)
 class Reaction:
+    """One pill: the emoji of every variant, their combined count, and one line per variant
+    saying who reacted with it."""
+
     emoji: list[Markup]
     count: int
-    title: str
+    lines: list[str]
+
+    @property
+    def label(self) -> str:
+        return ". ".join(self.lines)
 
 
 @dataclass(frozen=True)
@@ -621,20 +628,18 @@ class _Workspace:
                 groups.setdefault(name.split("::")[0], []).append(reaction)
         shown = []
         for variants in groups.values():
-            names = [variant["name"] for variant in variants]
-            user_ids = [u for v in variants for u in v.get("users") or [] if isinstance(u, str)]
-            people = list(dict.fromkeys(self.view.user_display(u) for u in user_ids))
-            count = sum(v["count"] if isinstance(v.get("count"), int) else 0 for v in variants)
-            shown.append(
-                Reaction(
-                    emoji=[
-                        emoji_html(name, resolve_emoji(name, self.view, self.assets.emoji_src))
-                        for name in names
-                    ],
-                    count=count or len(user_ids),
-                    title=f"{', '.join(people)} reacted with {' '.join(f':{n}:' for n in names)}",
-                )
-            )
+            emoji, lines, total = [], [], 0
+            for variant in variants:
+                name = variant["name"]
+                render = resolve_emoji(name, self.view, self.assets.emoji_src)
+                emoji.append(emoji_html(name, render, titled=False))
+                users = [u for u in variant.get("users") or [] if isinstance(u, str)]
+                count = variant.get("count")
+                count = max(count if isinstance(count, int) else 0, len(users))
+                total += count
+                names = [self.view.user_display(u) for u in users]
+                lines.append(f"{_reactors(names, count - len(users))} reacted with :{name}:")
+            shown.append(Reaction(emoji=emoji, count=total, lines=lines))
         return shown
 
     def attachments(self, message: dict) -> list[Attachment]:
@@ -743,6 +748,16 @@ def _image_extension(url: str, content_type: str | None) -> str:
 
 def _clock(moment: datetime) -> str:
     return moment.strftime("%I:%M %p").lstrip("0")
+
+
+def _reactors(names: list[str], others: int) -> str:
+    """names joined as "A", "A and B" or "A, B and C", ending with "and N others" when more
+    people reacted than the names list."""
+    if others > 0:
+        names = [*names, "1 other" if others == 1 else f"{others} others"]
+    if len(names) < 2:
+        return "".join(names)
+    return f"{', '.join(names[:-1])} and {names[-1]}"
 
 
 def _seconds(ts: str) -> int:

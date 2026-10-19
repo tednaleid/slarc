@@ -39,7 +39,7 @@
 {% if m.reactions %}
 <div class="reactions">
 {% for r in m.reactions %}
-<span class="reaction" title="{{ r.title }}">{% for e in r.emoji %}{{ e }}{% endfor %}<span class="count">{{ r.count }}</span></span>
+<span class="reaction" tabindex="0" role="img" aria-label="{{ r.label }}">{% for e in r.emoji %}{{ e }}{% endfor %}<span class="count">{{ r.count }}</span><span class="reaction-popup" aria-hidden="true"><span class="reaction-popup-emoji">{% for e in r.emoji %}{{ e }}{% endfor %}</span>{% for line in r.lines %}<span class="reaction-popup-line">{{ line }}</span>{% endfor %}</span></span>
 {% endfor %}
 </div>
 {% endif %}
