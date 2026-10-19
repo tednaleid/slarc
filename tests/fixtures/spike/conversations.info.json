@@ -1,0 +1,63 @@
+{
+ "ok": true,
+ "channel": {
+  "id": "C0CA5396G03",
+  "created": 1792410505,
+  "creator": "U0CA538UEN7",
+  "is_org_shared": false,
+  "is_im": false,
+  "context_team_id": "T0CB5LYPVFA",
+  "updated": 1792422363487,
+  "name": "all-naleid",
+  "name_normalized": "all-naleid",
+  "is_channel": true,
+  "is_group": false,
+  "is_mpim": false,
+  "is_private": false,
+  "is_archived": false,
+  "is_general": true,
+  "is_shared": false,
+  "is_ext_shared": false,
+  "unlinked": 0,
+  "is_pending_ext_shared": false,
+  "pending_shared": [],
+  "parent_conversation": null,
+  "purpose": {
+   "value": "Share announcements and updates about company news, upcoming events, or teammates who deserve some kudos. ⭐",
+   "creator": "U0CA538UEN7",
+   "last_set": 1792410505
+  },
+  "topic": {
+   "value": "",
+   "creator": "",
+   "last_set": 0
+  },
+  "shared_team_ids": [
+   "T0CB5LYPVFA"
+  ],
+  "pending_connected_team_ids": [],
+  "is_member": true,
+  "last_read": "1792422623.464629",
+  "properties": {
+   "tabs": [
+    {
+     "type": "files",
+     "label": "",
+     "id": "files"
+    }
+   ],
+   "tabz": [
+    {
+     "type": "files"
+    }
+   ],
+   "use_case": "welcome"
+  },
+  "is_thread_only": false,
+  "is_read_only": false,
+  "previous_names": [
+   "all-slack"
+  ],
+  "is_slackbot_channel_enabled": false
+ }
+}

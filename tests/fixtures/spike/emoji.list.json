@@ -1,0 +1,22 @@
+{
+ "ok": true,
+ "emoji": {
+  "bowtie": "https://emoji.slack-edge.com/T0CB5LYPVFA/bowtie/f3ec6f2bb0.png",
+  "slackbot": "https://emoji.slack-edge.com/T0CB5LYPVFA/slackbot/61c7997146.png",
+  "squirrel": "https://emoji.slack-edge.com/T0CB5LYPVFA/squirrel/465f40c0e0.png",
+  "glitch_crab": "https://emoji.slack-edge.com/T0CB5LYPVFA/glitch_crab/db049f1f9c.png",
+  "piggy": "https://emoji.slack-edge.com/T0CB5LYPVFA/piggy/b7762ee8cd.png",
+  "cubimal_chick": "https://emoji.slack-edge.com/T0CB5LYPVFA/cubimal_chick/85961c43d7.png",
+  "dusty_stick": "https://emoji.slack-edge.com/T0CB5LYPVFA/dusty_stick/6177a62312.png",
+  "slack": "https://emoji.slack-edge.com/T0CB5LYPVFA/slack/7d462d2443.png",
+  "pride": "https://emoji.slack-edge.com/T0CB5LYPVFA/pride/56b1bd3388.png",
+  "thumbsup_all": "https://emoji.slack-edge.com/T0CB5LYPVFA/thumbsup_all/50096a1020.png",
+  "slack_call": "https://emoji.slack-edge.com/T0CB5LYPVFA/slack_call/b81fffd6dd.png",
+  "shipit": "alias:squirrel",
+  "white_square": "alias:white_large_square",
+  "black_square": "alias:black_large_square",
+  "simple_smile": "https://a.slack-edge.com/80588/img/emoji_2017_12_06/apple/simple_smile.png",
+  "its-true-all-of-it": "https://emoji.slack-edge.com/T0CB5LYPVFA/its-true-all-of-it/cdea6811dcb186a7.png"
+ },
+ "cache_ts": "1792411276.009900"
+}

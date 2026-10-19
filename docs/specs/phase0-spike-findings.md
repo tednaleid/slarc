@@ -31,5 +31,6 @@ Results of a throwaway script run on 2026-10-19 against the `naleidworkspace` te
 
 - Snippets download in full from `url_private_download` with the bearer token and `d` cookie. `10k-snippet.txt`: 228,893 bytes, matching `size`, 10,000 lines. `test-snippet-2.txt`: 13,092 bytes, matching `size`, 600 newline-terminated lines (its message says 601; the original file has not been checked).
 - The download's `Content-Type` is `application/force-download` for snippets, so the file object's `mimetype` is the source of truth.
+- `files.info` for a snippet returns the full text in a top-level `content` field (all 10,000 lines), plus Slack's syntax-highlighted `content_highlight_html` and `content_highlight_css`, next to the `file` object. Only `file` is the file object; storing the top-level response would put the snippet text in `files.jsonl` as well as the blob.
 - A deleted file appears inline as `mode: tombstone`, and `files.info` returns the error `file_deleted`. It needs a placeholder and no retry.
 - A hosted PNG downloaded with matching size and `Content-Type: image/png`.

@@ -192,7 +192,7 @@ Items marked (spike) were confirmed against the test workspace; the rest come fr
 
 **Deletes**
 
-- A message is recorded as deleted only when (a) Slack returns it as `subtype: tombstone` (which is a new version, not a delete), or (b) it is missing from a range slarc fully re-read in this run (a whole thread, a `--full` range, or the trailing range of step 1) and that range lies entirely inside what Slack still serves: if the oldest message Slack returned is newer than the range's start, only the part from that message onward counts.
+- A message is recorded as deleted only when (a) Slack returns it as `subtype: tombstone` (which is a new version, not a delete), or (b) it is missing from a range slarc fully re-read in this run (a whole thread or a `--full` range) and that range lies entirely inside what Slack still serves: if the oldest message Slack returned is newer than the range's start, only the part from that message onward counts.
 - A conversation or thread the current session cannot see (`channel_not_found`, `not_in_channel`, `thread_not_found`) is skipped with a warning and never produces deletes. This is what makes a colleague's pull in a clone of the archive safe.
 
 **Downloads**
@@ -309,7 +309,7 @@ The entities below are DuckDB views over the files; none is stored separately. E
 | emoji | `emoji.jsonl`, last line per name | (team_id, name) | url, alias_of, is_animated, blob, first_seen, last_seen_in_list |
 | usergroup | `usergroups.jsonl`, last line per id | (team_id, id) | handle, name, user_ids |
 | run | `runs.jsonl` | run | command, args, started, finished, teams, auth per team, messages_seen, lines_appended, rate_limit_wait_s, errors, tracked, downloads |
-| tracked_item | `runs.jsonl`, the latest entry per item across all run lines | (team_id, kind, channel_id, ts) | kind ∈ conversation, thread, message; since, until, newest_ts, oldest_ts, backfill_complete, resume_cursor, last_search_at, last_pull_at, last_read per user_id |
+| tracked_item | `runs.jsonl`, the latest entry per item across all run lines | (team_id, kind, channel_id, ts) | kind ∈ conversation, thread, message; since, until, newest_ts, oldest_ts, backfill_complete, last_search_at, last_pull_at, status ∈ ok, not_visible; last_read per user_id. An interrupted first pull resumes paging older history from `oldest_ts` while `backfill_complete` is false |
 | download | `runs.jsonl`, latest entry per target | (team_id, target) | target is a file id or image URL; status ∈ pending, failed, forbidden, too_large, deleted, external; attempts; last_error. Downloaded items drop out; the `blob` on the directory line is the record |
 
 Notes
@@ -344,7 +344,7 @@ Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cas
 
 - **Domain**: dataclasses and value objects (`MessageTs` with string ordering and permalink conversion, `SlackLink`, `ContentHash`, `EmojiRef(team_id, name)`), the hashed-subset functions, and pure renderers: rich_text and layout blocks to HTML, mrkdwn to HTML, and `meta.plain`.
 - **Ports**: `SlackGateway` (auth_test, list_conversations, conversation_info, history, replies, search, users, bots, emoji, usergroups, file_info); `Downloader` (fetch many URLs with a parallelism limit, streaming each into the blob store); `CredentialSource` (credentials for a workspace domain or team id); `ArchiveStore` (append envelopes, last hash per key for a conversation or directory kind, iterate lines, latest tracked and download state, append a run); `BlobStore` (put, open, exists by sha256); `QueryIndex` (what `search`, `list`, `sql`, `export` read); `Clock`.
-- **Unit of work**: scopes one run. Buffers appends, flushes and fsyncs files, appends the run line on commit. No message bus or domain events: the service layer collects download jobs during the pull and hands them to the `Downloader` at the end.
+- **Unit of work**: scopes one run. Appends are flushed after each page of results so an interrupted pull keeps what it read; the run line is appended when the run ends, including on an exception or Ctrl-C. A run killed outright loses only its run line, and the next pull re-reads without duplicating lines because hashes match. No message bus or domain events: the service layer collects download jobs during the pull and hands them to the `Downloader` at the end.
 - **Adapters**: `SessionTokenGateway` (`slack_sdk.WebClient` with the token, cookie header, retry handlers and per-method token bucket); `HttpDownloader`; `DesktopSessionSource`, `KeyringSource` and `EnvSource` composed in priority order; `JsonlArchiveStore`; `FsBlobStore`; `DuckDbQueryIndex`; `SystemClock`. Test doubles: `FakeSlackGateway`, `FakeDownloader`, `FakeCredentialSource`, `InMemoryArchiveStore`, `InMemoryBlobStore`, `FakeClock`, composed by `InMemoryUnitOfWork`.
 - **Service layer**: one function per CLI verb, taking the unit of work and gateways as arguments.
 - **Config**: a `Settings` value object built by the layered loader and passed into the bootstrap.

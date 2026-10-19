@@ -1,0 +1,236 @@
+{
+ "ok": true,
+ "channels": [
+  {
+   "id": "C0CA5396G03",
+   "created": 1792410505,
+   "creator": "U0CA538UEN7",
+   "is_org_shared": false,
+   "is_im": false,
+   "context_team_id": "T0CB5LYPVFA",
+   "updated": 1792422363487,
+   "name": "all-naleid",
+   "name_normalized": "all-naleid",
+   "is_channel": true,
+   "is_group": false,
+   "is_mpim": false,
+   "is_private": false,
+   "is_archived": false,
+   "is_general": true,
+   "is_shared": false,
+   "is_ext_shared": false,
+   "unlinked": 0,
+   "is_pending_ext_shared": false,
+   "pending_shared": [],
+   "parent_conversation": null,
+   "purpose": {
+    "value": "Share announcements and updates about company news, upcoming events, or teammates who deserve some kudos. ⭐",
+    "creator": "U0CA538UEN7",
+    "last_set": 1792410505
+   },
+   "topic": {
+    "value": "",
+    "creator": "",
+    "last_set": 0
+   },
+   "shared_team_ids": [
+    "T0CB5LYPVFA"
+   ],
+   "pending_connected_team_ids": [],
+   "is_member": true,
+   "num_members": 2,
+   "properties": {
+    "tabs": [
+     {
+      "type": "files",
+      "label": "",
+      "id": "files"
+     }
+    ],
+    "tabz": [
+     {
+      "type": "files"
+     }
+    ],
+    "use_case": "welcome"
+   },
+   "previous_names": [
+    "all-slack"
+   ],
+   "is_slackbot_channel_enabled": false
+  },
+  {
+   "id": "C0CA53DLVJP",
+   "created": 1792410546,
+   "creator": "U0CA538UEN7",
+   "is_org_shared": false,
+   "is_im": false,
+   "context_team_id": "T0CB5LYPVFA",
+   "updated": 1792410546841,
+   "name": "new-channel",
+   "name_normalized": "new-channel",
+   "is_channel": true,
+   "is_group": false,
+   "is_mpim": false,
+   "is_private": false,
+   "is_archived": false,
+   "is_general": false,
+   "is_shared": false,
+   "is_ext_shared": false,
+   "unlinked": 0,
+   "is_pending_ext_shared": false,
+   "pending_shared": [],
+   "parent_conversation": null,
+   "purpose": {
+    "value": "This channel is for everything #new-channel. Hold meetings, share docs, and make decisions together with your team.",
+    "creator": "U0CA538UEN7",
+    "last_set": 1792410546
+   },
+   "topic": {
+    "value": "",
+    "creator": "",
+    "last_set": 0
+   },
+   "shared_team_ids": [
+    "T0CB5LYPVFA"
+   ],
+   "pending_connected_team_ids": [],
+   "is_member": true,
+   "num_members": 2,
+   "properties": {
+    "use_case": "project"
+   },
+   "previous_names": [],
+   "is_slackbot_channel_enabled": false
+  },
+  {
+   "id": "C0CAD72A8C9",
+   "created": 1792410505,
+   "creator": "U0CA538UEN7",
+   "is_org_shared": false,
+   "is_im": false,
+   "context_team_id": "T0CB5LYPVFA",
+   "updated": 1792410505458,
+   "name": "social",
+   "name_normalized": "social",
+   "is_channel": true,
+   "is_group": false,
+   "is_mpim": false,
+   "is_private": false,
+   "is_archived": false,
+   "is_general": false,
+   "is_shared": false,
+   "is_ext_shared": false,
+   "unlinked": 0,
+   "is_pending_ext_shared": false,
+   "pending_shared": [],
+   "parent_conversation": null,
+   "purpose": {
+    "value": "Other channels are for work. This one’s just for fun. Get to know your teammates and show your lighter side. 🎈",
+    "creator": "U0CA538UEN7",
+    "last_set": 1792410505
+   },
+   "topic": {
+    "value": "",
+    "creator": "",
+    "last_set": 0
+   },
+   "shared_team_ids": [
+    "T0CB5LYPVFA"
+   ],
+   "pending_connected_team_ids": [],
+   "is_member": true,
+   "num_members": 2,
+   "properties": {
+    "use_case": "random"
+   },
+   "previous_names": [],
+   "is_slackbot_channel_enabled": false
+  },
+  {
+   "id": "D0CB5LZ16NL",
+   "created": 1792410504,
+   "is_org_shared": false,
+   "is_im": true,
+   "is_archived": false,
+   "context_team_id": "T0CB5LYPVFA",
+   "updated": 1792410504989,
+   "is_frozen": false,
+   "is_slackbot_channel_enabled": false,
+   "user": "U0CA538UEN7",
+   "is_user_deleted": false,
+   "priority": 0
+  },
+  {
+   "id": "D0CAD7JE1QR",
+   "created": 1792410657,
+   "is_org_shared": false,
+   "is_im": true,
+   "is_archived": false,
+   "context_team_id": "T0CB5LYPVFA",
+   "updated": 1792414797684,
+   "is_frozen": false,
+   "is_slackbot_channel_enabled": false,
+   "user": "U0CA61XJF2R",
+   "is_user_deleted": false,
+   "priority": 0,
+   "properties": {
+    "meeting_notes": {
+     "file_id": "F0CA9TR3H6J"
+    },
+    "tabs": [
+     {
+      "id": "Ct0CA6HVKA5B",
+      "type": "canvas",
+      "data": {
+       "file_id": "F0CA9TR3H6J",
+       "shared_ts": "1792414797.436399"
+      },
+      "label": ""
+     }
+    ],
+    "tabz": [
+     {
+      "id": "Ct0CA6HVKA5B",
+      "type": "canvas",
+      "data": {
+       "file_id": "F0CA9TR3H6J",
+       "shared_ts": "1792414797.436399"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "D0CA61FB04D",
+   "created": 1792410504,
+   "is_org_shared": false,
+   "is_im": true,
+   "is_archived": false,
+   "context_team_id": "T0CB5LYPVFA",
+   "updated": 1792410504937,
+   "is_frozen": false,
+   "is_slackbot_channel_enabled": false,
+   "user": "USLACKBOT",
+   "is_user_deleted": false,
+   "priority": 0
+  },
+  {
+   "id": "D0CA53DDYUT",
+   "created": 1792410547,
+   "is_org_shared": false,
+   "is_im": true,
+   "is_archived": false,
+   "context_team_id": "T0CB5LYPVFA",
+   "updated": 1792410547871,
+   "is_frozen": false,
+   "is_slackbot_channel_enabled": false,
+   "user": "USLACK",
+   "is_user_deleted": false,
+   "priority": 0
+  }
+ ],
+ "response_metadata": {
+  "next_cursor": ""
+ }
+}

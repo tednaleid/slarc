@@ -1,0 +1,15 @@
+{
+ "ok": true,
+ "bot": {
+  "id": "B0CA9EBAH1C",
+  "deleted": false,
+  "name": "giphy",
+  "updated": 1792411320,
+  "app_id": "A0F827J2C",
+  "icons": {
+   "image_36": "https://a.slack-edge.com/dc483/img/plugins/giphy/service_72.png",
+   "image_48": "https://a.slack-edge.com/dc483/img/plugins/giphy/service_48.png",
+   "image_72": "https://a.slack-edge.com/dc483/img/plugins/giphy/service_72.png"
+  }
+ }
+}

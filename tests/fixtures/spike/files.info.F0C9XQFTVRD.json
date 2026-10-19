@@ -1,0 +1,75 @@
+{
+  "ok": true,
+  "content": "test snippet line 1\ntest snippet line 2\ntest snippet line 3\ntest snippet line 4\ntest snippet line 5\ntest snippet line 6\ntest snippet line 7\ntest snippet line 8\ntest snippet line 9\ntest snippet line 10\ntest snippet line 11\ntest snippet line 12\ntest snippet line 13\ntest snippet line 14\ntest snippet line 15\ntest snippet line 16\ntest snippet line 17\ntest snippet line 18\ntest snippet line 19\ntest snippet line 20",
+  "is_truncated": false,
+  "content_highlight_html": "(trimmed for the fixture)",
+  "content_highlight_css": "(trimmed for the fixture)",
+  "content_highlight_html_truncated": false,
+  "file": {
+    "id": "F0C9XQFTVRD",
+    "created": 1792422430,
+    "timestamp": 1792422430,
+    "mimetype": "text/plain",
+    "filetype": "text",
+    "pretty_type": "Plain Text",
+    "user": "U0CA538UEN7",
+    "user_team": "T0CB5LYPVFA",
+    "editable": true,
+    "size": 13092,
+    "mode": "snippet",
+    "is_external": false,
+    "external_type": "",
+    "is_public": true,
+    "public_url_shared": false,
+    "display_as_bot": false,
+    "username": "",
+    "name": "test-snippet-2.txt",
+    "title": "test-snippet-2.txt",
+    "is_modified_by_ai": false,
+    "url_private": "https://files.slack.com/files-pri/T0CB5LYPVFA-F0C9XQFTVRD/test-snippet-2.txt",
+    "url_private_download": "https://files.slack.com/files-pri/T0CB5LYPVFA-F0C9XQFTVRD/download/test-snippet-2.txt",
+    "permalink": "https://naleidworkspace.slack.com/files/U0CA538UEN7/F0C9XQFTVRD/test-snippet-2.txt",
+    "permalink_public": "https://slack-files.com/T0CB5LYPVFA-F0C9XQFTVRD-f0525415e5",
+    "edit_link": "https://naleidworkspace.slack.com/files/U0CA538UEN7/F0C9XQFTVRD/test-snippet-2.txt/edit",
+    "preview": "test snippet line 1\ntest snippet line 2\ntest snippet line 3\ntest snippet line 4\ntest snippet line 5",
+    "preview_highlight": "<div class=\"CodeMirror cm-s-default CodeMirrorServer\">\n<div class=\"CodeMirror-code\">\n<div><pre>test snippet line 1</pre></div>\n<div><pre>test snippet line 2</pre></div>\n<div><pre>test snippet line 3</pre></div>\n<div><pre>test snippet line 4</pre></div>\n<div><pre>test snippet line 5</pre></div>\n</div>\n</div>\n",
+    "lines": 601,
+    "lines_more": 596,
+    "preview_is_truncated": true,
+    "favorites": [],
+    "is_starred": false,
+    "shares": {
+      "public": {
+        "C0CA5396G03": [
+          {
+            "ts": "1792422431.611459",
+            "channel_name": "all-naleid",
+            "team_id": "T0CB5LYPVFA",
+            "share_user_id": "U0CA538UEN7",
+            "source": "UNKNOWN",
+            "is_silent_share": false,
+            "reply_users": [],
+            "reply_users_count": 0,
+            "reply_count": 0
+          }
+        ]
+      }
+    },
+    "channels": [
+      "C0CA5396G03"
+    ],
+    "groups": [],
+    "ims": [],
+    "has_more_shares": false,
+    "has_rich_preview": false,
+    "file_access": "visible",
+    "comments_count": 0
+  },
+  "comments": [],
+  "paging": {
+    "count": 0,
+    "total": 0,
+    "page": 1,
+    "pages": 0
+  }
+}

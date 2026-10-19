@@ -1,0 +1,242 @@
+{
+ "ok": true,
+ "messages": [
+  {
+   "text": "yet another snippet that should be 10k lines long",
+   "files": [
+    {
+     "id": "F0CA7TKM285",
+     "created": 1792422552,
+     "timestamp": 1792422552,
+     "mimetype": "text/plain",
+     "filetype": "text",
+     "pretty_type": "Plain Text",
+     "user": "U0CA538UEN7",
+     "user_team": "T0CB5LYPVFA",
+     "editable": true,
+     "size": 228893,
+     "mode": "snippet",
+     "is_external": false,
+     "external_type": "",
+     "is_public": true,
+     "public_url_shared": false,
+     "display_as_bot": false,
+     "username": "",
+     "name": "10k-snippet.txt",
+     "title": "10k-snippet.txt",
+     "is_modified_by_ai": false,
+     "url_private": "https://files.slack.com/files-pri/T0CB5LYPVFA-F0CA7TKM285/10k-snippet.txt",
+     "url_private_download": "https://files.slack.com/files-pri/T0CB5LYPVFA-F0CA7TKM285/download/10k-snippet.txt",
+     "permalink": "https://naleidworkspace.slack.com/files/U0CA538UEN7/F0CA7TKM285/10k-snippet.txt",
+     "permalink_public": "https://slack-files.com/T0CB5LYPVFA-F0CA7TKM285-84f02ed0a9",
+     "edit_link": "https://naleidworkspace.slack.com/files/U0CA538UEN7/F0CA7TKM285/10k-snippet.txt/edit",
+     "preview": "test snippet line 1\ntest snippet line 2\ntest snippet line 3\ntest snippet line 4\ntest snippet line 5",
+     "preview_highlight": "<div class=\"CodeMirror cm-s-default CodeMirrorServer\">\n<div class=\"CodeMirror-code\">\n<div><pre>test snippet line 1</pre></div>\n<div><pre>test snippet line 2</pre></div>\n<div><pre>test snippet line 3</pre></div>\n<div><pre>test snippet line 4</pre></div>\n<div><pre>test snippet line 5</pre></div>\n</div>\n</div>\n",
+     "lines": 10000,
+     "lines_more": 9995,
+     "preview_is_truncated": true,
+     "is_starred": false,
+     "skipped_shares": true,
+     "has_rich_preview": false,
+     "file_access": "visible"
+    }
+   ],
+   "upload": true,
+   "user": "U0CA538UEN7",
+   "display_as_bot": false,
+   "blocks": [
+    {
+     "type": "rich_text",
+     "block_id": "hIb0V",
+     "elements": [
+      {
+       "type": "rich_text_section",
+       "elements": [
+        {
+         "type": "text",
+         "text": "yet another snippet that should be 10k lines long"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "type": "message",
+   "ts": "1792422552.941749",
+   "client_msg_id": "37364e03-2e8c-40d6-a0ad-e27a9812bd7e"
+  },
+  {
+   "text": "another test snippet that should be 601 lines long",
+   "files": [
+    {
+     "id": "F0C9XQFTVRD",
+     "created": 1792422430,
+     "timestamp": 1792422430,
+     "mimetype": "text/plain",
+     "filetype": "text",
+     "pretty_type": "Plain Text",
+     "user": "U0CA538UEN7",
+     "user_team": "T0CB5LYPVFA",
+     "editable": true,
+     "size": 13092,
+     "mode": "snippet",
+     "is_external": false,
+     "external_type": "",
+     "is_public": true,
+     "public_url_shared": false,
+     "display_as_bot": false,
+     "username": "",
+     "name": "test-snippet-2.txt",
+     "title": "test-snippet-2.txt",
+     "is_modified_by_ai": false,
+     "url_private": "https://files.slack.com/files-pri/T0CB5LYPVFA-F0C9XQFTVRD/test-snippet-2.txt",
+     "url_private_download": "https://files.slack.com/files-pri/T0CB5LYPVFA-F0C9XQFTVRD/download/test-snippet-2.txt",
+     "permalink": "https://naleidworkspace.slack.com/files/U0CA538UEN7/F0C9XQFTVRD/test-snippet-2.txt",
+     "permalink_public": "https://slack-files.com/T0CB5LYPVFA-F0C9XQFTVRD-f0525415e5",
+     "edit_link": "https://naleidworkspace.slack.com/files/U0CA538UEN7/F0C9XQFTVRD/test-snippet-2.txt/edit",
+     "preview": "test snippet line 1\ntest snippet line 2\ntest snippet line 3\ntest snippet line 4\ntest snippet line 5",
+     "preview_highlight": "<div class=\"CodeMirror cm-s-default CodeMirrorServer\">\n<div class=\"CodeMirror-code\">\n<div><pre>test snippet line 1</pre></div>\n<div><pre>test snippet line 2</pre></div>\n<div><pre>test snippet line 3</pre></div>\n<div><pre>test snippet line 4</pre></div>\n<div><pre>test snippet line 5</pre></div>\n</div>\n</div>\n",
+     "lines": 601,
+     "lines_more": 596,
+     "preview_is_truncated": true,
+     "is_starred": false,
+     "skipped_shares": true,
+     "has_rich_preview": false,
+     "file_access": "visible"
+    }
+   ],
+   "upload": true,
+   "user": "U0CA538UEN7",
+   "display_as_bot": false,
+   "blocks": [
+    {
+     "type": "rich_text",
+     "block_id": "tv/dC",
+     "elements": [
+      {
+       "type": "rich_text_section",
+       "elements": [
+        {
+         "type": "text",
+         "text": "another test snippet that should be 601 lines long"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "type": "message",
+   "ts": "1792422431.611459",
+   "edited": {
+    "user": "U0CA538UEN7",
+    "ts": "1792422458.000000"
+   },
+   "client_msg_id": "93f5da94-2078-4162-90d8-809bba4966a3"
+  },
+  {
+   "text": "This is a test snippet that should be 600 lines line and was then deleted",
+   "files": [
+    {
+     "id": "F0CAF2TQHQ9",
+     "mode": "tombstone"
+    }
+   ],
+   "upload": true,
+   "user": "U0CA538UEN7",
+   "display_as_bot": false,
+   "blocks": [
+    {
+     "type": "rich_text",
+     "block_id": "HEtYv",
+     "elements": [
+      {
+       "type": "rich_text_section",
+       "elements": [
+        {
+         "type": "text",
+         "text": "This is a test snippet that should be 600 lines line and was then deleted"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "type": "message",
+   "ts": "1792422363.271059",
+   "edited": {
+    "user": "U0CA538UEN7",
+    "ts": "1792422404.000000"
+   },
+   "client_msg_id": "c1185b0a-14bd-4f74-84d0-ae681e7da815"
+  },
+  {
+   "user": "U0CA61XJF2R",
+   "type": "message",
+   "ts": "1792410693.663869",
+   "client_msg_id": "29d3425c-7caa-4dce-b92a-6accd05ecb28",
+   "text": "Hello!",
+   "team": "T0CB5LYPVFA",
+   "thread_ts": "1792410693.663869",
+   "reply_count": 3,
+   "reply_users_count": 1,
+   "latest_reply": "1792422623.464629",
+   "reply_users": [
+    "U0CA538UEN7"
+   ],
+   "is_locked": false,
+   "subscribed": true,
+   "last_read": "1792422623.464629",
+   "blocks": [
+    {
+     "type": "rich_text",
+     "block_id": "tUK8G",
+     "elements": [
+      {
+       "type": "rich_text_section",
+       "elements": [
+        {
+         "type": "text",
+         "text": "Hello!"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "reactions": [
+    {
+     "name": "wave::skin-tone-3",
+     "users": [
+      "U0CA538UEN7"
+     ],
+     "count": 1
+    },
+    {
+     "name": "wave",
+     "users": [
+      "U0CA61XJF2R"
+     ],
+     "count": 1
+    }
+   ]
+  },
+  {
+   "subtype": "channel_join",
+   "user": "U0CA61XJF2R",
+   "text": "<@U0CA61XJF2R> has joined the channel",
+   "type": "message",
+   "ts": "1792410657.227669"
+  },
+  {
+   "subtype": "channel_join",
+   "user": "U0CA538UEN7",
+   "text": "<@U0CA538UEN7> has joined the channel",
+   "type": "message",
+   "ts": "1792410505.364679"
+  }
+ ],
+ "has_more": false,
+ "pin_count": 0,
+ "channel_actions_ts": null,
+ "channel_actions_count": 0
+}

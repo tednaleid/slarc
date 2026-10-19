@@ -1,0 +1,540 @@
+{
+ "ok": true,
+ "query": "in:<#C0CA5396G03>",
+ "messages": {
+  "total": 7,
+  "pagination": {
+   "total_count": 7,
+   "page": 1,
+   "per_page": 100,
+   "page_count": 1,
+   "first": 1,
+   "last": 7
+  },
+  "paging": {
+   "count": 100,
+   "total": 7,
+   "page": 1,
+   "pages": 1
+  },
+  "matches": [
+   {
+    "db_message": {},
+    "iid": "1bb28933-3b7b-464a-9736-43c35acf884b",
+    "team": "T0CB5LYPVFA",
+    "score": 0,
+    "channel": {
+     "id": "C0CA5396G03",
+     "is_channel": true,
+     "is_group": false,
+     "is_im": false,
+     "is_mpim": false,
+     "is_shared": false,
+     "is_org_shared": false,
+     "is_ext_shared": false,
+     "is_private": false,
+     "is_archived": false,
+     "name": "all-naleid",
+     "pending_shared": [],
+     "is_pending_ext_shared": false
+    },
+    "type": "message",
+    "user": "U0CA538UEN7",
+    "username": "contact",
+    "ts": "1792422623.464629",
+    "attachments": [
+     {
+      "from_url": "https://github.com/tednaleid",
+      "service_icon": "https://a.slack-edge.com/80588/img/unfurl_icons/github.png",
+      "thumb_url": "https://avatars.githubusercontent.com/u/5231?v=4?s=400",
+      "thumb_width": 460,
+      "thumb_height": 460,
+      "id": 1,
+      "original_url": "https://github.com/tednaleid",
+      "fallback": "GitHub: tednaleid - Overview",
+      "text": "tednaleid has 131 repositories available. Follow their code on GitHub.",
+      "title": "tednaleid - Overview",
+      "title_link": "https://github.com/tednaleid",
+      "service_name": "GitHub",
+      "media_type": "external_link"
+     }
+    ],
+    "files": [
+     {
+      "id": "F0CB7HWPUTA",
+      "created": 1792422594,
+      "timestamp": 1792422594,
+      "mimetype": "image/png",
+      "filetype": "png",
+      "pretty_type": "PNG",
+      "user": "U0CA538UEN7",
+      "user_team": "T0CB5LYPVFA",
+      "editable": false,
+      "size": 680610,
+      "mode": "hosted",
+      "is_external": false,
+      "external_type": "",
+      "is_public": true,
+      "public_url_shared": false,
+      "display_as_bot": false,
+      "username": "",
+      "name": "CleanShot 2026-10-19 at 10.09.44.png",
+      "title": "CleanShot 2026-10-19 at 10.09.44.png",
+      "is_modified_by_ai": false,
+      "url_private": "https://files.slack.com/files-pri/T0CB5LYPVFA-F0CB7HWPUTA/cleanshot_2026-10-19_at_10.09.44.png",
+      "url_private_download": "https://files.slack.com/files-pri/T0CB5LYPVFA-F0CB7HWPUTA/download/cleanshot_2026-10-19_at_10.09.44.png",
+      "media_display_type": "unknown",
+      "thumb_64": "https://files.slack.com/files-tmb/T0CB5LYPVFA-F0CB7HWPUTA-63acde60f3/cleanshot_2026-10-19_at_10.09.44_64.png",
+      "thumb_80": "https://files.slack.com/files-tmb/T0CB5LYPVFA-F0CB7HWPUTA-63acde60f3/cleanshot_2026-10-19_at_10.09.44_80.png",
+      "thumb_360": "https://files.slack.com/files-tmb/T0CB5LYPVFA-F0CB7HWPUTA-63acde60f3/cleanshot_2026-10-19_at_10.09.44_360.png",
+      "thumb_360_w": 360,
+      "thumb_360_h": 136,
+      "thumb_480": "https://files.slack.com/files-tmb/T0CB5LYPVFA-F0CB7HWPUTA-63acde60f3/cleanshot_2026-10-19_at_10.09.44_480.png",
+      "thumb_480_w": 480,
+      "thumb_480_h": 181,
+      "thumb_160": "https://files.slack.com/files-tmb/T0CB5LYPVFA-F0CB7HWPUTA-63acde60f3/cleanshot_2026-10-19_at_10.09.44_160.png",
+      "thumb_720": "https://files.slack.com/files-tmb/T0CB5LYPVFA-F0CB7HWPUTA-63acde60f3/cleanshot_2026-10-19_at_10.09.44_720.png",
+      "thumb_720_w": 720,
+      "thumb_720_h": 271,
+      "thumb_800": "https://files.slack.com/files-tmb/T0CB5LYPVFA-F0CB7HWPUTA-63acde60f3/cleanshot_2026-10-19_at_10.09.44_800.png",
+      "thumb_800_w": 800,
+      "thumb_800_h": 301,
+      "thumb_960": "https://files.slack.com/files-tmb/T0CB5LYPVFA-F0CB7HWPUTA-63acde60f3/cleanshot_2026-10-19_at_10.09.44_960.png",
+      "thumb_960_w": 960,
+      "thumb_960_h": 361,
+      "thumb_1024": "https://files.slack.com/files-tmb/T0CB5LYPVFA-F0CB7HWPUTA-63acde60f3/cleanshot_2026-10-19_at_10.09.44_1024.png",
+      "thumb_1024_w": 1024,
+      "thumb_1024_h": 386,
+      "original_w": 2191,
+      "original_h": 825,
+      "thumb_tiny": "AwATADCky7TwQw9Rn+tN5GfenM7P1xx6ACkIIAJBAPSgBUKgncuRimminKoKE55FAWG0VO9q0cO9zg4zjHvioKE7g1YXJxjJx6UlLRQAhooNFADmlkcYd2YehOabRRQB/9k=",
+      "permalink": "https://naleidworkspace.slack.com/files/U0CA538UEN7/F0CB7HWPUTA/cleanshot_2026-10-19_at_10.09.44.png",
+      "permalink_public": "https://slack-files.com/T0CB5LYPVFA-F0CB7HWPUTA-e742e7a119",
+      "is_starred": false,
+      "skipped_shares": true,
+      "has_rich_preview": false,
+      "file_access": "visible"
+     }
+    ],
+    "blocks": [
+     {
+      "type": "rich_text",
+      "block_id": "MSrCD",
+      "elements": [
+       {
+        "type": "rich_text_section",
+        "elements": [
+         {
+          "type": "text",
+          "text": "a screenshot attachment and a link with preview "
+         },
+         {
+          "type": "link",
+          "url": "https://github.com/tednaleid"
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "text": "a screenshot attachment and a link with preview <https://github.com/tednaleid>",
+    "permalink": "https://naleidworkspace.slack.com/archives/C0CA5396G03/p1792422623464629?thread_ts=1792410693.663869",
+    "no_reactions": true
+   },
+   {
+    "db_message": {},
+    "iid": "40c086b7-faaf-4db1-848f-403e104d373a",
+    "team": "T0CB5LYPVFA",
+    "score": 0,
+    "channel": {
+     "id": "C0CA5396G03",
+     "is_channel": true,
+     "is_group": false,
+     "is_im": false,
+     "is_mpim": false,
+     "is_shared": false,
+     "is_org_shared": false,
+     "is_ext_shared": false,
+     "is_private": false,
+     "is_archived": false,
+     "name": "all-naleid",
+     "pending_shared": [],
+     "is_pending_ext_shared": false
+    },
+    "type": "message",
+    "user": "U0CA538UEN7",
+    "username": "contact",
+    "ts": "1792422552.941749",
+    "files": [
+     {
+      "id": "F0CA7TKM285",
+      "created": 1792422552,
+      "timestamp": 1792422552,
+      "mimetype": "text/plain",
+      "filetype": "text",
+      "pretty_type": "Plain Text",
+      "user": "U0CA538UEN7",
+      "user_team": "T0CB5LYPVFA",
+      "editable": true,
+      "size": 228893,
+      "mode": "snippet",
+      "is_external": false,
+      "external_type": "",
+      "is_public": true,
+      "public_url_shared": false,
+      "display_as_bot": false,
+      "username": "",
+      "name": "10k-snippet.txt",
+      "title": "10k-snippet.txt",
+      "is_modified_by_ai": false,
+      "url_private": "https://files.slack.com/files-pri/T0CB5LYPVFA-F0CA7TKM285/10k-snippet.txt",
+      "url_private_download": "https://files.slack.com/files-pri/T0CB5LYPVFA-F0CA7TKM285/download/10k-snippet.txt",
+      "permalink": "https://naleidworkspace.slack.com/files/U0CA538UEN7/F0CA7TKM285/10k-snippet.txt",
+      "permalink_public": "https://slack-files.com/T0CB5LYPVFA-F0CA7TKM285-84f02ed0a9",
+      "edit_link": "https://naleidworkspace.slack.com/files/U0CA538UEN7/F0CA7TKM285/10k-snippet.txt/edit",
+      "preview": "test snippet line 1\ntest snippet line 2\ntest snippet line 3\ntest snippet line 4\ntest snippet line 5",
+      "preview_highlight": "<div class=\"CodeMirror cm-s-default CodeMirrorServer\">\n<div class=\"CodeMirror-code\">\n<div><pre>test snippet line 1</pre></div>\n<div><pre>test snippet line 2</pre></div>\n<div><pre>test snippet line 3</pre></div>\n<div><pre>test snippet line 4</pre></div>\n<div><pre>test snippet line 5</pre></div>\n</div>\n</div>\n",
+      "lines": 10000,
+      "lines_more": 9995,
+      "preview_is_truncated": true,
+      "is_starred": false,
+      "skipped_shares": true,
+      "has_rich_preview": false,
+      "file_access": "visible"
+     }
+    ],
+    "blocks": [
+     {
+      "type": "rich_text",
+      "block_id": "hIb0V",
+      "elements": [
+       {
+        "type": "rich_text_section",
+        "elements": [
+         {
+          "type": "text",
+          "text": "yet another snippet that should be 10k lines long"
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "text": "yet another snippet that should be 10k lines long",
+    "permalink": "https://naleidworkspace.slack.com/archives/C0CA5396G03/p1792422552941749",
+    "no_reactions": true
+   },
+   {
+    "db_message": {},
+    "iid": "ac015e32-7c86-465d-88c6-f26d7cf714c5",
+    "team": "T0CB5LYPVFA",
+    "score": 0,
+    "channel": {
+     "id": "C0CA5396G03",
+     "is_channel": true,
+     "is_group": false,
+     "is_im": false,
+     "is_mpim": false,
+     "is_shared": false,
+     "is_org_shared": false,
+     "is_ext_shared": false,
+     "is_private": false,
+     "is_archived": false,
+     "name": "all-naleid",
+     "pending_shared": [],
+     "is_pending_ext_shared": false
+    },
+    "type": "message",
+    "user": "U0CA538UEN7",
+    "username": "contact",
+    "ts": "1792422431.611459",
+    "files": [
+     {
+      "id": "F0C9XQFTVRD",
+      "created": 1792422430,
+      "timestamp": 1792422430,
+      "mimetype": "text/plain",
+      "filetype": "text",
+      "pretty_type": "Plain Text",
+      "user": "U0CA538UEN7",
+      "user_team": "T0CB5LYPVFA",
+      "editable": true,
+      "size": 13092,
+      "mode": "snippet",
+      "is_external": false,
+      "external_type": "",
+      "is_public": true,
+      "public_url_shared": false,
+      "display_as_bot": false,
+      "username": "",
+      "name": "test-snippet-2.txt",
+      "title": "test-snippet-2.txt",
+      "is_modified_by_ai": false,
+      "url_private": "https://files.slack.com/files-pri/T0CB5LYPVFA-F0C9XQFTVRD/test-snippet-2.txt",
+      "url_private_download": "https://files.slack.com/files-pri/T0CB5LYPVFA-F0C9XQFTVRD/download/test-snippet-2.txt",
+      "permalink": "https://naleidworkspace.slack.com/files/U0CA538UEN7/F0C9XQFTVRD/test-snippet-2.txt",
+      "permalink_public": "https://slack-files.com/T0CB5LYPVFA-F0C9XQFTVRD-f0525415e5",
+      "edit_link": "https://naleidworkspace.slack.com/files/U0CA538UEN7/F0C9XQFTVRD/test-snippet-2.txt/edit",
+      "preview": "test snippet line 1\ntest snippet line 2\ntest snippet line 3\ntest snippet line 4\ntest snippet line 5",
+      "preview_highlight": "<div class=\"CodeMirror cm-s-default CodeMirrorServer\">\n<div class=\"CodeMirror-code\">\n<div><pre>test snippet line 1</pre></div>\n<div><pre>test snippet line 2</pre></div>\n<div><pre>test snippet line 3</pre></div>\n<div><pre>test snippet line 4</pre></div>\n<div><pre>test snippet line 5</pre></div>\n</div>\n</div>\n",
+      "lines": 601,
+      "lines_more": 596,
+      "preview_is_truncated": true,
+      "is_starred": false,
+      "skipped_shares": true,
+      "has_rich_preview": false,
+      "file_access": "visible"
+     }
+    ],
+    "blocks": [
+     {
+      "type": "rich_text",
+      "block_id": "tv/dC",
+      "elements": [
+       {
+        "type": "rich_text_section",
+        "elements": [
+         {
+          "type": "text",
+          "text": "another test snippet that should be 601 lines long"
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "text": "another test snippet that should be 601 lines long",
+    "permalink": "https://naleidworkspace.slack.com/archives/C0CA5396G03/p1792422431611459",
+    "no_reactions": true
+   },
+   {
+    "db_message": {},
+    "iid": "861a137d-922b-4064-b6b9-e215ed88175a",
+    "team": "T0CB5LYPVFA",
+    "score": 0,
+    "channel": {
+     "id": "C0CA5396G03",
+     "is_channel": true,
+     "is_group": false,
+     "is_im": false,
+     "is_mpim": false,
+     "is_shared": false,
+     "is_org_shared": false,
+     "is_ext_shared": false,
+     "is_private": false,
+     "is_archived": false,
+     "name": "all-naleid",
+     "pending_shared": [],
+     "is_pending_ext_shared": false
+    },
+    "type": "message",
+    "user": "U0CA538UEN7",
+    "username": "contact",
+    "ts": "1792422363.271059",
+    "files": [
+     {
+      "id": "F0CAF2TQHQ9",
+      "mode": "tombstone"
+     }
+    ],
+    "blocks": [
+     {
+      "type": "rich_text",
+      "block_id": "HEtYv",
+      "elements": [
+       {
+        "type": "rich_text_section",
+        "elements": [
+         {
+          "type": "text",
+          "text": "This is a test snippet that should be 600 lines line and was then deleted"
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "text": "This is a test snippet that should be 600 lines line and was then deleted",
+    "permalink": "https://naleidworkspace.slack.com/archives/C0CA5396G03/p1792422363271059",
+    "no_reactions": true
+   },
+   {
+    "db_message": {},
+    "iid": "12c58991-c7e6-4d49-a9fa-52f6d7459b09",
+    "team": "T0CB5LYPVFA",
+    "score": 0,
+    "channel": {
+     "id": "C0CA5396G03",
+     "is_channel": true,
+     "is_group": false,
+     "is_im": false,
+     "is_mpim": false,
+     "is_shared": false,
+     "is_org_shared": false,
+     "is_ext_shared": false,
+     "is_private": false,
+     "is_archived": false,
+     "name": "all-naleid",
+     "pending_shared": [],
+     "is_pending_ext_shared": false
+    },
+    "type": "message",
+    "user": "U0CA538UEN7",
+    "username": "contact",
+    "ts": "1792411464.844209",
+    "blocks": [
+     {
+      "type": "image",
+      "block_id": "6NqVr",
+      "image_url": "https://media4.giphy.com/media/F9yAvk7Xpr0c/giphy.gif?cid=6104955ee4adf136dcbbrjmn0qdsjgxzsga2bbxafvz2c6fe&ep=v1_gifs_translate&rid=giphy.gif&ct=g",
+      "alt_text": "some men just want to watch the world burn",
+      "title": {
+       "type": "plain_text",
+       "text": "some men just want to watch the world burn",
+       "emoji": true
+      },
+      "image_width": 500,
+      "image_height": 195,
+      "image_bytes": 1029093,
+      "fallback": "500x195px image",
+      "is_animated": true
+     },
+     {
+      "type": "context",
+      "block_id": "5SnkI",
+      "elements": [
+       {
+        "type": "image",
+        "image_url": "https://a.slack-edge.com/dc483/img/plugins/giphy/service_32.png",
+        "alt_text": "giphy logo"
+       },
+       {
+        "type": "mrkdwn",
+        "text": "Posted using /giphy",
+        "verbatim": false
+       }
+      ]
+     }
+    ],
+    "text": "",
+    "permalink": "https://naleidworkspace.slack.com/archives/C0CA5396G03/p1792411464844209?thread_ts=1792410693.663869",
+    "no_reactions": true
+   },
+   {
+    "db_message": {},
+    "iid": "9670e1d4-1bdf-41d3-b3b7-f7482485aaf0",
+    "team": "T0CB5LYPVFA",
+    "score": 0,
+    "channel": {
+     "id": "C0CA5396G03",
+     "is_channel": true,
+     "is_group": false,
+     "is_im": false,
+     "is_mpim": false,
+     "is_shared": false,
+     "is_org_shared": false,
+     "is_ext_shared": false,
+     "is_private": false,
+     "is_archived": false,
+     "name": "all-naleid",
+     "pending_shared": [],
+     "is_pending_ext_shared": false
+    },
+    "type": "message",
+    "user": "U0CA538UEN7",
+    "username": "contact",
+    "ts": "1792410743.787639",
+    "blocks": [
+     {
+      "type": "rich_text",
+      "block_id": "md1r/",
+      "elements": [
+       {
+        "type": "rich_text_section",
+        "elements": [
+         {
+          "type": "text",
+          "text": "Hey "
+         },
+         {
+          "type": "text",
+          "text": "Jim",
+          "style": {
+           "bold": true
+          }
+         },
+         {
+          "type": "text",
+          "text": "! It's good to see you "
+         },
+         {
+          "type": "text",
+          "text": "here",
+          "style": {
+           "italic": true
+          }
+         },
+         {
+          "type": "text",
+          "text": "! "
+         },
+         {
+          "type": "emoji",
+          "name": "smile",
+          "unicode": "1f604"
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "text": "Hey Jim! It's good to see you here! :smile:",
+    "permalink": "https://naleidworkspace.slack.com/archives/C0CA5396G03/p1792410743787639?thread_ts=1792410693.663869"
+   },
+   {
+    "db_message": {},
+    "iid": "c1c478fc-d761-451c-830d-700673be4f50",
+    "team": "T0CB5LYPVFA",
+    "score": 0,
+    "channel": {
+     "id": "C0CA5396G03",
+     "is_channel": true,
+     "is_group": false,
+     "is_im": false,
+     "is_mpim": false,
+     "is_shared": false,
+     "is_org_shared": false,
+     "is_ext_shared": false,
+     "is_private": false,
+     "is_archived": false,
+     "name": "all-naleid",
+     "pending_shared": [],
+     "is_pending_ext_shared": false
+    },
+    "type": "message",
+    "user": "U0CA61XJF2R",
+    "username": "jim",
+    "ts": "1792410693.663869",
+    "blocks": [
+     {
+      "type": "rich_text",
+      "block_id": "tUK8G",
+      "elements": [
+       {
+        "type": "rich_text_section",
+        "elements": [
+         {
+          "type": "text",
+          "text": "Hello!"
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "text": "Hello!",
+    "permalink": "https://naleidworkspace.slack.com/archives/C0CA5396G03/p1792410693663869?thread_ts=1792410693.663869"
+   }
+  ]
+ }
+}
