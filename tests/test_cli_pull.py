@@ -253,3 +253,12 @@ def test_run_records_the_command_line(f: Fixture):
     run = f.runs()[-1]
     assert run.command == "pull"
     assert run.args == [BASE, "--since", "2026-10-01", "--full"]
+
+
+def test_env_session_for_another_workspace_exits_1(f: Fixture):
+    f.sessions = [Session("", "", "", "env", "xoxc-env", "xoxd-env")]
+    result = f.pull("--yes", f"https://other.slack.com/archives/{CHANNEL}")
+    assert result.exit_code == 1
+    assert "The env credentials are for workspace naleidworkspace, not other." in result.output
+    assert "Traceback" not in result.output
+    assert f.runs()[-1].tracked == []

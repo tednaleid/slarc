@@ -22,10 +22,11 @@ class NoArchive(SlarcError):
 
 
 class NoSession(SlarcError):
-    def __init__(self, workspace: str) -> None:
+    def __init__(self, workspace: str, message: str | None = None) -> None:
         self.workspace = workspace
         super().__init__(
-            f"No Slack session found for workspace {workspace}. "
+            message
+            or f"No Slack session found for workspace {workspace}. "
             "Sign into the Slack desktop app or run `slarc auth --paste`."
         )
 

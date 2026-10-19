@@ -18,6 +18,7 @@ from slarc.ports import (
     AuthFailed,
     DirectoryState,
     Downloader,
+    NoSession,
     NotVisible,
     Reporter,
     Session,
@@ -218,6 +219,8 @@ class _Workspaces:
         gateway = self._connector.connect(workspace)
         info = gateway.auth_test()
         session = next((s for s in self._connector.sessions() if s.matches(workspace)), None)
+        if session is not None and session.serves_any_workspace:
+            _require_workspace(workspace, session, info)
         domain = (session.domain if session is not None else "") or domain_of(info)
         run = self._uow.run
         run.teams.append(info["team_id"])
@@ -232,6 +235,19 @@ class _Workspaces:
             }
         )
         return _Connection(info["team_id"], info["user_id"], domain, gateway)
+
+
+def _require_workspace(workspace: str, session: Session, info: dict) -> None:
+    """Refuses a session that serves any workspace when auth.test names a different one."""
+    domain, team_id = domain_of(info), info["team_id"]
+    if workspace not in (domain, team_id):
+        actual = domain or team_id
+        raise NoSession(
+            workspace,
+            f"The {session.source} credentials are for workspace {actual}, not {workspace}. "
+            f"Unset them to use another session, or set SLARC_DOMAIN to {actual} so they "
+            "apply only there.",
+        )
 
 
 def _missing_message(domain: str, channel: str, ts: str) -> str:

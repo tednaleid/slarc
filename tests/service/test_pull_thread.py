@@ -9,7 +9,7 @@ from slarc.domain.envelope import Envelope, Meta
 from slarc.domain.hashing import content_hash
 from slarc.domain.links import ConversationSel
 from slarc.domain.tracking import DownloadState
-from slarc.ports import SlarcError
+from slarc.ports import NoSession, Session, SlarcError
 from slarc.service.selectors import resolve_conversation
 from tests.recorded_fixtures import recorded_directory
 from tests.service.pull_harness import (
@@ -29,6 +29,7 @@ JIM = "U0CA61XJF2R"
 THREAD_LINK = f"{BASE}/p1792410693663869"
 REPLY_LINK = f"{BASE}/p1792410743787639?thread_ts={PARENT_TS}&cid={CHANNEL}"
 LONE_LINK = f"{BASE}/p1792422552941749"
+ENV_SESSION = Session("", "", "", "env", "xoxc-env", "xoxd-env")
 
 
 @pytest.fixture
@@ -296,6 +297,27 @@ def test_run_records_auth_per_workspace(h: Harness):
     run_line = json.dumps(h.lines("run")[-1].object)
     assert "xoxc-1" not in run_line
     assert "xoxd-1" not in run_line
+
+
+def test_env_session_for_another_workspace_is_refused(h: Harness):
+    h.connector.gateways = {ENV_SESSION: h.gateway}
+
+    refused = "The env credentials are for workspace naleidworkspace, not other."
+    with pytest.raises(NoSession, match=refused):
+        h.pull(f"https://other.slack.com/archives/{CHANNEL}")
+
+    assert h.tracked() == []
+    assert h.last_run().auth == []
+    assert {call[0] for call in h.gateway.calls} == {"auth.test"}
+
+
+def test_env_session_serves_the_workspace_it_authenticates_as(h: Harness):
+    h.connector.gateways = {ENV_SESSION: h.gateway}
+
+    h.pull(THREAD_LINK)
+
+    [item] = h.tracked()
+    assert (item.team_id, item.status) == (TEAM, "ok")
 
 
 def test_not_visible_item_is_skipped_with_warning(h: Harness):
