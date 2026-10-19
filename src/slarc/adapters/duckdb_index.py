@@ -7,7 +7,9 @@ from typing import Any
 
 import duckdb
 
-from slarc.ports import SlarcError
+from slarc.domain.links import message_link
+from slarc.domain.plain import snippet
+from slarc.ports import SearchHit, SlarcError
 
 MAXIMUM_OBJECT_SIZE = 67108864
 
@@ -282,7 +284,67 @@ ENTITY_VIEWS = {
             PARTITION BY meta.run ORDER BY meta.fetched_at DESC, md5(CAST(object AS VARCHAR))
         ) = 1
     """,
+    "workspace": """
+        WITH entry AS (
+            SELECT a ->> 'team_id' AS team_id, a ->> 'domain' AS domain, a ->> 'name' AS name,
+                a ->> 'user_id' AS user_id, a ->> 'credential_source' AS credential_source,
+                a ->> 'auth_test_at' AS auth_test_at
+            FROM (
+                SELECT unnest(CAST(auth AS JSON[])) AS a FROM run
+                WHERE json_type(auth) = 'ARRAY'
+            )
+        ),
+        seen AS (
+            SELECT team_id, list(DISTINCT user_id ORDER BY user_id) AS user_ids
+            FROM entry
+            WHERE user_id IS NOT NULL
+            GROUP BY team_id
+        )
+        SELECT latest.team_id, latest.domain, latest.name, seen.user_ids,
+            latest.credential_source, latest.auth_test_at AS last_auth_test
+        FROM entry latest
+        LEFT JOIN seen USING (team_id)
+        WHERE latest.team_id IS NOT NULL
+        QUALIFY row_number() OVER (
+            PARTITION BY latest.team_id
+            ORDER BY latest.auth_test_at DESC NULLS LAST, latest.domain, latest.credential_source,
+                latest.user_id
+        ) = 1
+    """,
 }
+
+# Matches newest first. Authors and conversations are named as DirectoryView names them, and a
+# link's domain falls back to the team id for a workspace no run line has authenticated.
+SEARCH = f"""
+    SELECT m.team_id, m.channel_id, m.ts, m.thread_ts, m.plain,
+        CASE WHEN m.user_id IS NOT NULL THEN coalesce(author.display, m.user_id)
+            ELSE coalesce(
+                m.object -> 'bot_profile' ->> 'name', m.object ->> 'username', 'unknown'
+            )
+        END AS author,
+        coalesce(
+            CASE c.kind
+                WHEN 'dm' THEN '@' || coalesce(dm_user.display, c.dm_user_id)
+                WHEN 'channel' THEN '#' || c.name
+                ELSE c.name
+            END,
+            m.channel_id
+        ) AS conversation,
+        coalesce(w.domain, m.team_id) AS domain
+    FROM message m
+    LEFT JOIN "user" author ON author.team_id = m.team_id AND author.id = m.user_id
+    LEFT JOIN conversation c ON c.team_id = m.team_id AND c.id = m.channel_id
+    LEFT JOIN "user" dm_user ON dm_user.team_id = c.team_id AND dm_user.id = c.dm_user_id
+    LEFT JOIN workspace w ON w.team_id = m.team_id
+    WHERE m.deleted_at IS NULL
+        AND m.plain ILIKE $pattern ESCAPE '\\'
+        AND ($in_channel IS NULL OR m.channel_id = $in_channel OR c.name = $in_channel)
+        AND ($from_user IS NULL OR m.user_id = $from_user OR lower($from_user) IN (
+            lower(author.name), lower(author.display_name), lower(author.real_name)
+        ))
+    ORDER BY {TS_ORDER.format("m.ts")} DESC, m.team_id, m.channel_id
+    LIMIT $limit
+"""
 
 MESSAGE_COLUMNS = """
     team_id, channel_id, ts, thread_ts, is_thread_parent, is_broadcast, reply_count,
@@ -309,6 +371,12 @@ def _source_query(root: Path, pattern: str) -> str:
         f"columns = {{'meta': '{META_TYPE}', 'object': 'JSON'}}, "
         f"ignore_errors = true, maximum_object_size = {MAXIMUM_OBJECT_SIZE})"
     )
+
+
+def _like_pattern(text: str) -> str:
+    """An ILIKE pattern matching text anywhere, with its wildcard characters taken literally."""
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 def _error_message(error: duckdb.Error) -> str:
@@ -348,6 +416,32 @@ class DuckDbQueryIndex:
             return columns, cursor.fetchall()
         except duckdb.Error as error:
             raise SlarcError(_error_message(error)) from None
+
+    def search(
+        self, text: str, in_channel: str | None, from_user: str | None, limit: int
+    ) -> list[SearchHit]:
+        """Current messages whose plain text contains text, ignoring case, newest first.
+
+        in_channel is a conversation id or name; from_user a user id, name, display name or
+        real name, compared ignoring case.
+        """
+        params = {
+            "pattern": _like_pattern(text),
+            "in_channel": in_channel,
+            "from_user": from_user,
+            "limit": limit,
+        }
+        rows = self._db.execute(SEARCH, params).fetchall()
+        return [
+            SearchHit(
+                author=author,
+                conversation=conversation,
+                ts=ts,
+                snippet=snippet(plain, text),
+                link=message_link(domain, channel, ts, thread_ts if thread_ts != ts else None),
+            )
+            for _, channel, ts, thread_ts, plain, author, conversation, domain in rows
+        ]
 
     def conversation_counts(self) -> dict[tuple[str, str], int]:
         rows = self._db.execute(

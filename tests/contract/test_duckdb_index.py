@@ -39,6 +39,7 @@ VIEWS = [
     "usergroup",
     "conversation",
     "run",
+    "workspace",
 ]
 
 runner = CliRunner()
@@ -233,6 +234,34 @@ def test_conversation_view_kinds(index: DuckDbQueryIndex) -> None:
         ("C0CAG251117", "group_dm", "mpdm-tim--jim--contact-1", None),
         ("D0CAD7JE1QR", "dm", None, "U0CA61XJF2R"),
     ]
+
+
+def auth_run(run: str, finished: str, auth: list[dict]) -> dict:
+    meta = {"schema": 1, "kind": "run", "fetched_at": finished, "run": run, "slarc": "0.1.0"}
+    obj = {"run": run, "command": "pull", "started": finished, "finished": finished, "auth": auth}
+    return {"meta": meta, "object": obj}
+
+
+def test_workspace_view_takes_latest_auth_per_team(archive: Path) -> None:
+    later = {
+        "team_id": RECORDED_TEAM,
+        "user_id": "U0OTHER",
+        "domain": "naleid-renamed",
+        "credential_source": "keychain",
+        "auth_test_at": LATER,
+    }
+    other = later | {"team_id": "T0OTHER", "user_id": "U0X", "domain": "other"}
+    append_line(archive / "runs.jsonl", auth_run(LATER_RUN, LATER, [later, other]))
+    with DuckDbQueryIndex(archive) as index:
+        query = (
+            "SELECT team_id, domain, user_ids, credential_source, last_auth_test "
+            "FROM workspace ORDER BY team_id"
+        )
+        assert index.sql(query)[1] == [
+            ("T0CB5LYPVFA", "naleid-renamed", ["U0CA538UEN7", "U0OTHER"], "keychain", LATER),
+            ("T0OTHER", "other", ["U0X"], "keychain", LATER),
+        ]
+        assert index.sql("SELECT name FROM workspace")[0] == ["name"]
 
 
 def test_reply_count_computed_from_stored_replies(index: DuckDbQueryIndex) -> None:

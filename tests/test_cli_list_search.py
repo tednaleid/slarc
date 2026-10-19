@@ -1,0 +1,105 @@
+# ABOUTME: Tests for the `slarc list` and `slarc search` commands over a copy of the recorded data.
+# ABOUTME: Credentials and Slack are fakes swapped in through bootstrap; only --remote uses them.
+from datetime import datetime
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from slarc import bootstrap, cli
+from slarc.adapters.credentials import CompositeSource, KeyringSource
+from slarc.cli import app
+from slarc.ports import Session
+from tests.fakes import FakeCredentialSource, FakeKeyring, FakeSlackGateway
+from tests.recorded_fixtures import copy_recorded
+from tests.service.pull_harness import NALEID, spike
+
+runner = CliRunner()
+SEED_LINK = "https://naleidworkspace.slack.com/archives/C0CA7SNHTSP/p1792437061952039"
+
+
+@pytest.fixture
+def archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = copy_recorded(tmp_path / "archive")
+    monkeypatch.chdir(root / "raw")
+    monkeypatch.setattr(cli.out, "width", 200)
+    return root
+
+
+def services(home: Path, sessions: list[Session], gateway: FakeSlackGateway | None = None):
+    def connect(_: Session) -> FakeSlackGateway:
+        if gateway is None:
+            pytest.fail("this command never connects to Slack")
+        return gateway
+
+    return bootstrap.Services(
+        credentials=CompositeSource([FakeCredentialSource(sessions)]),
+        keychain=KeyringSource(FakeKeyring()),
+        gateway_factory=connect,
+        env={},
+        home=home,
+    )
+
+
+def invoke(home: Path, *args: str, sessions: list[Session] | None = None, gateway=None):
+    with bootstrap.override(services(home, sessions or [], gateway)):
+        return runner.invoke(app, list(args))
+
+
+def test_cli_search_prints_hits(archive: Path, tmp_path: Path) -> None:
+    result = invoke(tmp_path, "search", "SLARC SEED V1")
+    assert result.exit_code == 0, result.output
+    when = datetime.fromtimestamp(1792437061).astimezone().strftime("%Y-%m-%d %H:%M")
+    lines = result.output.splitlines()
+    assert lines[0] == f"Ted Naleid in #slarc-fixtures, {when}"
+    assert "slarc seed v1" in lines[1]
+    assert lines[2].strip() == SEED_LINK
+
+
+def test_cli_search_filters_and_reports_no_matches(archive: Path, tmp_path: Path) -> None:
+    result = invoke(
+        tmp_path, "search", "joined the channel", "--in", "#all-naleid", "--from", "jim"
+    )
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[0].startswith("Jim in #all-naleid, ")
+    assert result.output.count("/archives/") == 1
+    none = invoke(tmp_path, "search", "no such words anywhere")
+    assert none.exit_code == 0, none.output
+    assert none.output.strip() == "No messages match."
+
+
+def test_cli_list_prints_archive_config_and_items(archive: Path, tmp_path: Path) -> None:
+    result = invoke(tmp_path, "list")
+    assert result.exit_code == 0, result.output
+    assert f"Archive: {archive}" in result.output
+    assert f"Config: {archive / 'slarc.toml'}" in result.output
+    for text in ("#all-naleid", "@Jim", "14", "naleidworkspace", "Downloads: 0 pending, 0 skipped"):
+        assert text in result.output
+
+
+def test_cli_list_remote_marks_tracked(archive: Path, tmp_path: Path) -> None:
+    infos = {c["id"]: c for c in spike("conversations.list")["channels"]}
+    gateway = FakeSlackGateway({"C0CA5396G03": [], "C0CA53DLVJP": []}, infos=infos)
+    result = invoke(tmp_path, "list", "--remote", sessions=[NALEID], gateway=gateway)
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert any("#all-naleid" in line and "tracked" in line for line in lines)
+    assert any("#new-channel" in line and "tracked" not in line for line in lines)
+
+
+def test_cli_list_remote_without_session_fails(archive: Path, tmp_path: Path) -> None:
+    result = invoke(tmp_path, "list", "--remote")
+    assert result.exit_code == 1
+    assert "No Slack session found for workspace" in result.output
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize("args", [["list"], ["list", "--remote"], ["search", "seed"]])
+def test_cli_list_and_search_without_archive_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: list[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = invoke(tmp_path, *args)
+    assert result.exit_code == 1
+    assert "No slarc archive found" in result.output
+    assert "Traceback" not in result.output

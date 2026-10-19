@@ -168,8 +168,22 @@ class ArchiveStore(Protocol):
     def append_run(self, run: RunRecord, slarc_version: str) -> None: ...
 
 
+@dataclass(frozen=True)
+class SearchHit:
+    """A stored message matching a search; ts is the message's Slack ts, link its permalink."""
+
+    author: str
+    conversation: str
+    ts: str
+    snippet: str
+    link: str
+
+
 class QueryIndex(Protocol):
     def sql(self, query: str) -> tuple[list[str], list[tuple]]: ...
+    def search(
+        self, text: str, in_channel: str | None, from_user: str | None, limit: int
+    ) -> list[SearchHit]: ...
     def conversation_counts(self) -> dict[tuple[str, str], int]: ...
     def messages(
         self, team: str, channel: str, since: str | None, until: str | None, include_deleted: bool

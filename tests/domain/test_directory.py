@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from slarc.domain.directory import DirectoryView
+from slarc.domain.directory import DirectoryView, conversation_kind
 
 SPIKE = Path(__file__).parent.parent / "fixtures" / "spike"
 
@@ -15,6 +15,7 @@ def _view() -> DirectoryView:
         conversations={
             "C1": {"id": "C1", "name": "general"},
             "D1": {"id": "D1", "is_im": True, "user": "U0CA61XJF2R"},
+            "G1": {"id": "G1", "name": "mpdm-a--b-1", "is_mpim": True},
         },
         usergroups={"S1": {"id": "S1", "handle": "eng"}},
         emoji={},
@@ -50,6 +51,19 @@ def test_conversation_name_and_usergroup_handle():
     assert view.conversation_name("CUNKNOWN") == "CUNKNOWN"
     assert view.usergroup_handle("S1") == "eng"
     assert view.usergroup_handle("SX") == "SX"
+
+
+def test_conversation_label_and_kind():
+    view = _view()
+    assert view.conversation_label("C1") == "#general"
+    assert view.conversation_label("D1") == "@jim"
+    assert view.conversation_label("G1") == "mpdm-a--b-1"
+    assert view.conversation_label("CUNKNOWN") == "CUNKNOWN"
+    assert [conversation_kind(view.conversations[c]) for c in ("C1", "D1", "G1")] == [
+        "channel",
+        "dm",
+        "group_dm",
+    ]
 
 
 def test_author_display_prefers_user_then_bot_profile_then_username():

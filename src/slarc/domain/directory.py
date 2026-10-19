@@ -1,6 +1,7 @@
 # ABOUTME: DirectoryView answers name lookups, falling back to the raw id for an unknown object.
-# ABOUTME: Also names the image whose blob a user or emoji line carries.
+# ABOUTME: Also names the image whose blob a user or emoji line carries, and a conversation's kind.
 from dataclasses import dataclass
+from typing import Literal
 
 from slarc.domain.envelope import Kind
 from slarc.domain.links import is_web_url
@@ -15,6 +16,17 @@ def directory_image_url(kind: Kind, obj: dict) -> str | None:
     else:
         return None
     return url if is_web_url(url) else None
+
+
+type ConversationKind = Literal["channel", "dm", "group_dm"]
+
+
+def conversation_kind(conversation: dict) -> ConversationKind:
+    if conversation.get("is_im"):
+        return "dm"
+    if conversation.get("is_mpim"):
+        return "group_dm"
+    return "channel"
 
 
 @dataclass(frozen=True)
@@ -47,6 +59,18 @@ class DirectoryView:
         if conversation.get("is_im") and conversation.get("user"):
             return self.user_display(conversation["user"])
         return channel_id
+
+    def conversation_label(self, channel_id: str) -> str:
+        """#name for a channel, @user for a DM, a group DM's name, or the raw id when unknown."""
+        conversation = self.conversations.get(channel_id)
+        if conversation is None:
+            return channel_id
+        kind = conversation_kind(conversation)
+        if kind == "dm" and conversation.get("user"):
+            return "@" + self.user_display(conversation["user"])
+        if kind == "channel" and conversation.get("name"):
+            return "#" + conversation["name"]
+        return conversation.get("name") or channel_id
 
     def usergroup_handle(self, usergroup_id: str) -> str:
         return (self.usergroups.get(usergroup_id) or {}).get("handle") or usergroup_id

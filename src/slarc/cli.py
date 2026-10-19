@@ -1,12 +1,13 @@
 # ABOUTME: Typer entrypoint for the slarc command line.
 # ABOUTME: Each command takes its adapters from bootstrap and calls the service layer.
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 from typing import Annotated, Any, NoReturn
 
 import typer
+from rich import box
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TaskID, TextColumn
 from rich.table import Table
@@ -23,7 +24,9 @@ from slarc.config import (
 from slarc.domain.links import parse_selector
 from slarc.ports import NoArchive, NoSession, SlarcError
 from slarc.service.auth import AuthStatus, auth_status, store_pasted
+from slarc.service.listing import ArchiveListing, RemoteRow, list_archive, list_remote
 from slarc.service.pull import PullOptions, PullReport, pull
+from slarc.service.search import search
 from slarc.unit_of_work import UnitOfWork
 
 app = typer.Typer(
@@ -41,6 +44,11 @@ RANGE_NEEDS_SELECTORS = "--since and --until apply only to links named on the co
 INTERRUPTED = "Interrupted; progress so far is saved."
 INTERRUPTED_EXIT = 130
 MB = 1024 * 1024
+NO_WORKSPACE = "This archive tracks no workspace yet. Pull a Slack link first."
+NO_TRACKED_ITEMS = "No tracked items yet. Pull a Slack link to start tracking it."
+NO_MATCHES = "No messages match."
+LOCAL_TIME = "%Y-%m-%d %H:%M"
+FETCHED_AT = "%Y-%m-%dT%H:%M:%SZ"
 
 
 def _print_version(value: bool) -> None:
@@ -339,3 +347,146 @@ def sql_command(
     for row in rows:
         table.add_row(*(_cell(value) for value in row))
     out.print(table)
+
+
+def _local_time(moment: datetime) -> str:
+    return moment.astimezone().strftime(LOCAL_TIME)
+
+
+def _ts_time(ts: str) -> str:
+    return _local_time(datetime.fromtimestamp(int(ts.split(".")[0]), UTC))
+
+
+def _fetched_time(fetched_at: str | None) -> str:
+    if fetched_at is None:
+        return ""
+    return _local_time(datetime.strptime(fetched_at, FETCHED_AT).replace(tzinfo=UTC))
+
+
+def _table(headers: list[str], rows: list[list[object]]) -> Table:
+    table = Table(box=box.SIMPLE_HEAD)
+    for header in headers:
+        table.add_column(Text(header), overflow="fold")
+    for row in rows:
+        table.add_row(*(Text(str(value)) for value in row))
+    return table
+
+
+def _print_listing(listing: ArchiveListing) -> None:
+    out.print(f"Archive: {listing.archive}", markup=False)
+    config = ", ".join(str(path) for path in listing.config_files) or "none, built-in defaults"
+    out.print(f"Config: {config}", markup=False)
+    if listing.rows:
+        headers = [
+            "Workspace",
+            "Conversation",
+            "Kind",
+            "Messages",
+            "Last pull",
+            "Pending",
+            "Skipped",
+            "Status",
+        ]
+        rows: list[list[object]] = [
+            [
+                row.workspace,
+                row.conversation,
+                row.kind,
+                row.messages,
+                _fetched_time(row.last_pull),
+                row.pending,
+                row.skipped,
+                row.status,
+            ]
+            for row in listing.rows
+        ]
+        out.print(_table(headers, rows))
+    else:
+        out.print(NO_TRACKED_ITEMS, markup=False)
+    out.print(f"Downloads: {listing.pending} pending, {listing.skipped} skipped.", markup=False)
+
+
+def _print_remote(rows: list[RemoteRow]) -> None:
+    headers = ["Workspace", "Conversation", "Kind", "Id", "Tracked"]
+    cells: list[list[object]] = [
+        [row.workspace, row.conversation, row.kind, row.channel, "tracked" if row.tracked else ""]
+        for row in rows
+    ]
+    out.print(_table(headers, cells))
+
+
+@app.command("list")
+def list_command(
+    remote: Annotated[
+        bool,
+        typer.Option(
+            "--remote", help="List every conversation Slack shows you, marking tracked ones."
+        ),
+    ] = False,
+    root: Annotated[
+        Path | None, typer.Option(metavar="DIR", help="The archive directory to use.")
+    ] = None,
+) -> None:
+    """Show the archive, its config files and each tracked item."""
+    services = bootstrap.current_services()
+    try:
+        archive_root = _existing_archive(root, services.env, services.home)
+        if remote:
+            connector = services.connector()
+            with bootstrap.archive_stores(archive_root) as (archive, _):
+                teams = sorted({team_id for team_id, _, _, _ in archive.tracked_items()})
+                if not teams:
+                    _fail(NO_WORKSPACE)
+                remote_rows = [
+                    row for team in teams for row in list_remote(connector, team, archive)
+                ]
+            _print_remote(remote_rows)
+            return
+        global_config = read_global_config(services.env, services.home)
+        settings = load_settings(archive_root, global_config, services.env, {})
+        with (
+            bootstrap.archive_stores(archive_root) as (archive, _),
+            bootstrap.query_index(archive_root) as index,
+        ):
+            listing = list_archive(settings, archive, index)
+    except NoSession as error:
+        _warn([str(e) for e in services.credentials.errors])
+        _fail(str(error))
+    except SlarcError as error:
+        _fail(str(error))
+    _print_listing(listing)
+
+
+@app.command("search")
+def search_command(
+    query: Annotated[str, typer.Argument(help="Text to find in messages, ignoring case.")],
+    in_conv: Annotated[
+        str | None,
+        typer.Option(
+            "--in", metavar="CONV", help="Only this conversation: #channel-name or its id."
+        ),
+    ] = None,
+    from_user: Annotated[
+        str | None,
+        typer.Option("--from", metavar="USER", help="Only messages by this user: a name or id."),
+    ] = None,
+    root: Annotated[
+        Path | None, typer.Option(metavar="DIR", help="The archive directory to use.")
+    ] = None,
+) -> None:
+    """Find archived messages containing the text, newest first, with their Slack links."""
+    services = bootstrap.current_services()
+    try:
+        archive_root = _existing_archive(root, services.env, services.home)
+        with bootstrap.query_index(archive_root) as index:
+            hits = search(index, query, in_conv, from_user)
+    except SlarcError as error:
+        _fail(str(error))
+    if not hits:
+        out.print(NO_MATCHES, markup=False)
+    for number, hit in enumerate(hits):
+        if number:
+            out.print()
+        out.print(f"{hit.author} in {hit.conversation}, {_ts_time(hit.ts)}", markup=False)
+        out.print(f"  {hit.snippet}", markup=False)
+        out.print(f"  {hit.link}", markup=False)

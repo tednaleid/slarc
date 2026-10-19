@@ -1,10 +1,12 @@
 # ABOUTME: plain_text renders a Slack message as readable text for meta.plain.
-# ABOUTME: Resolves mentions, channels, emoji and links through a DirectoryView.
+# ABOUTME: Resolves mentions, channels, emoji and links through a DirectoryView; snippet cuts it.
 import re
 
 from slarc.domain.directory import DirectoryView
 
 _MRKDWN_TOKEN = re.compile(r"<([^<>]+)>")
+SNIPPET_WIDTH = 120
+ELLIPSIS = "..."
 
 
 def plain_text(message: dict, view: DirectoryView) -> str:
@@ -97,3 +99,16 @@ def _layout_parts(blocks: list[dict], view: DirectoryView) -> list[str]:
             case "image":
                 parts.append(block.get("alt_text", ""))
     return parts
+
+
+def snippet(plain: str, text: str, width: int = SNIPPET_WIDTH) -> str:
+    """plain on one line, cut to width characters around the first case-insensitive match."""
+    line = " ".join(plain.split())
+    if len(line) <= width:
+        return line
+    needle = " ".join(text.split()).lower()
+    found = line.lower().find(needle)
+    margin = max(0, (width - len(needle)) // 2)
+    start = 0 if found < 0 else max(0, min(found - margin, len(line) - width))
+    end = start + width
+    return (ELLIPSIS if start else "") + line[start:end] + (ELLIPSIS if end < len(line) else "")
