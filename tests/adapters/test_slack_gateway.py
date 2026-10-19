@@ -172,6 +172,26 @@ def test_gateway_pages_search_through_limiter():
     assert limiter.acquired == ["search.messages", "search.messages"]
 
 
+class WaitingLimiter:
+    def __init__(self, waits: list[float]) -> None:
+        self.waits = waits
+
+    def acquire(self, method: str) -> float:
+        return self.waits.pop(0)
+
+
+def test_gateway_totals_rate_limiter_waits():
+    api = FakeWebApi()
+    gateway = SessionTokenGateway(make_session(), WaitingLimiter([0.0, 1.5, 0.25]), lambda _: api)
+
+    assert gateway.rate_limit_wait_s == 0.0
+    gateway.auth_test()
+    list(gateway.users())
+    gateway.emoji()
+
+    assert gateway.rate_limit_wait_s == 1.75
+
+
 def test_gateway_pages_directories_and_unwraps_objects():
     users = spike("users.list")["members"]
     api = FakeWebApi(

@@ -45,6 +45,7 @@ HISTORY_API = "conversations.history"
 REPLIES_API = "conversations.replies"
 BOTS_API = "bots.info"
 MESSAGES_SEEN = "messages_seen"
+RATE_LIMIT_WAIT = "rate_limit_wait_s"
 
 type ItemKey = tuple[str, str, str, str]
 
@@ -79,13 +80,16 @@ def pull(
 ) -> PullReport:
     """Pulls the selected items, or every tracked item when selectors is empty."""
     run = _PullRun(options, uow, reporter, _Workspaces(connector, uow))
-    items = run.resolve(selectors)
-    for team_id in dict.fromkeys(item.team_id for item in items):
-        run.pull_workspace(team_id, [i for i in items if i.team_id == team_id])
-    pending = drain_downloads(
-        uow, downloader, options.downloads, options.max_file_bytes, run.workspaces, reporter
-    )
     counts = uow.run.counts
+    try:
+        items = run.resolve(selectors)
+        for team_id in dict.fromkeys(item.team_id for item in items):
+            run.pull_workspace(team_id, [i for i in items if i.team_id == team_id])
+        pending = drain_downloads(
+            uow, downloader, options.downloads, options.max_file_bytes, run.workspaces, reporter
+        )
+    finally:
+        counts[RATE_LIMIT_WAIT] = run.workspaces.rate_limit_wait_s()
     return PullReport(
         items_pulled=sum(1 for item in uow.run.tracked if item.status == "ok"),
         lines_appended=int(counts.get(LINES_APPENDED, 0)),
@@ -196,6 +200,9 @@ class _Workspaces:
 
     def connect(self, workspace: str) -> SlackGateway:
         return self.connection(workspace).gateway
+
+    def rate_limit_wait_s(self) -> float:
+        return sum(c.gateway.rate_limit_wait_s for c in self._connections.values())
 
     def connection(self, workspace: str) -> _Connection:
         """Takes a domain or team id."""

@@ -106,6 +106,8 @@ class SlackGateway(Protocol):
     def emoji(self) -> dict[str, str]: ...
     def bot_info(self, bot_id: str) -> dict: ...
     def file_info(self, file_id: str) -> dict: ...  # the file object; raises FileDeleted
+    @property
+    def rate_limit_wait_s(self) -> float: ...  # seconds its calls waited for the limiter
 
 
 class SlackConnector(Protocol):

@@ -154,6 +154,7 @@ class FakeSlackGateway:
         self.auth_error = auth_error
         self.page_size = page_size
         self.calls: list[tuple[str | None, ...]] = []
+        self.rate_limit_wait_s = 0.0
 
     def auth_test(self) -> dict:
         self.calls.append(("auth.test",))

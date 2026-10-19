@@ -137,6 +137,28 @@ def test_incremental_pull_fetches_only_newer(h: Harness):
     assert (item.newest_ts, item.oldest_ts, item.backfill_complete) == (newer[-1], stamps[0], True)
 
 
+def test_run_line_records_rate_limit_waits(h: Harness):
+    h.gateway.rate_limit_wait_s = 2.5
+
+    h.pull(BASE)
+
+    assert h.last_run().counts["rate_limit_wait_s"] == 2.5
+
+
+def test_interrupted_run_line_records_rate_limit_waits(h: Harness, monkeypatch: pytest.MonkeyPatch):
+    h.gateway.rate_limit_wait_s = 1.25
+
+    def interrupted(channel: str, oldest: str | None, latest: str | None) -> Iterator[list[dict]]:
+        raise KeyboardInterrupt
+        yield []
+
+    monkeypatch.setattr(h.gateway, "history", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        h.pull(BASE)
+
+    assert h.last_run().counts["rate_limit_wait_s"] == 1.25
+
+
 def test_interrupted_backfill_resumes_from_oldest_ts(h: Harness, monkeypatch: pytest.MonkeyPatch):
     stamps = [ts_on(18, hour) for hour in range(7)]
     h.serve(stamps, page_size=2)
