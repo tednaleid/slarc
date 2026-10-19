@@ -1,0 +1,22 @@
+# ABOUTME: CI workflow: runs `just check` on Linux and macOS for pushes and pull requests.
+# ABOUTME: Keeps CI identical to the local pre-commit check.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just check
