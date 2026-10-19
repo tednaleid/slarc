@@ -24,6 +24,7 @@ from slarc.config import (
 from slarc.domain.links import parse_selector
 from slarc.ports import NoArchive, NoSession, SlarcError
 from slarc.service.auth import AuthStatus, auth_status, store_pasted
+from slarc.service.export import export
 from slarc.service.listing import ArchiveListing, RemoteRow, list_archive, list_remote
 from slarc.service.pull import PullOptions, PullReport, pull
 from slarc.service.search import search
@@ -490,3 +491,70 @@ def search_command(
         out.print(f"{hit.author} in {hit.conversation}, {_ts_time(hit.ts)}", markup=False)
         out.print(f"  {hit.snippet}", markup=False)
         out.print(f"  {hit.link}", markup=False)
+
+
+@app.command("export")
+def export_command(
+    selectors: Annotated[
+        list[str],
+        typer.Argument(
+            help="Slack links, conversation ids, #channel-name or @user to export.",
+            show_default=False,
+        ),
+    ],
+    out_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--out",
+            metavar="DIR",
+            help="Directory to write, or the HTML file with --single-file. "
+            "Default: slarc-export-<conversation name> here.",
+        ),
+    ] = None,
+    single_file: Annotated[
+        bool,
+        typer.Option("--single-file", help="Write one HTML file with every asset inlined."),
+    ] = False,
+    include_deleted: Annotated[
+        bool,
+        typer.Option("--include-deleted", help="Include messages deleted from Slack, marked."),
+    ] = False,
+    tz: Annotated[
+        str | None,
+        typer.Option(
+            metavar="ZONE",
+            help="Show times in this zone, such as America/Chicago, instead of the viewer's.",
+        ),
+    ] = None,
+    root: Annotated[
+        Path | None, typer.Option(metavar="DIR", help="The archive directory to use.")
+    ] = None,
+) -> None:
+    """Write static HTML of the archived conversations and threads the links name."""
+    try:
+        parsed = [parse_selector(text) for text in selectors]
+    except ValueError as error:
+        _fail(str(error))
+    services = bootstrap.current_services()
+    try:
+        archive_root = _existing_archive(root, services.env, services.home)
+        global_config = read_global_config(services.env, services.home)
+        settings = load_settings(archive_root, global_config, services.env, {"tz": tz})
+        with (
+            bootstrap.archive_stores(archive_root) as (archive, blobs),
+            bootstrap.query_index(archive_root) as index,
+        ):
+            written = export(
+                parsed,
+                out_path,
+                single_file,
+                include_deleted,
+                settings.tz,
+                index,
+                blobs,
+                archive,
+                bootstrap.export_writer(),
+            )
+    except SlarcError as error:
+        _fail(str(error))
+    out.print(f"Exported to {written.absolute()}.", markup=False)

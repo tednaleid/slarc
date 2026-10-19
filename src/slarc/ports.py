@@ -3,6 +3,7 @@
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Literal, Protocol
 
 from slarc.domain.envelope import Envelope, Kind
@@ -155,6 +156,12 @@ class BlobStore(Protocol):
     def write(self, chunks: Iterable[bytes]) -> tuple[str, int]: ...
     def exists(self, sha256: str) -> bool: ...
     def read(self, sha256: str) -> bytes: ...
+
+
+class ExportWriter(Protocol):
+    """Writes one file of an export, creating its directories and replacing an existing file."""
+
+    def write(self, path: Path, data: bytes) -> None: ...
 
 
 class ArchiveStore(Protocol):

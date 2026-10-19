@@ -1,0 +1,31 @@
+{# ABOUTME: One file of a message, f: an image, player, highlighted snippet or download link, #}
+{# ABOUTME: or a placeholder for a deleted, hidden, too large, external or missing file. #}
+<div class="file file-{{ f.kind }}">
+{% if f.kind == "image" %}
+<img src="{{ f.src }}" alt="{{ f.name }}" title="{{ f.name }}" loading="lazy">
+{% elif f.kind == "video" %}
+<video controls preload="metadata"><source src="{{ f.src }}" type="{{ f.mimetype }}"></video>
+<div class="file-name">{{ f.name }}</div>
+{% elif f.kind == "audio" %}
+<audio controls preload="metadata"><source src="{{ f.src }}" type="{{ f.mimetype }}"></audio>
+<div class="file-name">{{ f.name }}</div>
+{% elif f.kind == "snippet" %}
+<div class="file-name">{{ f.name }}</div>
+{{ f.code }}
+{% if f.note %}
+<div class="note">{{ f.note }}</div>
+{% endif %}
+{% elif f.kind == "download" %}
+<a href="{{ f.src }}" download="{{ f.name }}">{{ f.name }}</a> <span class="size">{{ f.size }}</span>
+{% elif f.kind == "tombstone" %}
+<div class="placeholder">This file was deleted.</div>
+{% elif f.kind == "hidden_by_limit" %}
+<div class="placeholder">This file is hidden by the workspace's message history limit.</div>
+{% elif f.kind == "too_large" %}
+<div class="placeholder">{{ f.name }} was not downloaded because it is larger than the download limit.</div>
+{% elif f.kind == "external" %}
+<div class="placeholder">External file: {% if f.link %}<a href="{{ f.link }}">{{ f.name }}</a>{% else %}{{ f.name }}{% endif %}</div>
+{% else %}
+<div class="placeholder">{{ f.name }} was not downloaded.</div>
+{% endif %}
+</div>

@@ -1,0 +1,389 @@
+/* ABOUTME: Styles for exported pages: the message list, its chrome and the renderer's classes. */
+/* ABOUTME: The export appends Pygments' rules for .highlight, which snippets use. */
+:root {
+  --text: #1d1c1d;
+  --muted: #616061;
+  --line: #dddddd;
+  --soft: #f8f8f8;
+  --link: #1264a3;
+  --mention: #e8f5fa;
+  --background: #ffffff;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--text);
+  font: 15px/1.46668 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+}
+
+a {
+  color: var(--link);
+}
+
+main.index,
+nav.pages,
+section.conversation {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+nav.pages {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 16px;
+}
+
+section.conversation > header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+  padding: 8px 0;
+  background: var(--background);
+  border-bottom: 1px solid var(--line);
+}
+
+section.conversation > header h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.back,
+.jump,
+.count,
+.size,
+.note,
+.latest {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.day-divider {
+  display: flex;
+  align-items: center;
+  margin: 16px 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.day-divider::before,
+.day-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--line);
+}
+
+.day-divider span {
+  padding: 0 12px;
+}
+
+.message {
+  display: flex;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.message:target {
+  background: #fff8e1;
+}
+
+.avatar {
+  flex: 0 0 36px;
+}
+
+.avatar img {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+}
+
+.author {
+  font-weight: 700;
+}
+
+.app {
+  padding: 0 4px;
+  border-radius: 2px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.permalink,
+.edited {
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.body p,
+.body blockquote,
+.body pre,
+.body ul,
+.body ol {
+  margin: 0 0 4px;
+}
+
+.body blockquote {
+  padding-left: 12px;
+  border-left: 4px solid var(--line);
+}
+
+.body pre,
+.body code {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--soft);
+  font-family: Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.body pre {
+  padding: 8px;
+  white-space: pre-wrap;
+}
+
+.body pre code {
+  border: 0;
+}
+
+.mention {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: var(--mention);
+  color: var(--link);
+}
+
+span.emoji {
+  font-size: 1.2em;
+}
+
+img.emoji {
+  width: 1.375em;
+  height: 1.375em;
+  vertical-align: -0.3em;
+}
+
+.unknown,
+.generic-message {
+  color: var(--muted);
+}
+
+.unknown {
+  font-style: italic;
+}
+
+.header {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.section,
+.mrkdwn {
+  white-space: normal;
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 16px;
+}
+
+.context {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.context-image {
+  width: 16px;
+  height: 16px;
+  vertical-align: middle;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.action {
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+figure.image {
+  margin: 4px 0;
+}
+
+figure.image img,
+.file-image img,
+.attachment-image,
+video {
+  max-width: min(100%, 480px);
+  height: auto;
+  border-radius: 4px;
+}
+
+figure.image figcaption {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.system,
+.system-group summary {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.system-group {
+  margin: 2px 0;
+}
+
+.system-group summary {
+  cursor: pointer;
+}
+
+.deleted .body {
+  opacity: 0.6;
+}
+
+.deleted-marker,
+.broadcast {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.attachment {
+  overflow: hidden;
+  margin: 4px 0;
+  padding: 4px 12px;
+  border-left: 4px solid var(--line);
+}
+
+.attachment .service {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.service-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.attachment .title {
+  font-weight: 700;
+}
+
+.attachment .thumb {
+  float: right;
+  width: 75px;
+  height: 75px;
+  margin-left: 12px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.file-name {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.file-snippet .highlight {
+  max-height: 480px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.file-snippet .highlight pre {
+  margin: 0;
+  padding: 8px;
+  font-family: Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.placeholder {
+  display: inline-block;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--soft);
+  font-size: 12px;
+}
+
+.thread {
+  margin-top: 4px;
+}
+
+.thread > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.participants img {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+}
+
+.reply-count {
+  color: var(--link);
+  font-weight: 700;
+}
+
+.replies {
+  margin-top: 4px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+}

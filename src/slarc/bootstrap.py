@@ -16,9 +16,18 @@ from slarc.adapters.credentials import CompositeSource, EnvSource, KeyringSource
 from slarc.adapters.desktop_session import DesktopSessionSource
 from slarc.adapters.downloader import HttpDownloader
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
+from slarc.adapters.export_writer import FsExportWriter
 from slarc.adapters.jsonl_store import JsonlArchiveStore
 from slarc.adapters.slack_gateway import USER_AGENT, SessionConnector, session_gateway
-from slarc.ports import BlobStore, Clock, Downloader, QueryIndex, Session, SlackGateway
+from slarc.ports import (
+    BlobStore,
+    Clock,
+    Downloader,
+    ExportWriter,
+    QueryIndex,
+    Session,
+    SlackGateway,
+)
 
 DOWNLOAD_TIMEOUT_S = 60.0
 
@@ -55,6 +64,10 @@ def query_index(root: Path) -> Generator[QueryIndex]:
     """Views over the archive's JSONL files, closed on exit."""
     with DuckDbQueryIndex(root) as index:
         yield index
+
+
+def export_writer() -> ExportWriter:
+    return FsExportWriter()
 
 
 @dataclass(frozen=True)

@@ -50,7 +50,7 @@ class RemoteRow:
 
 
 def list_archive(settings: Settings, archive: ArchiveStore, index: QueryIndex) -> ArchiveListing:
-    domains = {team_id: domain for team_id, domain in index.sql(WORKSPACE_DOMAINS)[1]}
+    domains = workspace_domains(index)
     outstanding = outstanding_downloads(archive)
     pending = {key for key, state in outstanding.items() if state.status in QUEUED_STATUSES}
     skipped = {key for key, state in outstanding.items() if state.status in SKIPPED_STATUSES}
@@ -81,6 +81,11 @@ def list_archive(settings: Settings, archive: ArchiveStore, index: QueryIndex) -
     return ArchiveListing(
         settings.archive, list(settings.sources), rows, len(pending), len(skipped)
     )
+
+
+def workspace_domains(index: QueryIndex) -> dict[str, str]:
+    """The Slack domain of each workspace a run has authenticated, by team id."""
+    return {team_id: domain for team_id, domain in index.sql(WORKSPACE_DOMAINS)[1] if domain}
 
 
 def list_remote(

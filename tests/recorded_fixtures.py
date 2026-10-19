@@ -1,10 +1,11 @@
 # ABOUTME: Readers for the archive recorded from the test workspace in tests/fixtures/workspace/.
-# ABOUTME: Returns raw lines, the newest directory object per id and a DirectoryView, or a copy.
+# ABOUTME: Returns raw lines, the newest directory object per id, a DirectoryView, blobs or a copy.
 import json
 import shutil
 from pathlib import Path
 
 from slarc.domain.directory import DirectoryView
+from tests.fakes import InMemoryBlobStore
 
 RECORDED = Path(__file__).parent / "fixtures" / "workspace"
 RECORDED_TEAM = "T0CB5LYPVFA"
@@ -34,6 +35,15 @@ def copy_recorded(target: Path) -> Path:
     """A copy of the recorded archive, without its blobs, at target."""
     shutil.copytree(RECORDED, target, ignore=shutil.ignore_patterns("blobs"))
     return target
+
+
+def recorded_blobs() -> InMemoryBlobStore:
+    """The recorded blobs, which leave out those over 1 MiB, in an in-memory blob store."""
+    blobs = InMemoryBlobStore()
+    for path in sorted((RECORDED / "blobs").rglob("*")):
+        if path.is_file():
+            blobs.write([path.read_bytes()])
+    return blobs
 
 
 def recorded_view() -> DirectoryView:

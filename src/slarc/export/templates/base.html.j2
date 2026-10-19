@@ -1,0 +1,24 @@
+{# ABOUTME: Skeleton every export page extends: head, stylesheet, the page's content and viewer.js. #}
+{# ABOUTME: A single-file export inlines the CSS and JS; a folder export links viewer.css and .js. #}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="slarc">
+<title>{{ title }}</title>
+{% if inline %}
+<style>{{ css }}</style>
+{% else %}
+<link rel="stylesheet" href="viewer.css">
+{% endif %}
+</head>
+<body data-tz="{{ tz or '' }}">
+{% block content %}{% endblock %}
+{% if inline %}
+<script>{{ js }}</script>
+{% else %}
+<script src="viewer.js"></script>
+{% endif %}
+</body>
+</html>

@@ -1,0 +1,51 @@
+{# ABOUTME: One message, m: avatar, author, time, edit marker, body, link previews, files, #}
+{# ABOUTME: reactions and its thread. System messages are muted and have no avatar. #}
+<article class="message{% if m.system %} system{% endif %}{% if m.deleted %} deleted{% endif %}" id="{{ m.anchor }}" data-ts="{{ m.ts }}">
+{% if not m.system %}
+<div class="avatar">{% if m.avatar %}<img src="{{ m.avatar }}" alt="">{% endif %}</div>
+{% endif %}
+<div class="content">
+<div class="meta">
+{% if m.author %}
+<span class="author">{{ m.author }}</span>
+{% endif %}
+{% if m.app %}
+<span class="app">{{ m.app }}</span>
+{% endif %}
+<a class="permalink" href="#{{ m.anchor }}"><time datetime="{{ m.time.iso }}" data-format="time" title="{{ m.time.full }}{% if m.author_time %} ({{ m.author_time }}){% endif %}"{% if m.author_time %} data-author-time="{{ m.author_time }}"{% endif %}>{{ m.time.clock }}</time></a>
+{% if m.edited %}
+<time class="edited" datetime="{{ m.edited.iso }}" data-format="edited" title="Edited {{ m.edited.full }}">(edited)</time>
+{% endif %}
+</div>
+{% if m.deleted %}
+<div class="deleted-marker">Deleted from Slack, noticed <time datetime="{{ m.deleted.iso }}" data-format="full">{{ m.deleted.full }}</time></div>
+{% endif %}
+{% if m.broadcast == "from_thread" %}
+<div class="broadcast">Replied to a thread: <a href="#{{ m.parent_anchor }}">view the thread</a></div>
+{% elif m.broadcast == "to_channel" %}
+<div class="broadcast">Also sent to the channel</div>
+{% endif %}
+<div class="body">{{ m.body }}</div>
+{% for a in m.attachments %}
+{% include "_attachment.html.j2" %}
+{% endfor %}
+{% if m.files %}
+<div class="files">
+{% for f in m.files %}
+{% include "_file.html.j2" %}
+{% endfor %}
+</div>
+{% endif %}
+{% if m.reactions %}
+<div class="reactions">
+{% for r in m.reactions %}
+<span class="reaction" title="{{ r.title }}">{% for e in r.emoji %}{{ e }}{% endfor %}<span class="count">{{ r.count }}</span></span>
+{% endfor %}
+</div>
+{% endif %}
+{% if m.thread %}
+{% set thread = m.thread %}
+{% include "_thread.html.j2" %}
+{% endif %}
+</div>
+</article>

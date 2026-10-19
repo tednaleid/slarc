@@ -1,8 +1,9 @@
-# ABOUTME: In-memory test doubles for slarc's ports: archive, blobs, clock, Slack and credentials.
+# ABOUTME: In-memory doubles for slarc's ports: archive, blobs, export files, Slack and credentials.
 # ABOUTME: The archive fake reads like the JSONL store; the Slack fake pages and fails like Slack.
 import hashlib
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Literal
 
 from slarc import archive_state
@@ -79,6 +80,17 @@ class InMemoryBlobStore:
 
     def read(self, sha256: str) -> bytes:
         return self.blobs[sha256]
+
+
+class InMemoryExportWriter:
+    def __init__(self) -> None:
+        self.files: dict[Path, bytes] = {}
+
+    def write(self, path: Path, data: bytes) -> None:
+        self.files[path] = data
+
+    def text(self, path: Path) -> str:
+        return self.files[path].decode("utf-8")
 
 
 class FakeClock:

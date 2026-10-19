@@ -1,0 +1,13 @@
+{# ABOUTME: The index page of a folder export: a link to each exported conversation or thread. #}
+{# ABOUTME: Each entry shows the page's title and how many messages it holds. #}
+{% extends "base.html.j2" %}
+{% block content %}
+<main class="index">
+<h1>{{ title }}</h1>
+<ul class="pages">
+{% for page in pages %}
+<li><a href="{{ page.filename }}">{{ page.title }}</a> <span class="count">{{ page.count }} message{{ "" if page.count == 1 else "s" }}</span></li>
+{% endfor %}
+</ul>
+</main>
+{% endblock %}

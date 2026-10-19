@@ -1,0 +1,24 @@
+{# ABOUTME: A thread under its parent message: reply count, participant avatars and last reply #}
+{# ABOUTME: time in the summary, and the replies inside a <details> that expands without JS. #}
+<details class="thread"{% if thread.open %} open{% endif %}>
+<summary>
+<span class="participants">
+{% for p in thread.participants %}
+{% if p.src %}
+<img src="{{ p.src }}" alt="{{ p.name }}" title="{{ p.name }}">
+{% else %}
+<span class="participant">{{ p.name }}</span>
+{% endif %}
+{% endfor %}
+</span>
+<span class="reply-count">{{ thread.replies|length }} {{ "reply" if thread.replies|length == 1 else "replies" }}</span>
+{% if thread.latest %}
+<span class="latest">Last reply <time datetime="{{ thread.latest.iso }}" data-format="full">{{ thread.latest.full }}</time></span>
+{% endif %}
+</summary>
+<div class="replies">
+{% for m in thread.replies %}
+{% include "_message.html.j2" %}
+{% endfor %}
+</div>
+</details>

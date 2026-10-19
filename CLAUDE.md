@@ -14,7 +14,7 @@ Plan and progress: `docs/plans/`. Verified Slack facts: `docs/specs/phase0-spike
 
 - Test first: write a failing test, watch it fail, then make it pass.
 - Domain and service layer never import `slack_sdk`, `duckdb`, `httpx` or `keyring`, and never touch the filesystem or environment. Every port except `QueryIndex` has an in-memory fake; `QueryIndex` is tested through DuckDB over a temp archive.
-- Exception: the domain reads its packaged emoji table, `src/slarc/data/emoji.json`, through `importlib.resources`.
+- Exception: through `importlib.resources`, the domain reads its packaged emoji table, `src/slarc/data/emoji.json`, and the export service its templates and static files under `src/slarc/export/`.
 - slarc never calls a Slack method that changes anything. Only `scripts/seed-test-workspace.py` posts, and only to `naleidworkspace` (team `T0CB5LYPVFA`).
 - Live Slack calls are read-only, against the test workspace only, using the desktop session. The session holds tokens for other workspaces; never use them.
 - Never print, log, commit or put in fixtures a token, cookie or keychain secret.

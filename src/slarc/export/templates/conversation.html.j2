@@ -1,0 +1,44 @@
+{# ABOUTME: One or more exported conversations or threads, each a section of day dividers, runs #}
+{# ABOUTME: of system messages and messages. A single-file export lists its sections at the top. #}
+{% extends "base.html.j2" %}
+{% block content %}
+{% if nav %}
+<nav class="pages">
+<h1>{{ title }}</h1>
+<ul>
+{% for page in pages %}
+<li><a href="#{{ page.section_id }}">{{ page.title }}</a> <span class="count">{{ page.count }} message{{ "" if page.count == 1 else "s" }}</span></li>
+{% endfor %}
+</ul>
+</nav>
+{% endif %}
+{% for page in pages %}
+<section class="conversation" id="{{ page.section_id }}">
+<header>
+{% if not inline %}
+<a class="back" href="index.html">All exported conversations</a>
+{% endif %}
+<h1>{{ page.title }}</h1>
+<label class="jump">Jump to date <input type="date"></label>
+</header>
+<div class="messages">
+{% for entry in page.entries %}
+{% if entry.kind == "day" %}
+<div class="day-divider" data-day="{{ entry.moment.day }}"><span>{{ entry.moment.day_label }}</span></div>
+{% elif entry.kind == "system" %}
+<details class="system-group" data-ts="{{ entry.messages[0].ts }}">
+<summary>{{ entry.messages|length }} system message{{ "" if entry.messages|length == 1 else "s" }}</summary>
+{% for m in entry.messages %}
+{% include "_message.html.j2" %}
+{% endfor %}
+</details>
+{% else %}
+{% for m in entry.messages %}
+{% include "_message.html.j2" %}
+{% endfor %}
+{% endif %}
+{% endfor %}
+</div>
+</section>
+{% endfor %}
+{% endblock %}
