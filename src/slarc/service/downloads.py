@@ -17,6 +17,8 @@ from slarc.ports import (
     DownloadJob,
     DownloadResult,
     FileDeleted,
+    NoSession,
+    Reporter,
     SlackConnector,
     SlarcError,
 )
@@ -100,6 +102,7 @@ def drain_downloads(
     parallelism: int,
     max_bytes: int,
     connector: SlackConnector,
+    reporter: Reporter,
 ) -> int:
     """Downloads this run's pending targets and earlier runs' queue, recording each result.
 
@@ -107,6 +110,7 @@ def drain_downloads(
     """
     _requeue_earlier(uow, max_bytes)
     jobs = [_job(state, max_bytes) for state in uow.run.downloads if state.status == "pending"]
+    jobs = _with_credentials(jobs, connector, reporter)
     if jobs:
         recorder = _Recorder(uow, connector)
         try:
@@ -115,6 +119,26 @@ def drain_downloads(
         finally:
             recorder.finish()
     return sum(1 for state in uow.run.downloads if state.status in QUEUED_STATUSES)
+
+
+def _with_credentials(
+    jobs: list[DownloadJob], connector: SlackConnector, reporter: Reporter
+) -> list[DownloadJob]:
+    """The jobs to fetch, connecting each workspace whose Slack files need its credentials.
+
+    A workspace that cannot connect keeps its Slack file jobs queued, untried, with one warning.
+    """
+    unreachable = set()
+    for team_id in dict.fromkeys(job.team_id for job in jobs if job.slack_auth):
+        try:
+            connector.connect(team_id)
+        except (NoSession, AuthFailed) as error:
+            reporter.warn(
+                f"Could not connect to workspace {team_id}, so its queued file downloads wait "
+                f"for a later pull: {error}"
+            )
+            unreachable.add(team_id)
+    return [job for job in jobs if not (job.slack_auth and job.team_id in unreachable)]
 
 
 def outstanding_downloads(archive: ArchiveStore) -> dict[DownloadKey, DownloadState]:

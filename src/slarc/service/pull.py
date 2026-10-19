@@ -83,7 +83,7 @@ def pull(
     for team_id in dict.fromkeys(item.team_id for item in items):
         run.pull_workspace(team_id, [i for i in items if i.team_id == team_id])
     pending = drain_downloads(
-        uow, downloader, options.downloads, options.max_file_bytes, run.workspaces
+        uow, downloader, options.downloads, options.max_file_bytes, run.workspaces, reporter
     )
     counts = uow.run.counts
     return PullReport(

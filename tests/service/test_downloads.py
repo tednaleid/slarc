@@ -7,7 +7,7 @@ import pytest
 from slarc import __version__
 from slarc.domain.hashing import content_hash
 from slarc.domain.tracking import DownloadState
-from slarc.ports import DownloadJob
+from slarc.ports import AuthFailed, DownloadJob
 from slarc.service.downloads import drain_downloads, image_urls, outstanding_downloads
 from slarc.service.pull import PullOptions
 from slarc.unit_of_work import UnitOfWork
@@ -236,7 +236,9 @@ def test_drain_retries_earlier_runs_queue(h: Harness):
     h.downloader.jobs.clear()
 
     with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
-        left = drain_downloads(uow, h.downloader, 4, PullOptions().max_file_bytes, h.connector)
+        left = drain_downloads(
+            uow, h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter
+        )
 
     assert left == 0
     assert {job.target for job in h.downloader.jobs} == {SNIPPET, avatar(ME)}
@@ -244,16 +246,40 @@ def test_drain_retries_earlier_runs_queue(h: Harness):
     assert outstanding_downloads(h.archive) == {}
 
 
+@pytest.mark.parametrize("failure", ["no_session", "auth_failed"])
+def test_drain_keeps_slack_files_queued_when_their_workspace_cannot_connect(
+    h: Harness, failure: str
+):
+    h.pull(SNIPPET_LINK)
+    if failure == "no_session":
+        h.connector.gateways = {}
+    else:
+        h.gateway.auth_error = AuthFailed("desktop", "naleidworkspace")
+    h.downloader.serve(SNIPPET_URL, snippet_bytes())
+    h.downloader.jobs.clear()
+    h.reporter.warnings.clear()
+
+    with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
+        drain_downloads(uow, h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter)
+
+    assert SNIPPET not in {job.target for job in h.downloader.jobs}
+    assert avatar(ME) in {job.target for job in h.downloader.jobs}
+    [snippet] = [state for state in run_states(h, "file") if state.target == SNIPPET]
+    assert (snippet.status, snippet.attempts, snippet.last_error) == ("pending", 0, None)
+    assert len(h.reporter.warnings) == 1
+    assert h.reporter.warnings[0].startswith(f"Could not connect to workspace {TEAM}")
+
+
 def test_drain_retries_too_large_file_once_it_fits(h: Harness):
     h.pull(SNIPPET_LINK, options=PullOptions(max_file_bytes=100_000))
     h.downloader.serve(SNIPPET_URL, snippet_bytes())
 
     with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
-        drain_downloads(uow, h.downloader, 4, 100_000, h.connector)
+        drain_downloads(uow, h.downloader, 4, 100_000, h.connector, h.reporter)
     assert h.lines("file")[-1].meta.blob is None
 
     with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
-        drain_downloads(uow, h.downloader, 4, 300_000, h.connector)
+        drain_downloads(uow, h.downloader, 4, 300_000, h.connector, h.reporter)
     assert h.lines("file")[-1].meta.blob == sha256(snippet_bytes())
 
 

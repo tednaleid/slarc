@@ -11,7 +11,13 @@ from rich.console import Console
 from rich.progress import BarColumn, Progress, TaskID, TextColumn
 
 from slarc import __version__, bootstrap
-from slarc.config import create_archive, find_archive, load_settings, read_global_config
+from slarc.config import (
+    ARCHIVE_FILE,
+    create_archive,
+    find_archive,
+    load_settings,
+    read_global_config,
+)
 from slarc.domain.links import parse_selector
 from slarc.ports import NoSession, SlarcError
 from slarc.service.auth import AuthStatus, auth_status, store_pasted
@@ -181,15 +187,21 @@ def _summary(report: PullReport) -> str:
 def _archive_for_pull(
     root: Path | None, env: Mapping[str, str], global_config: Mapping[str, Any], yes: bool
 ) -> Path:
-    """The archive to pull into, creating one in the current directory if none is found."""
+    """The archive to pull into, created after confirmation when it has no slarc.toml.
+
+    With no archive found, the archive goes in the current directory.
+    """
     found = find_archive(Path.cwd(), root, env, global_config)
-    if found is not None:
+    if found is not None and (found / ARCHIVE_FILE).is_file():
         return found
-    cwd = Path.cwd()
-    if not yes and not typer.confirm(f"No archive here. Create one in {cwd}?", default=True):
+    if found is None:
+        target, question = Path.cwd(), f"No archive here. Create one in {Path.cwd()}?"
+    else:
+        target, question = found, f"No archive at {found}. Create one?"
+    if not yes and not typer.confirm(question, default=True):
         _fail("No archive created.")
-    create_archive(cwd)
-    return cwd
+    create_archive(target)
+    return target
 
 
 def _run_args(

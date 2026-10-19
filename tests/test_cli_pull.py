@@ -109,6 +109,47 @@ def test_pull_uses_existing_archive_in_a_parent_directory(f: Fixture, monkeypatc
     assert not (nested / "runs.jsonl").exists()
 
 
+def test_pull_root_without_slarc_toml_creates_archive_after_confirmation(f: Fixture, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    result = f.pull("--root", str(other), BASE, input="y\n")
+    assert result.exit_code == 0, result.output
+    assert f"No archive at {other}. Create one? [Y/n]" in result.output
+    assert (other / "slarc.toml").is_file()
+    assert (other / "runs.jsonl").is_file()
+    assert list(f.work.iterdir()) == []
+
+
+def test_pull_env_archive_without_slarc_toml_declined_writes_nothing(f: Fixture, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    f.env["SLARC_ARCHIVE"] = str(other)
+    result = f.pull(BASE, input="n\n")
+    assert result.exit_code == 1
+    assert f"No archive at {other}. Create one? [Y/n]" in result.output
+    assert "No archive created." in result.output
+    assert list(other.iterdir()) == []
+    assert f.gateway.calls == []
+
+
+def test_pull_yes_creates_archive_at_missing_root(f: Fixture, tmp_path):
+    other = tmp_path / "missing"
+    result = f.pull("--yes", "--root", str(other), BASE)
+    assert result.exit_code == 0, result.output
+    assert "Create one?" not in result.output
+    assert (other / "slarc.toml").is_file()
+
+
+def test_pull_root_with_archive_skips_prompt(f: Fixture, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "slarc.toml").write_text("")
+    result = f.pull("--root", str(other), BASE)
+    assert result.exit_code == 0, result.output
+    assert "Create one" not in result.output
+    assert (other / "runs.jsonl").is_file()
+
+
 def test_pull_without_selectors_refreshes_tracked(f: Fixture):
     assert f.pull("--yes", BASE).exit_code == 0
     history_reads = sum(1 for call in f.gateway.calls if call[0] == "conversations.history")
