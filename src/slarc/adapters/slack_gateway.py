@@ -27,7 +27,7 @@ from slarc.ports import (
 READ_METHODS = frozenset(METHOD_TIERS)
 USER_AGENT = f"slarc/{__version__}"
 PAGE_LIMIT = 200
-# Slack's largest page for history and replies; users.list accepted 1000 in a live check.
+# The largest pages Slack accepts: 999 for history and replies, 1000 for users.list.
 MESSAGE_PAGE_LIMIT = 999
 USER_PAGE_LIMIT = 1000
 SEARCH_COUNT = 100
