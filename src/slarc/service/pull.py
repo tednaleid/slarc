@@ -64,11 +64,23 @@ class PullOptions:
 
 @dataclass
 class PullReport:
+    """unreachable holds why each workspace that could not connect was skipped."""
+
     items_pulled: int
     lines_appended: int
     messages_seen: int
     skipped: list[str]
     downloads_pending: int
+    unreachable: list[SlarcError]
+    workspaces_pulled: int
+
+    @property
+    def failed(self) -> bool:
+        """True when no workspace could be pulled or Slack rejected a workspace's credentials."""
+        if not self.unreachable:
+            return False
+        rejected = any(isinstance(error, AuthFailed) for error in self.unreachable)
+        return rejected or self.workspaces_pulled == 0
 
 
 def pull(
@@ -79,13 +91,22 @@ def pull(
     downloader: Downloader,
     reporter: Reporter,
 ) -> PullReport:
-    """Pulls the selected items, or every tracked item when selectors is empty."""
+    """Pulls the selected items, or every tracked item when selectors is empty.
+
+    A workspace that cannot connect is skipped with a warning and the others are pulled.
+    """
     run = _PullRun(options, uow, reporter, _Workspaces(connector, uow))
     counts = uow.run.counts
+    unreachable: list[SlarcError] = []
     try:
         items = run.resolve(selectors)
-        for team_id in dict.fromkeys(item.team_id for item in items):
-            run.pull_workspace(team_id, [i for i in items if i.team_id == team_id])
+        teams = list(dict.fromkeys(item.team_id for item in items))
+        for team_id in teams:
+            try:
+                run.pull_workspace(team_id, [i for i in items if i.team_id == team_id])
+            except (NoSession, AuthFailed) as error:
+                run.skip_workspace(team_id, error)
+                unreachable.append(error)
         pending = drain_downloads(
             uow, downloader, options.downloads, options.max_file_bytes, run.workspaces, reporter
         )
@@ -97,6 +118,8 @@ def pull(
         messages_seen=int(counts.get(MESSAGES_SEEN, 0)),
         skipped=run.skipped,
         downloads_pending=pending,
+        unreachable=unreachable,
+        workspaces_pulled=len(teams) - len(unreachable),
     )
 
 
@@ -635,6 +658,15 @@ class _PullRun:
             meta = stamped_meta(uow, "deleted", team=held.team_id, channel=held.channel, ts=ts)
             append_line(uow, Envelope(meta=meta))
             held.record(ts, StoredMessage(None, held.stored[ts].thread_ts, fetched_now(uow)))
+
+    def skip_workspace(self, team_id: str, error: SlarcError) -> None:
+        """Leaves the workspace's tracked items as they were and records why in the run line."""
+        self._end_progress()
+        self._warn(
+            f"Could not connect to workspace {team_id}, so its tracked items were not pulled: "
+            f"{error}"
+        )
+        self.uow.run.errors.append({"team_id": team_id, "error": str(error)})
 
     def _warn(self, message: str) -> None:
         self.reporter.warn(message)

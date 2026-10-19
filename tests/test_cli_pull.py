@@ -14,8 +14,24 @@ from slarc.domain.envelope import decode_line
 from slarc.domain.tracking import RunRecord, run_from_envelope
 from slarc.ports import AuthFailed, BlobStore, CredentialReadError, Session
 from slarc.service.downloads import QUEUED_STATUSES
-from tests.fakes import FakeClock, FakeCredentialSource, FakeDownloader, FakeKeyring
-from tests.service.pull_harness import BASE, CHANNEL, NALEID, TEAM, Harness
+from tests.fakes import (
+    FakeClock,
+    FakeCredentialSource,
+    FakeDownloader,
+    FakeKeyring,
+    FakeSlackGateway,
+)
+from tests.service.pull_harness import (
+    BASE,
+    CHANNEL,
+    NALEID,
+    OTHER,
+    OTHER_LINK,
+    OTHER_TEAM,
+    TEAM,
+    Harness,
+    other_gateway,
+)
 
 runner = CliRunner()
 PROMPT = "No archive here. Create one in"
@@ -29,6 +45,7 @@ class Fixture:
         self.sessions: list[Session] = [NALEID]
         self.credential_error: CredentialReadError | None = None
         self.gateway = Harness().gateway
+        self.gateways: dict[str, FakeSlackGateway] = {}
         self.clock = FakeClock()
         self.downloader = FakeDownloader()
         self.download_sessions: list[dict[str, Session]] = []
@@ -43,7 +60,7 @@ class Fixture:
                 [FakeCredentialSource(self.sessions, self.credential_error)]
             ),
             keychain=KeyringSource(FakeKeyring()),
-            gateway_factory=lambda _: self.gateway,
+            gateway_factory=lambda session: self.gateways.get(session.team_id, self.gateway),
             clock=self.clock,
             downloader=downloader,
             env=self.env,
@@ -262,3 +279,38 @@ def test_env_session_for_another_workspace_exits_1(f: Fixture):
     assert "The env credentials are for workspace naleidworkspace, not other." in result.output
     assert "Traceback" not in result.output
     assert f.runs()[-1].tracked == []
+
+
+def test_bare_pull_skips_a_workspace_without_a_session(f: Fixture):
+    f.sessions = [OTHER, NALEID]
+    f.gateways[OTHER_TEAM] = other_gateway()
+    assert f.pull("--yes", OTHER_LINK, BASE).exit_code == 0
+    f.sessions = [NALEID]
+    result = f.pull()
+    assert result.exit_code == 0, result.output
+    assert f"Could not connect to workspace {OTHER_TEAM}" in result.output
+    assert "Pulled 1 item:" in result.stdout
+    assert [(item.team_id, item.status) for item in f.runs()[-1].tracked] == [(TEAM, "ok")]
+
+
+def test_bare_pull_exits_1_when_a_workspace_rejects_its_credentials(f: Fixture):
+    f.sessions = [OTHER, NALEID]
+    f.gateways[OTHER_TEAM] = other_gateway()
+    assert f.pull("--yes", OTHER_LINK, BASE).exit_code == 0
+    f.gateways[OTHER_TEAM].auth_error = AuthFailed("desktop", "other")
+    result = f.pull()
+    assert result.exit_code == 1
+    assert "Slack rejected the desktop credentials for workspace other." in result.output
+    assert "Pulled 1 item:" in result.stdout
+    assert "Traceback" not in result.output
+
+
+def test_bare_pull_exits_1_when_no_workspace_connects(f: Fixture):
+    assert f.pull("--yes", BASE).exit_code == 0
+    f.sessions = []
+    f.credential_error = CredentialReadError("desktop", "keychain read refused")
+    result = f.pull()
+    assert result.exit_code == 1
+    assert f"No Slack session found for workspace {TEAM}" in result.output
+    assert "keychain read refused" in result.output
+    assert "Traceback" not in result.output

@@ -9,18 +9,23 @@ from slarc.domain.envelope import Envelope, Meta
 from slarc.domain.hashing import content_hash
 from slarc.domain.links import ConversationSel
 from slarc.domain.tracking import DownloadState
-from slarc.ports import NoSession, Session, SlarcError
+from slarc.ports import AuthFailed, NoSession, Session, SlarcError
 from slarc.service.selectors import resolve_conversation
 from tests.recorded_fixtures import recorded_directory
 from tests.service.pull_harness import (
     BASE,
     CHANNEL,
     ME,
+    NALEID,
+    OTHER,
+    OTHER_LINK,
+    OTHER_TEAM,
     PARENT_TS,
     REPLY_TS,
     TEAM,
     THREAD_TS,
     Harness,
+    other_gateway,
     spike,
 )
 
@@ -318,6 +323,58 @@ def test_env_session_serves_the_workspace_it_authenticates_as(h: Harness):
 
     [item] = h.tracked()
     assert (item.team_id, item.status) == (TEAM, "ok")
+
+
+@pytest.mark.parametrize("failure", ["no_session", "auth_failed"])
+def test_bare_pull_skips_a_workspace_that_cannot_connect(h: Harness, failure: str):
+    other = other_gateway()
+    h.connector.gateways = {OTHER: other, NALEID: h.gateway}
+    h.pull(OTHER_LINK, THREAD_LINK)
+    before = {item.key: item for item in h.tracked()}
+    if failure == "no_session":
+        del h.connector.gateways[OTHER]
+    else:
+        other.auth_error = AuthFailed("desktop", "other")
+    h.reporter.warnings.clear()
+
+    report = h.pull()
+
+    run = h.last_run()
+    assert run.teams == [TEAM]
+    assert [(item.team_id, item.status) for item in run.tracked] == [(TEAM, "ok")]
+    [other_item] = [item for item in h.tracked() if item.team_id == OTHER_TEAM]
+    assert other_item == before[other_item.key]
+    [warning] = h.reporter.warnings
+    assert warning.startswith(
+        f"Could not connect to workspace {OTHER_TEAM}, so its tracked items were not pulled: "
+    )
+    assert run.errors == [{"team_id": OTHER_TEAM, "error": warning.split(": ", 1)[1]}]
+    assert report.skipped == [warning]
+    assert report.items_pulled == 1
+    assert report.failed == (failure == "auth_failed")
+
+
+def test_bare_pull_fails_when_no_workspace_can_connect(h: Harness):
+    h.pull(THREAD_LINK)
+    h.connector.gateways = {}
+
+    report = h.pull()
+
+    assert report.failed
+    assert report.items_pulled == 0
+    assert [error["team_id"] for error in h.last_run().errors] == [TEAM]
+
+
+def test_bare_pull_skips_a_workspace_an_env_session_does_not_serve(h: Harness):
+    h.pull(THREAD_LINK)
+    h.connector.gateways = {ENV_SESSION: other_gateway()}
+
+    report = h.pull()
+
+    assert f"The env credentials are for workspace other, not {TEAM}." in h.reporter.warnings[0]
+    [item] = h.tracked()
+    assert item.status == "ok"
+    assert report.failed
 
 
 def test_not_visible_item_is_skipped_with_warning(h: Harness):

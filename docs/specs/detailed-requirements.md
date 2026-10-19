@@ -194,6 +194,7 @@ Items marked (spike) were confirmed against the test workspace; the rest come fr
 
 - A message is recorded as deleted only when (a) Slack returns it as `subtype: tombstone` (which is a new version, not a delete), or (b) it is missing from a range slarc fully re-read in this run (a whole thread or a `--full` range) and that range lies entirely inside what Slack still serves: if the oldest message Slack returned is newer than the range's start, only the part from that message onward counts.
 - A conversation or thread the current session cannot see (`channel_not_found`, `not_in_channel`, `thread_not_found`) is skipped with a warning and never produces deletes. This is what makes a colleague's pull in a clone of the archive safe.
+- A workspace with no session, or whose credentials Slack rejects, is skipped with a warning while the other workspaces are pulled; the run line's `errors` names it. The pull then exits non-zero if no workspace was pulled or any credentials were rejected.
 
 **Downloads**
 

@@ -312,7 +312,11 @@ def pull_command(
     except KeyboardInterrupt:
         err.print(INTERRUPTED, markup=False)
         raise typer.Exit(INTERRUPTED_EXIT) from None
+    if any(isinstance(error, NoSession) for error in report.unreachable):
+        _warn([str(e) for e in services.credentials.errors])
     out.print(_summary(report), markup=False)
+    if report.failed:
+        raise typer.Exit(1)
 
 
 def _existing_archive(root: Path | None, env: Mapping[str, str], home: Path) -> Path:

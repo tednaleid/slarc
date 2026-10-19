@@ -12,6 +12,7 @@ from slarc.ports import Session
 from slarc.service.pull import PullOptions, PullReport, pull
 from slarc.unit_of_work import UnitOfWork
 from tests.fakes import (
+    SPIKE_AUTH,
     FakeClock,
     FakeConnector,
     FakeDownloader,
@@ -33,6 +34,10 @@ OCT_17 = 1792195200
 NALEID = Session(TEAM, "naleidworkspace", "naleid", "desktop", "xoxc-1", "xoxd-1")
 SPIKE_FILES = ("F0C9XQFTVRD", "F0CA7TKM285", "F0CB7HWPUTA")
 TOMBSTONE_FILE = "F0CAF2TQHQ9"
+OTHER_TEAM = "T0OTHER0001"
+OTHER_CHANNEL = "C0OTHER0001"
+OTHER_LINK = f"https://other.slack.com/archives/{OTHER_CHANNEL}"
+OTHER = Session(OTHER_TEAM, "other", "other", "desktop", "xoxc-2", "xoxd-2")
 
 
 def spike(name: str) -> dict:
@@ -53,6 +58,18 @@ def ts_on(day: int, hour: int) -> str:
 
 def message(ts: str, **extra: object) -> dict:
     return {"type": "message", "user": ME, "text": f"message at {ts}", "ts": ts, **extra}
+
+
+def other_gateway() -> FakeSlackGateway:
+    """A second workspace with one conversation holding one message."""
+    auth = {
+        **SPIKE_AUTH,
+        "url": "https://other.slack.com/",
+        "team": "other",
+        "team_id": OTHER_TEAM,
+        "user_id": "U0OTHER0001",
+    }
+    return FakeSlackGateway({OTHER_CHANNEL: [message(ts_on(18, 9))]}, auth=auth)
 
 
 class CountingConnector(FakeConnector):
