@@ -301,18 +301,66 @@ def test_last_read_stored_per_user(h: Harness):
     assert item.last_read == {ME: "1792422623.464629"}
 
 
-def test_thread_not_found_marks_deleted_when_channel_visible(h: Harness):
+def test_thread_not_found_skips_without_deletes(h: Harness):
     h.pull(THREAD_LINK)
     before = len(h.archive.lines)
     h.remove_messages(*THREAD_TS)
 
+    report = h.pull()
+
+    assert [env.meta.kind for env in h.archive.lines[before:]] == ["run"]
+    [item] = h.tracked()
+    assert item.status == "not_visible"
+    assert h.reporter.warnings == [f"Slack returns no message at {THREAD_LINK}; skipping it."]
+    assert report.skipped == h.reporter.warnings
+
+
+def test_missing_message_link_is_not_tracked(h: Harness):
+    report = h.pull(f"{BASE}/p1792499999000001")
+
+    assert h.lines("message") == []
+    assert h.tracked() == []
+    assert h.reporter.warnings == [
+        f"Slack returns no message at {BASE}/p1792499999000001; skipping it."
+    ]
+    assert report.skipped == h.reporter.warnings
+
+
+def test_deletes_count_only_from_the_oldest_returned_message(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+):
+    h.pull(THREAD_LINK)
+    before = len(h.archive.lines)
+    served = h.gateway.replies
+
+    def without_oldest_two(channel: str, ts: str) -> list[dict]:
+        return served(channel, ts)[2:]
+
+    monkeypatch.setattr(h.gateway, "replies", without_oldest_two)
+
     h.pull()
 
-    deleted = h.archive.lines[before:-1]
-    assert [env.meta.kind for env in deleted] == ["deleted"] * 4
-    assert [env.meta.ts for env in deleted] == THREAD_TS
-    [item] = h.tracked()
-    assert item.status == "ok"
+    assert h.lines("deleted") == []
+    assert [env.meta.kind for env in h.archive.lines[before:]] == ["run"]
+
+
+def test_run_records_auth_per_workspace(h: Harness):
+    h.pull(THREAD_LINK, LONE_LINK)
+
+    run = h.last_run()
+    assert run.teams == [TEAM]
+    assert run.auth == [
+        {
+            "team_id": TEAM,
+            "user_id": ME,
+            "domain": "naleidworkspace",
+            "credential_source": "desktop",
+            "auth_test_at": "2026-10-19T13:40:11Z",
+        }
+    ]
+    run_line = json.dumps(h.lines("run")[-1].object)
+    assert "xoxc-1" not in run_line
+    assert "xoxd-1" not in run_line
 
 
 def test_not_visible_item_is_skipped_with_warning(h: Harness):

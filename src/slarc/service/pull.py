@@ -9,7 +9,7 @@ from slarc import __version__
 from slarc.domain.directory import DirectoryView
 from slarc.domain.envelope import Envelope, Kind, Meta, fetched_at
 from slarc.domain.hashing import content_hash
-from slarc.domain.links import ConversationSel, MessageSel, Selector
+from slarc.domain.links import ConversationSel, MessageSel, MessageTs, Selector, message_link
 from slarc.domain.plain import plain_text
 from slarc.domain.tracking import TrackedItem
 from slarc.ports import (
@@ -23,6 +23,7 @@ from slarc.ports import (
     SlarcError,
     ThreadNotFound,
 )
+from slarc.service.auth import domain_of
 from slarc.service.downloads import queue_downloads
 from slarc.unit_of_work import UnitOfWork
 
@@ -61,12 +62,10 @@ def pull(
     reporter: Reporter,
 ) -> PullReport:
     """Pulls the selected items, or every tracked item when selectors is empty."""
-    workspaces = _Workspaces(connector)
-    items, prefetched = _resolve_items(selectors, options, uow.archive, workspaces)
-    run = _PullRun(options, uow, reporter, prefetched)
+    run = _PullRun(options, uow, reporter, _Workspaces(connector, uow))
+    items = run.resolve(selectors)
     for team_id in dict.fromkeys(item.team_id for item in items):
-        _, gateway = workspaces.connect(team_id)
-        run.pull_workspace(team_id, gateway, [i for i in items if i.team_id == team_id])
+        run.pull_workspace(team_id, [i for i in items if i.team_id == team_id])
     counts = uow.run.counts
     return PullReport(
         lines_appended=int(counts.get(LINES_APPENDED, 0)),
@@ -159,50 +158,53 @@ def resolve_conversation(
     raise ValueError("The selector names no conversation.")
 
 
+@dataclass(frozen=True)
+class _Connection:
+    team_id: str
+    user_id: str
+    domain: str
+    gateway: SlackGateway
+
+
 class _Workspaces:
-    """Connects once per workspace in a run, since each connection has its own rate limiter."""
+    """Connects once per workspace in a run, since each connection has its own rate limiter.
 
-    def __init__(self, connector: SlackConnector) -> None:
+    Each connection is recorded in the run's teams and auth entries.
+    """
+
+    def __init__(self, connector: SlackConnector, uow: UnitOfWork) -> None:
         self._connector = connector
+        self._uow = uow
         self._team_of: dict[str, str] = {}
-        self._gateways: dict[str, SlackGateway] = {}
+        self._connections: dict[str, _Connection] = {}
 
-    def connect(self, workspace: str) -> tuple[str, SlackGateway]:
-        """Takes a domain or team id and returns the team id with its gateway."""
+    def connect(self, workspace: str) -> _Connection:
+        """Takes a domain or team id."""
         team_id = self._team_of.get(workspace, workspace)
-        if team_id not in self._gateways:
-            gateway = self._connector.connect(workspace)
-            team_id = gateway.auth_test()["team_id"]
-            self._gateways[team_id] = gateway
+        if team_id not in self._connections:
+            connection = self._open(workspace)
+            team_id = connection.team_id
+            self._connections[team_id] = connection
         self._team_of[workspace] = team_id
-        return team_id, self._gateways[team_id]
+        return self._connections[team_id]
 
-
-def _resolve_items(
-    selectors: list[Selector],
-    options: PullOptions,
-    archive: ArchiveStore,
-    workspaces: _Workspaces,
-) -> tuple[list[TrackedItem], dict[ItemKey, list[dict]]]:
-    """The items to pull, plus any thread already read while working out a selector's kind."""
-    tracked = archive.tracked_items()
-    if not selectors:
-        return list(tracked.values()), {}
-    items: dict[ItemKey, TrackedItem] = {}
-    prefetched: dict[ItemKey, list[dict]] = {}
-    for selector in selectors:
-        team_id, gateway = workspaces.connect(selector.domain or _only_workspace(tracked))
-        if isinstance(selector, ConversationSel):
-            channel = resolve_conversation(selector, team_id, gateway, archive)
-            item = TrackedItem(team_id=team_id, kind="conversation", channel=channel)
-            messages = None
-        else:
-            item, messages = _message_item(selector, options, team_id, gateway, tracked)
-        item = tracked.get(item.key, item)
-        items.setdefault(item.key, item)
-        if messages is not None:
-            prefetched[item.key] = messages
-    return list(items.values()), prefetched
+    def _open(self, workspace: str) -> _Connection:
+        gateway = self._connector.connect(workspace)
+        info = gateway.auth_test()
+        session = next((s for s in self._connector.sessions() if s.matches(workspace)), None)
+        domain = (session.domain if session is not None else "") or domain_of(info)
+        run = self._uow.run
+        run.teams.append(info["team_id"])
+        run.auth.append(
+            {
+                "team_id": info["team_id"],
+                "user_id": info["user_id"],
+                "domain": domain,
+                "credential_source": session.source if session is not None else "",
+                "auth_test_at": _now(self._uow),
+            }
+        )
+        return _Connection(info["team_id"], info["user_id"], domain, gateway)
 
 
 def _only_workspace(tracked: dict[ItemKey, TrackedItem]) -> str:
@@ -213,32 +215,8 @@ def _only_workspace(tracked: dict[ItemKey, TrackedItem]) -> str:
     raise SlarcError(f"This archive holds {held}, so use a Slack link to say which to pull from.")
 
 
-def _message_item(
-    selector: MessageSel,
-    options: PullOptions,
-    team_id: str,
-    gateway: SlackGateway,
-    tracked: dict[ItemKey, TrackedItem],
-) -> tuple[TrackedItem, list[dict] | None]:
-    channel, ts = selector.channel, str(selector.ts)
-    if options.channel_mode:
-        return TrackedItem(team_id=team_id, kind="conversation", channel=channel), None
-    if selector.thread_ts is not None:
-        thread_ts = str(selector.thread_ts)
-        return TrackedItem(team_id=team_id, kind="thread", channel=channel, ts=thread_ts), None
-    for kind in ("thread", "message"):
-        known = tracked.get((team_id, kind, channel, ts))
-        if known is not None:
-            return known, None
-    try:
-        messages = gateway.replies(channel, ts)
-    except NotVisible, ThreadNotFound:
-        # Pulling the item reports why it cannot be read.
-        return TrackedItem(team_id=team_id, kind="message", channel=channel, ts=ts), None
-    if len(messages) > 1:
-        parent_ts = messages[0]["ts"]
-        return TrackedItem(team_id=team_id, kind="thread", channel=channel, ts=parent_ts), messages
-    return TrackedItem(team_id=team_id, kind="message", channel=channel, ts=ts), messages
+def _missing_message(domain: str, channel: str, ts: str) -> str:
+    return f"Slack returns no message at {message_link(domain, channel, ts)}; skipping it."
 
 
 class _PullRun:
@@ -247,28 +225,73 @@ class _PullRun:
         options: PullOptions,
         uow: UnitOfWork,
         reporter: Reporter,
-        prefetched: dict[ItemKey, list[dict]],
+        workspaces: _Workspaces,
     ) -> None:
         self.options = options
         self.uow = uow
         self.reporter = reporter
-        self.prefetched = prefetched
+        self.workspaces = workspaces
+        self.prefetched: dict[ItemKey, list[dict]] = {}
         self.skipped: list[str] = []
 
-    def pull_workspace(self, team_id: str, gateway: SlackGateway, items: list[TrackedItem]) -> None:
-        if team_id not in self.uow.run.teams:
-            self.uow.run.teams.append(team_id)
-        user_id = gateway.auth_test()["user_id"]
+    def resolve(self, selectors: list[Selector]) -> list[TrackedItem]:
+        """The items to pull; a thread read while working out a selector's kind is kept."""
+        tracked = self.uow.archive.tracked_items()
+        if not selectors:
+            return list(tracked.values())
+        items: dict[ItemKey, TrackedItem] = {}
+        for selector in selectors:
+            connection = self.workspaces.connect(selector.domain or _only_workspace(tracked))
+            if isinstance(selector, ConversationSel):
+                channel = resolve_conversation(
+                    selector, connection.team_id, connection.gateway, self.uow.archive
+                )
+                item = TrackedItem(team_id=connection.team_id, kind="conversation", channel=channel)
+            else:
+                item = self._message_item(selector, connection, tracked)
+            if item is not None:
+                items.setdefault(item.key, tracked.get(item.key, item))
+        return list(items.values())
+
+    def _message_item(
+        self, selector: MessageSel, connection: _Connection, tracked: dict[ItemKey, TrackedItem]
+    ) -> TrackedItem | None:
+        """The item a message link names, or None when Slack returns no such message."""
+        team_id, channel, ts = connection.team_id, selector.channel, str(selector.ts)
+        if self.options.channel_mode:
+            return TrackedItem(team_id=team_id, kind="conversation", channel=channel)
+        if selector.thread_ts is not None:
+            thread_ts = str(selector.thread_ts)
+            return TrackedItem(team_id=team_id, kind="thread", channel=channel, ts=thread_ts)
+        for kind in ("thread", "message"):
+            known = tracked.get((team_id, kind, channel, ts))
+            if known is not None:
+                return known
+        try:
+            messages = connection.gateway.replies(channel, ts)
+        except NotVisible:
+            # Pulling the item reports that it cannot be read.
+            return TrackedItem(team_id=team_id, kind="message", channel=channel, ts=ts)
+        except ThreadNotFound:
+            self._warn(_missing_message(connection.domain, channel, ts))
+            return None
+        kind = "thread" if len(messages) > 1 else "message"
+        item = TrackedItem(team_id=team_id, kind=kind, channel=channel, ts=messages[0]["ts"])
+        self.prefetched[item.key] = messages
+        return item
+
+    def pull_workspace(self, team_id: str, items: list[TrackedItem]) -> None:
+        connection = self.workspaces.connect(team_id)
         reads: dict[ItemKey, list[dict]] = {}
         for item in items:
             if item.kind == "conversation":
                 raise NotImplementedError("Pulling a whole conversation is not supported.")
-            messages = self._read_thread(gateway, item)
+            messages = self._read_thread(connection, item)
             if messages is not None:
                 reads[item.key] = messages
         bot_ids = {m["bot_id"] for messages in reads.values() for m in messages if m.get("bot_id")}
         channels = {item.channel for item in items if item.key in reads}
-        view = refresh_directory(gateway, team_id, channels, self.uow, bot_ids)
+        view = refresh_directory(connection.gateway, team_id, channels, self.uow, bot_ids)
         for item in items:
             if item.key not in reads:
                 continue
@@ -276,31 +299,29 @@ class _PullRun:
             last_read = dict(item.last_read)
             conversation = view.conversations.get(item.channel, {})
             if conversation.get("last_read"):
-                last_read[user_id] = conversation["last_read"]
+                last_read[connection.user_id] = conversation["last_read"]
             self._record(
                 msgspec.structs.replace(
                     item, status="ok", last_pull_at=_now(self.uow), last_read=last_read
                 )
             )
 
-    def _read_thread(self, gateway: SlackGateway, item: TrackedItem) -> list[dict] | None:
-        """The thread's messages, parent first; empty when the thread is gone from a visible
-        conversation, None when the item cannot be read."""
+    def _read_thread(self, connection: _Connection, item: TrackedItem) -> list[dict] | None:
+        """The thread's messages, parent first, or None when the item cannot be read.
+
+        A thread Slack no longer returns is skipped rather than recorded as deleted, since a
+        session that cannot see it gets the same answer.
+        """
         if item.key in self.prefetched:
             return self.prefetched[item.key]
+        ts = item.ts or ""
         try:
-            return gateway.replies(item.channel, item.ts or "")
+            return connection.gateway.replies(item.channel, ts)
         except NotVisible as error:
-            self._skip(item, error)
-            return None
+            self._skip(item, str(error))
         except ThreadNotFound:
-            pass
-        try:
-            gateway.conversation_info(item.channel)
-        except NotVisible as error:
-            self._skip(item, error)
-            return None
-        return []
+            self._skip(item, _missing_message(connection.domain, item.channel, ts))
+        return None
 
     def _append_thread(self, item: TrackedItem, messages: list[dict], view: DirectoryView) -> None:
         uow, team_id, channel = self.uow, item.team_id, item.channel
@@ -326,15 +347,22 @@ class _PullRun:
                 _append(uow, Envelope(meta=meta, object=message))
             queue_downloads(message, team_id, uow, self.options.max_file_bytes)
         returned = {message["ts"] for message in messages}
+        # Slack may stop serving the oldest messages, so only those at or after the oldest one
+        # returned can be recorded as deleted.
+        oldest = min((MessageTs(ts) for ts in returned), default=None)
         for ts, held in stored.items():
+            in_range = oldest is not None and MessageTs(ts) >= oldest
             in_thread = item.ts in (ts, held.thread_ts)
-            if in_thread and held.hash is not None and ts not in returned:
+            if in_thread and in_range and held.hash is not None and ts not in returned:
                 meta = _meta(uow, "deleted", team=team_id, channel=channel, ts=ts)
                 _append(uow, Envelope(meta=meta))
 
-    def _skip(self, item: TrackedItem, error: SlarcError) -> None:
-        self.reporter.warn(str(error))
-        self.skipped.append(str(error))
+    def _warn(self, message: str) -> None:
+        self.reporter.warn(message)
+        self.skipped.append(message)
+
+    def _skip(self, item: TrackedItem, message: str) -> None:
+        self._warn(message)
         self._record(msgspec.structs.replace(item, status="not_visible"))
 
     def _record(self, item: TrackedItem) -> None:

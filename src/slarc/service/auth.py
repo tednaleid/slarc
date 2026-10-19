@@ -76,7 +76,7 @@ def store_pasted(
         ) from None
     session = Session(
         team_id=info["team_id"],
-        domain=_domain(info),
+        domain=domain_of(info),
         name=info.get("team", ""),
         source=PASTED_SOURCE,
         xoxc=xoxc,
@@ -92,7 +92,7 @@ def store_pasted(
     return session
 
 
-def _domain(info: dict) -> str:
+def domain_of(info: dict) -> str:
     host = urlsplit(info.get("url", "")).hostname or ""
     return host.split(".")[0]
 
@@ -115,7 +115,7 @@ def _unverified(
 def _verified(session: Session, info: dict) -> AuthStatus:
     return AuthStatus(
         source=session.source,
-        domain=_domain(info) or session.domain,
+        domain=domain_of(info) or session.domain,
         team_id=info.get("team_id", session.team_id),
         team=info.get("team", session.name),
         user=info.get("user", ""),
