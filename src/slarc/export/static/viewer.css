@@ -402,12 +402,19 @@ figure.image figcaption {
   outline: 2px solid var(--link);
 }
 
+/* The popup is a transparent hover area whose bottom padding spans the gap to the pill, so the
+   pointer can move onto the card without leaving the pill's hover. */
 .reaction-popup {
   display: none;
   position: absolute;
-  bottom: calc(100% + 6px);
+  bottom: 100%;
   left: 0;
   z-index: 2;
+  padding-bottom: 6px;
+}
+
+.reaction-popup-card {
+  display: block;
   width: max-content;
   max-width: 300px;
   padding: 8px 12px;
@@ -437,9 +444,11 @@ figure.image figcaption {
   display: block;
 }
 
-/* On narrow screens the popup starts at the reactions row's left edge, so a pill near the
-   right edge cannot push it past the page. */
-@media (max-width: 640px) {
+/* Below 1400px the page margin is too narrow for a 300px card beside a pill at the column's
+   right edge, and a thread panel is always that narrow. There the popup spans the reactions
+   row, with the card at its left edge, so no pill can push the card past the page or the panel
+   and the hover area covers the row above every pill. */
+@media (max-width: 1400px) {
   .reactions {
     position: relative;
   }
@@ -449,8 +458,28 @@ figure.image figcaption {
   }
 
   .reaction-popup {
-    max-width: calc(100% - 24px);
+    right: 0;
   }
+
+  .reaction-popup-card {
+    max-width: min(300px, 100% - 24px);
+  }
+}
+
+.thread-panel .reactions {
+  position: relative;
+}
+
+.thread-panel .reaction {
+  position: static;
+}
+
+.thread-panel .reaction-popup {
+  right: 0;
+}
+
+.thread-panel .reaction-popup-card {
+  max-width: min(300px, 100% - 24px);
 }
 
 .thread {

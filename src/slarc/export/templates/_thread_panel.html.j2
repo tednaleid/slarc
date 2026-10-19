@@ -3,7 +3,8 @@
 <aside class="thread-panel" id="{{ m.thread.anchor }}" aria-label="Thread">
 <div class="thread-panel-header">
 <span class="thread-panel-title">Thread</span>
-<a class="thread-close" href="#{{ m.anchor }}">Close</a>
+{# No element has the id thread-closed, so following Close clears the target without scrolling. #}
+<a class="thread-close" href="#thread-closed">Close</a>
 </div>
 {% with thread = m.thread, m = m.thread.parent %}
 {% include "_message.html.j2" %}

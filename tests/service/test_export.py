@@ -194,13 +194,14 @@ def test_thread_panel_holds_parent_and_each_reply_once(archive, store, blobs, ch
         assert html.count('<article class="message') == 1 + len(replies)
         assert html.count(f'data-ts="{parent}"') == 1
         assert f'id="{channel}-{parent}-thread"' in html
-        assert f'class="thread-close" href="#{channel}-{parent}"' in html
+        assert 'class="thread-close" href="#thread-closed"' in html
         for reply in replies:
             assert html.count(f'data-ts="{reply}"') == 1
             suffix = "-thread" if reply == BROADCAST else ""
             assert f'id="{channel}-{reply}{suffix}"' in html
     ids = re.findall(r' id="([^"]+)"', page)
     assert len(ids) == len(set(ids))
+    assert "thread-closed" not in ids
 
 
 def test_broadcast_reply_links_to_its_thread_panel(archive, store, blobs) -> None:
@@ -358,7 +359,10 @@ def test_reaction_popup_names_each_variant(archive, store, blobs) -> None:
     assert f'<span class="reaction-popup-line">{toned}</span>' in reactions
     assert f'<span class="reaction-popup-line">{plain}</span>' in reactions
     assert f'tabindex="0" role="img" aria-label="{toned}. {plain}"' in reactions
-    assert '<span class="reaction-popup" aria-hidden="true">' in reactions
+    assert (
+        '<span class="reaction-popup" aria-hidden="true"><span class="reaction-popup-card">'
+        '<span class="reaction-popup-emoji">'
+    ) in reactions
     assert "title=" not in reactions
 
 
