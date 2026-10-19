@@ -105,8 +105,13 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 - Consecutive messages from one author repeat the name and avatar instead of grouping (`conversation.html.j2`).
 - Emoji-only messages are not shown large (`_message.html.j2`, `viewer.css`).
 - Pinned messages have no "Pinned" label, though `pinned_to` is stored (`_message.html.j2`).
-- The reaction popup aligns to the reactions row's left edge below 1400px and in thread panels instead of centering over its pill (`viewer.css`).
+- The reaction popup aligns to the reactions row's left edge below 1441px and in thread panels instead of centering over its pill, so a right-hand pill's card sits far from it (`viewer.css`).
+- While a reaction pill is hovered, its row-wide hover bridge takes clicks meant for content just above it (`viewer.css`).
+- A reaction popup is clipped by up to 27px when its pill sits just under a sticky header or the thread panel header; a fix needs CSS anchor positioning (`viewer.css`).
 - The reaction popup lists a line for a zero-count variant, and the emoji loop is written twice in `_message.html.j2`.
+- Closing a thread panel leaves keyboard focus on the hidden Close link (`_thread_panel.html.j2`).
+- A single-file export of a conversation plus one of its thread links writes four duplicate ids (`service/export.py`).
+- `Thread.parent` is built on thread and message pages, where it is never rendered (`service/export.py`).
 - Replies whose parent is missing render with no label (`service/export.py`).
 - Exporting a link to a deleted message that is not in a thread says "Pull it first" (`service/export.py` `_page`).
 - mrkdwn styles can nest wrongly, as in `*a _b* c_` (`domain/render/mrkdwn.py`).
