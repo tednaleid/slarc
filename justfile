@@ -120,6 +120,10 @@ compare-leveldb:
 seed-test-workspace:
     ./scripts/seed-test-workspace.py --workspace naleidworkspace --channel slarc-fixtures
 
+# Check the Phase 1 ship criteria live against the naleidworkspace test workspace (developer only; it posts to #slarc-acceptance)
+acceptance:
+    ./scripts/acceptance.py
+
 # Pull the test workspace into tests/fixtures/workspace/
 record-fixtures:
     ./scripts/record-fixtures.py

@@ -10,8 +10,9 @@
 # slarc = { path = "..", editable = true }
 # ///
 # ABOUTME: Developer-only script that posts test content to the naleidworkspace test workspace.
-# ABOUTME: Aborts on any other workspace and skips content an earlier run already posted.
+# ABOUTME: Aborts on any other workspace; its post and edit commands write to #slarc-acceptance.
 import argparse
+import json
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,7 @@ from slarc.adapters.slack_gateway import web_api
 TEAM_ID = "T0CB5LYPVFA"
 MARKER = "slarc seed v1"
 ARCHIVED_CHANNEL = "slarc-fixtures-archived"
+ACCEPTANCE_CHANNEL = "slarc-acceptance"
 JIM = "U0CA61XJF2R"
 TOPIC = "Fixtures for slarc tests"
 PURPOSE = "Seeded content that slarc's recorded fixtures are pulled from"
@@ -300,25 +302,47 @@ def find_channel(client: WebClient, name: str) -> str:
     return channel["id"]
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--workspace", required=True, help="domain of the test workspace")
-    parser.add_argument("--channel", required=True, help="name of the existing fixtures channel")
-    args = parser.parse_args()
+def acceptance_channel(client: WebClient) -> str:
+    """The id of #slarc-acceptance, created when missing."""
+    listed = pages(client.conversations_list, "channels", types="public_channel")
+    channel = next((c for c in listed if c["name"] == ACCEPTANCE_CHANNEL), None)
+    if channel is None:
+        channel = client.conversations_create(name=ACCEPTANCE_CHANNEL, is_private=False)["channel"]
+        print(f"created #{ACCEPTANCE_CHANNEL} {channel['id']}", file=sys.stderr)
+    return channel["id"]
 
+
+def post_acceptance(client: WebClient, text: str, thread_ts: str | None) -> dict:
+    channel = acceptance_channel(client)
+    extra = {"thread_ts": thread_ts} if thread_ts else {}
+    ts = client.chat_postMessage(channel=channel, text=text, **extra)["ts"]
+    return {"channel": channel, "ts": ts}
+
+
+def edit_acceptance(client: WebClient, ts: str, text: str) -> dict:
+    channel = acceptance_channel(client)
+    client.chat_update(channel=channel, ts=ts, text=text)
+    return {"channel": channel, "ts": ts}
+
+
+def connect(workspace: str) -> WebClient | None:
+    """A client for the workspace, or None after explaining that it is not the test workspace."""
     sessions = DesktopSessionSource(Path.home(), sys.platform).sessions()
-    session = next((s for s in sessions if s.domain == args.workspace), None)
+    session = next((s for s in sessions if s.domain == workspace), None)
     if session is None or session.team_id != TEAM_ID:
-        print(f"Refusing: {args.workspace} is not the test workspace {TEAM_ID}.")
-        return 1
+        print(f"Refusing: {workspace} is not the test workspace {TEAM_ID}.", file=sys.stderr)
+        return None
     client = web_api(session).client
     if client.auth_test()["team_id"] != TEAM_ID:
-        print(f"Refusing: auth.test does not report the test workspace {TEAM_ID}.")
-        return 1
+        print(f"Refusing: auth.test does not report the test workspace {TEAM_ID}.", file=sys.stderr)
+        return None
+    return client
 
-    fixtures = Conversation(client, find_channel(client, args.channel))
+
+def seed(client: WebClient, channel: str) -> int:
+    fixtures = Conversation(client, find_channel(client, channel))
     if fixtures.find(MARKER) is not None:
-        print(f"#{args.channel} already holds the marker message; nothing to do.")
+        print(f"#{channel} already holds the marker message; nothing to do.")
         return 0
     try:
         seed_messages(fixtures)
@@ -329,6 +353,42 @@ def main() -> int:
     except SlackApiError as error:
         print(f"Slack refused a call: {error.response.get('error')}")
         return 1
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Without a command, seeds the fixtures channel named by --channel. "
+        f"The post and edit commands write to #{ACCEPTANCE_CHANNEL}, creating it when missing, "
+        "and print the message's channel and ts as JSON."
+    )
+    parser.add_argument("--workspace", required=True, help="domain of the test workspace")
+    parser.add_argument("--channel", help="name of the existing fixtures channel to seed")
+    commands = parser.add_subparsers(dest="command")
+    post = commands.add_parser("post", help=f"post a message to #{ACCEPTANCE_CHANNEL}")
+    post.add_argument("text")
+    post.add_argument("--thread-ts", help="ts of the parent to reply under")
+    edit = commands.add_parser("edit", help=f"edit a message in #{ACCEPTANCE_CHANNEL}")
+    edit.add_argument("ts")
+    edit.add_argument("text")
+    args = parser.parse_args()
+    if args.command is None and args.channel is None:
+        parser.error("--channel is required to seed the fixtures channel")
+
+    client = connect(args.workspace)
+    if client is None:
+        return 1
+    if args.command is None:
+        return seed(client, args.channel)
+    try:
+        if args.command == "post":
+            result = post_acceptance(client, args.text, args.thread_ts)
+        else:
+            result = edit_acceptance(client, args.ts, args.text)
+    except SlackApiError as error:
+        print(f"Slack refused a call: {error.response.get('error')}", file=sys.stderr)
+        return 1
+    print(json.dumps(result))
     return 0
 
 
