@@ -5,38 +5,12 @@ from keyring.errors import KeyringError
 
 from slarc.adapters.credentials import CompositeSource, EnvSource, KeyringSource
 from slarc.ports import CredentialReadError, Session
-
-
-class FakeKeyring:
-    def __init__(self):
-        self.entries: dict[tuple[str, str], str] = {}
-
-    def get_password(self, service_name: str, username: str) -> str | None:
-        return self.entries.get((service_name, username))
-
-    def set_password(self, service_name: str, username: str, password: str) -> None:
-        self.entries[(service_name, username)] = password
+from tests.fakes import FakeCredentialSource, FakeKeyring
 
 
 class RefusingKeyring(FakeKeyring):
     def get_password(self, service_name: str, username: str) -> str | None:
         raise KeyringError("locked")
-
-
-class StaticSource:
-    def __init__(self, sessions: list[Session]):
-        self._sessions = sessions
-
-    def sessions(self) -> list[Session]:
-        return self._sessions
-
-
-class FailingSource:
-    def __init__(self, error: CredentialReadError):
-        self.error = error
-
-    def sessions(self) -> list[Session]:
-        raise self.error
 
 
 def session(team_id: str, source: str, xoxc: str = "xoxc-1") -> Session:
@@ -101,15 +75,17 @@ def test_keyring_refusal_raises_credential_read_error():
 
 
 def test_composite_first_source_wins():
-    env = StaticSource([session("T1", "env", "xoxc-env")])
-    desktop = StaticSource([session("T1", "desktop"), session("T2", "desktop")])
+    env = FakeCredentialSource([session("T1", "env", "xoxc-env")])
+    desktop = FakeCredentialSource([session("T1", "desktop"), session("T2", "desktop")])
     sessions = CompositeSource([env, desktop]).sessions()
     assert [(s.team_id, s.source) for s in sessions] == [("T1", "env"), ("T2", "desktop")]
 
 
 def test_composite_keeps_errors_and_continues():
     error = CredentialReadError("desktop", "keychain read refused")
-    composite = CompositeSource([FailingSource(error), StaticSource([session("T1", "keychain")])])
+    composite = CompositeSource(
+        [FakeCredentialSource(error=error), FakeCredentialSource([session("T1", "keychain")])]
+    )
     assert [s.team_id for s in composite.sessions()] == ["T1"]
     assert composite.errors == [error]
 

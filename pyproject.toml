@@ -11,7 +11,9 @@ dependencies = [
     "cryptography>=50.0.2",
     "keyring>=25.7.0",
     "msgspec>=0.22.0",
+    "rich>=15.0.0",
     "secretstorage>=3.5.0 ; sys_platform == 'linux'",
+    "slack-sdk>=3.45.0",
     "typer>=0.15",
 ]
 

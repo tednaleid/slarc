@@ -1,14 +1,25 @@
-# ABOUTME: In-memory test doubles for slarc's ports: archive store, blob store and clock.
-# ABOUTME: The archive fake keeps appended envelopes in order and reads them like the JSONL store.
+# ABOUTME: In-memory test doubles for slarc's ports: archive, blobs, clock, Slack and credentials.
+# ABOUTME: The archive fake reads like the JSONL store; the Slack fake pages and fails like Slack.
 import hashlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 
 from slarc import archive_state
 from slarc.archive_state import LatestMessages
 from slarc.domain.envelope import Envelope, Kind
+from slarc.domain.links import MessageTs
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem, run_envelope
-from slarc.ports import DirectoryState, StoredMessage
+from slarc.ports import (
+    CredentialReadError,
+    DirectoryState,
+    FileDeleted,
+    NoSession,
+    NotVisible,
+    Session,
+    SlarcError,
+    StoredMessage,
+    ThreadNotFound,
+)
 
 
 class InMemoryArchiveStore:
@@ -74,3 +85,189 @@ class FakeClock:
 
     def advance(self, seconds: float) -> None:
         self.current += timedelta(seconds=seconds)
+
+
+SPIKE_AUTH = {
+    "ok": True,
+    "url": "https://naleidworkspace.slack.com/",
+    "team": "naleid",
+    "user": "contact",
+    "team_id": "T0CB5LYPVFA",
+    "user_id": "U0CA538UEN7",
+    "is_enterprise_install": False,
+}
+
+
+def _pages[T](items: list[T], size: int) -> Iterator[list[T]]:
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
+    if not items:
+        yield []
+
+
+class FakeSlackGateway:
+    """Serves canned Slack data with the gateway's page sizes and errors, recording each call."""
+
+    def __init__(
+        self,
+        conversations: dict[str, list[dict]] | None = None,
+        *,
+        infos: dict[str, dict] | None = None,
+        users: list[dict] | None = None,
+        emoji: dict[str, str] | None = None,
+        usergroups: list[dict] | None = None,
+        bots: dict[str, dict] | None = None,
+        files: dict[str, dict] | None = None,
+        deleted_files: Iterable[str] = (),
+        search_results: dict[str, list[dict]] | None = None,
+        auth: dict | None = None,
+        auth_error: SlarcError | None = None,
+        page_size: int = 200,
+    ) -> None:
+        self.conversations = conversations or {}
+        self.infos = infos or {}
+        self.users_list = users or []
+        self.emoji_map = emoji or {}
+        self.usergroups_list = usergroups or []
+        self.bots = bots or {}
+        self.files = files or {}
+        self.deleted_files = set(deleted_files)
+        self.search_results = search_results or {}
+        self.auth = SPIKE_AUTH if auth is None else auth
+        self.auth_error = auth_error
+        self.page_size = page_size
+        self.calls: list[tuple[str, ...]] = []
+
+    def auth_test(self) -> dict:
+        self.calls.append(("auth.test",))
+        if self.auth_error is not None:
+            raise self.auth_error
+        return dict(self.auth)
+
+    def conversation_info(self, channel: str) -> dict:
+        self.calls.append(("conversations.info", channel))
+        self._require_visible(channel)
+        return self.infos.get(channel, {"id": channel})
+
+    def list_conversations(self) -> Iterator[dict]:
+        self.calls.append(("conversations.list",))
+        for channel in self.conversations:
+            yield self.infos.get(channel, {"id": channel})
+
+    def history(self, channel: str, oldest: str | None, latest: str | None) -> Iterator[list[dict]]:
+        self._require_visible(channel)
+
+        def in_history(m: dict) -> bool:
+            top_level = m.get("thread_ts") in (None, m["ts"])
+            return top_level or m.get("subtype") == "thread_broadcast"
+
+        def in_range(m: dict) -> bool:
+            ts = MessageTs(m["ts"])
+            return (oldest is None or ts > oldest) and (latest is None or ts < latest)
+
+        selected = [m for m in self.conversations[channel] if in_history(m) and in_range(m)]
+        newest_first = sorted(selected, key=lambda m: MessageTs(m["ts"]), reverse=True)
+        for page in _pages(newest_first, self.page_size):
+            self.calls.append(("conversations.history", channel))
+            yield page
+
+    def replies(self, channel: str, ts: str) -> list[dict]:
+        self.calls.append(("conversations.replies", channel, ts))
+        self._require_visible(channel)
+        messages = self.conversations[channel]
+        if not any(m["ts"] == ts for m in messages):
+            raise ThreadNotFound(channel, ts)
+        thread = [m for m in messages if m["ts"] == ts or m.get("thread_ts") == ts]
+        return sorted(thread, key=lambda m: MessageTs(m["ts"]))
+
+    def search(self, query: str) -> Iterator[dict]:
+        for page in _pages(self.search_results.get(query, []), 100):
+            self.calls.append(("search.messages", query))
+            yield from page
+
+    def users(self) -> Iterator[dict]:
+        self.calls.append(("users.list",))
+        yield from self.users_list
+
+    def usergroups(self) -> list[dict]:
+        self.calls.append(("usergroups.list",))
+        return list(self.usergroups_list)
+
+    def emoji(self) -> dict[str, str]:
+        self.calls.append(("emoji.list",))
+        return dict(self.emoji_map)
+
+    def bot_info(self, bot_id: str) -> dict:
+        self.calls.append(("bots.info", bot_id))
+        if bot_id not in self.bots:
+            raise SlarcError("Slack returned bot_not_found for bots.info.")
+        return self.bots[bot_id]
+
+    def file_info(self, file_id: str) -> dict:
+        self.calls.append(("files.info", file_id))
+        if file_id in self.deleted_files:
+            raise FileDeleted(file_id)
+        if file_id not in self.files:
+            raise SlarcError("Slack returned file_not_found for files.info.")
+        return self.files[file_id]
+
+    def _require_visible(self, channel: str) -> None:
+        if channel not in self.conversations:
+            raise NotVisible(channel)
+
+
+class FakeConnector:
+    """Hands out a fake gateway per session, choosing sessions the way SessionConnector does."""
+
+    def __init__(self, gateways: dict[Session, FakeSlackGateway]) -> None:
+        self.gateways = gateways
+
+    def sessions(self) -> list[Session]:
+        return list(self.gateways)
+
+    def connect(self, workspace: str) -> FakeSlackGateway:
+        for session, gateway in self.gateways.items():
+            if session.matches(workspace):
+                gateway.auth_test()
+                return gateway
+        raise NoSession(workspace)
+
+
+class FakeCredentialSource:
+    def __init__(
+        self, sessions: list[Session] | None = None, error: CredentialReadError | None = None
+    ) -> None:
+        self._sessions = sessions or []
+        self._error = error
+
+    def sessions(self) -> list[Session]:
+        if self._error is not None:
+            raise self._error
+        return list(self._sessions)
+
+
+class FakeKeyring:
+    def __init__(self) -> None:
+        self.entries: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service_name: str, username: str) -> str | None:
+        return self.entries.get((service_name, username))
+
+    def set_password(self, service_name: str, username: str, password: str) -> None:
+        self.entries[(service_name, username)] = password
+
+
+class RecordingReporter:
+    def __init__(self) -> None:
+        self.infos: list[str] = []
+        self.warnings: list[str] = []
+        self.progress_updates: list[tuple[str, int, int | None]] = []
+
+    def info(self, msg: str) -> None:
+        self.infos.append(msg)
+
+    def warn(self, msg: str) -> None:
+        self.warnings.append(msg)
+
+    def progress(self, label: str, done: int, total: int | None) -> None:
+        self.progress_updates.append((label, done, total))

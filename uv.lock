@@ -473,6 +473,15 @@ wheels = [
 ]
 
 [[package]]
+name = "slack-sdk"
+version = "3.45.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/24/74/a4b30685bc76846b70baa9edaa45ba577ce5a28fc9e474b51524bb2aa932/slack_sdk-3.45.0.tar.gz", hash = "sha256:1ab794452f238b59db0d8a4d346263d65190288add53ec67a05751d8e7402486", size = 259739, upload-time = "2026-10-01T22:24:56.998Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/af/58/d54e4564946a9a3276f3de2905d18b66977977d4ba0fd7d11164df3c73cb/slack_sdk-3.45.0-py2.py3-none-any.whl", hash = "sha256:6356d4486d1a3ad156462c5544ab1b9c076ff426a250495c08f51b7ad71eb8fb", size = 322681, upload-time = "2026-10-01T22:24:55.133Z" },
+]
+
+[[package]]
 name = "slarc"
 version = "0.1.0"
 source = { editable = "." }
@@ -480,7 +489,9 @@ dependencies = [
     { name = "cryptography" },
     { name = "keyring" },
     { name = "msgspec" },
+    { name = "rich" },
     { name = "secretstorage", marker = "sys_platform == 'linux'" },
+    { name = "slack-sdk" },
     { name = "typer" },
 ]
 
@@ -497,7 +508,9 @@ requires-dist = [
     { name = "cryptography", specifier = ">=50.0.2" },
     { name = "keyring", specifier = ">=25.7.0" },
     { name = "msgspec", specifier = ">=0.22.0" },
+    { name = "rich", specifier = ">=15.0.0" },
     { name = "secretstorage", marker = "sys_platform == 'linux'", specifier = ">=3.5.0" },
+    { name = "slack-sdk", specifier = ">=3.45.0" },
     { name = "typer", specifier = ">=0.15" },
 ]
 

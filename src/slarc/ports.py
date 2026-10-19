@@ -1,6 +1,6 @@
 # ABOUTME: Ports between slarc's service layer and its adapters, and the value types they pass.
 # ABOUTME: Also defines SlarcError and its subclasses, whose str() is the message shown to the user.
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
@@ -79,9 +79,37 @@ class Session:
     xoxc: str = field(repr=False)
     xoxd: str = field(repr=False)
 
+    @property
+    def serves_any_workspace(self) -> bool:
+        return not self.domain and not self.team_id
+
+    def matches(self, workspace: str) -> bool:
+        return self.serves_any_workspace or workspace in (self.domain, self.team_id)
+
 
 class CredentialSource(Protocol):
     def sessions(self) -> list[Session]: ...
+
+
+class SlackGateway(Protocol):
+    def auth_test(self) -> dict: ...
+    def conversation_info(self, channel: str) -> dict: ...  # raises NotVisible
+    def list_conversations(self) -> Iterator[dict]: ...
+    def history(
+        self, channel: str, oldest: str | None, latest: str | None
+    ) -> Iterator[list[dict]]: ...  # pages, newest first
+    def replies(self, channel: str, ts: str) -> list[dict]: ...  # raises NotVisible, ThreadNotFound
+    def search(self, query: str) -> Iterator[dict]: ...  # matches across pages
+    def users(self) -> Iterator[dict]: ...
+    def usergroups(self) -> list[dict]: ...
+    def emoji(self) -> dict[str, str]: ...
+    def bot_info(self, bot_id: str) -> dict: ...
+    def file_info(self, file_id: str) -> dict: ...  # the file object; raises FileDeleted
+
+
+class SlackConnector(Protocol):
+    def sessions(self) -> list[Session]: ...
+    def connect(self, workspace: str) -> SlackGateway: ...  # raises NoSession, AuthFailed
 
 
 @dataclass(frozen=True)
@@ -120,3 +148,9 @@ class Clock(Protocol):
     def now(self) -> datetime:
         """Returns an aware UTC datetime."""
         ...
+
+
+class Reporter(Protocol):
+    def info(self, msg: str) -> None: ...
+    def warn(self, msg: str) -> None: ...
+    def progress(self, label: str, done: int, total: int | None) -> None: ...
