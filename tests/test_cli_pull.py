@@ -314,3 +314,15 @@ def test_bare_pull_exits_1_when_no_workspace_connects(f: Fixture):
     assert f"No Slack session found for workspace {TEAM}" in result.output
     assert "keychain read refused" in result.output
     assert "Traceback" not in result.output
+
+
+def test_pull_into_a_read_only_archive_exits_1_without_traceback(f: Fixture):
+    (f.work / "slarc.toml").write_text("")
+    f.work.chmod(0o555)
+    try:
+        result = f.pull(BASE)
+    finally:
+        f.work.chmod(0o755)
+    assert result.exit_code == 1
+    assert "Could not write to" in result.output
+    assert "Traceback" not in result.output

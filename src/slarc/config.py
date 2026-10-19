@@ -42,6 +42,10 @@ def _read_toml(path: Path) -> dict[str, Any]:
         return tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as e:
         raise SlarcError(f"Could not parse {path}: {e}.") from e
+    except UnicodeDecodeError:
+        raise SlarcError(f"Could not read {path}: not UTF-8.") from None
+    except OSError as e:
+        raise SlarcError(f"Could not read {path}: {e.strerror}.") from None
 
 
 def read_global_config(env: Mapping[str, str], home: Path) -> dict[str, Any]:
@@ -144,8 +148,11 @@ def load_settings(
 
 
 def create_archive(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
     target = path / ARCHIVE_FILE
-    if target.exists():
-        return
-    target.write_text(NEW_ARCHIVE_HEADER, encoding="utf-8")
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            return
+        target.write_text(NEW_ARCHIVE_HEADER, encoding="utf-8")
+    except OSError as e:
+        raise SlarcError(f"Could not create an archive at {path}: {e.strerror}.") from None

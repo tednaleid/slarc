@@ -11,7 +11,7 @@ from slarc.adapters.jsonl_store import JsonlArchiveStore
 from slarc.domain.envelope import Envelope, Meta, decode_line, encode_line
 from slarc.domain.hashing import content_hash
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
-from slarc.ports import ArchiveStore, DirectoryState, StoredMessage
+from slarc.ports import ArchiveStore, DirectoryState, SlarcError, StoredMessage
 from tests.fakes import InMemoryArchiveStore
 
 TEAM = "T0CB5LYPVFA"
@@ -272,3 +272,14 @@ def test_line_of_unknown_kind_skipped(tmp_path: Path):
         TS: StoredMessage(hash=good.meta.hash, thread_ts=None, fetched_at=T1)
     }
     store.close()
+
+
+def test_jsonl_store_in_a_read_only_archive_raises_slarc_error(tmp_path: Path):
+    tmp_path.chmod(0o555)
+    store = JsonlArchiveStore(tmp_path)
+    try:
+        with pytest.raises(SlarcError, match=f"Could not write to {tmp_path / 'runs.jsonl'}"):
+            store.append_run(run_record(R1, T1), VERSION)
+    finally:
+        store.close()
+        tmp_path.chmod(0o755)

@@ -173,3 +173,28 @@ def test_create_archive_keeps_existing_slarc_toml(tmp_path: Path) -> None:
     archive = make_archive(tmp_path / "a", "[pull]\ndownloads = 2\n")
     create_archive(archive)
     assert (archive / "slarc.toml").read_text() == "[pull]\ndownloads = 2\n"
+
+
+def test_config_that_is_not_utf8_names_the_file(tmp_path: Path) -> None:
+    archive = tmp_path / "a"
+    archive.mkdir()
+    (archive / "slarc.toml").write_bytes(b"\xff\xfe[pull]\n")
+    with pytest.raises(SlarcError, match=f"Could not read {archive / 'slarc.toml'}: not UTF-8"):
+        load_settings(archive, {}, {}, {})
+
+
+def test_unreadable_config_names_the_file(tmp_path: Path) -> None:
+    archive = make_archive(tmp_path / "a")
+    (archive / "slarc.toml").chmod(0)
+    try:
+        with pytest.raises(SlarcError, match=f"Could not read {archive / 'slarc.toml'}"):
+            load_settings(archive, {}, {}, {})
+    finally:
+        (archive / "slarc.toml").chmod(0o644)
+
+
+def test_create_archive_where_a_file_is_in_the_way_names_the_path(tmp_path: Path) -> None:
+    (tmp_path / "taken").write_text("")
+    target = tmp_path / "taken" / "archive"
+    with pytest.raises(SlarcError, match=f"Could not create an archive at {target}"):
+        create_archive(target)

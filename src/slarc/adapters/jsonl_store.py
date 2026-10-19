@@ -11,7 +11,7 @@ from slarc import archive_state
 from slarc.archive_state import LatestMessages
 from slarc.domain.envelope import Envelope, Kind, Meta, decode_line, encode_line, month_of
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem, run_envelope
-from slarc.ports import DirectoryState, StoredMessage
+from slarc.ports import DirectoryState, SlarcError, StoredMessage
 
 DIRECTORY_FILES: dict[str, str] = {
     "user": "users.jsonl",
@@ -95,8 +95,11 @@ class JsonlArchiveStore:
     def _handle(self, path: Path) -> BinaryIO:
         handle = self._handles.get(path)
         if handle is None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            handle = path.open("a+b")
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                handle = path.open("a+b")
+            except OSError as e:
+                raise SlarcError(f"Could not write to {path}: {e.strerror}.") from None
             # A crash can leave a partial last line; start the next line after it.
             if handle.seek(0, os.SEEK_END) > 0:
                 handle.seek(-1, os.SEEK_END)
