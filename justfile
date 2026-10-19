@@ -121,3 +121,7 @@ seed-test-workspace:
 # Pull the test workspace into tests/fixtures/workspace/
 record-fixtures:
     ./scripts/record-fixtures.py
+
+# Regenerate src/slarc/data/emoji.json from an iamcal/emoji-data release tag
+emoji-table tag="v16.0.0":
+    ./scripts/generate-emoji-table.py --tag {{tag}}

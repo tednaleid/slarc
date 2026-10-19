@@ -14,7 +14,7 @@ def plain_text(message: dict, view: DirectoryView) -> str:
     rich = "\n".join(
         _rich_text_block(block, view) for block in blocks if block.get("type") == "rich_text"
     )
-    body = rich or _mrkdwn(message.get("text") or "", view)
+    body = rich or mrkdwn_plain(message.get("text") or "", view)
     parts = [body, *_layout_parts(blocks, view)]
     parts += [a["title"] for a in message.get("attachments") or [] if a.get("title")]
     parts += [f["name"] for f in message.get("files") or [] if f.get("name")]
@@ -26,15 +26,18 @@ def plain_text(message: dict, view: DirectoryView) -> str:
     return f"{view.author_display(message)}: {' '.join(unique)}".rstrip()
 
 
-def _unescape(text: str) -> str:
+def unescape_mrkdwn(text: str) -> str:
+    """text with the three entities Slack escapes in mrkdwn turned back into characters."""
     return text.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
 
 
-def _mrkdwn(text: str, view: DirectoryView) -> str:
-    return _unescape(_MRKDWN_TOKEN.sub(lambda m: _mrkdwn_token(m.group(1), view), text))
+def mrkdwn_plain(text: str, view: DirectoryView) -> str:
+    """mrkdwn as plain text: <...> tokens become their labels and entities are unescaped."""
+    return unescape_mrkdwn(_MRKDWN_TOKEN.sub(lambda m: mrkdwn_token_text(m.group(1), view), text))
 
 
-def _mrkdwn_token(token: str, view: DirectoryView) -> str:
+def mrkdwn_token_text(token: str, view: DirectoryView) -> str:
+    """The text for the inside of a <...> token: a mention's name, or a link's label or URL."""
     target, _, label = token.partition("|")
     if target.startswith("@"):
         return "@" + view.user_display(target[1:])
@@ -63,25 +66,32 @@ def _rich_inline(element: dict, view: DirectoryView) -> str:
             return element.get("text", "")
         case "link":
             return element.get("text") or element.get("url", "")
-        case "user":
-            return "@" + view.user_display(element.get("user_id", ""))
-        case "channel":
-            return "#" + view.conversation_name(element.get("channel_id", ""))
-        case "usergroup":
-            return "@" + view.usergroup_handle(element.get("usergroup_id", ""))
-        case "broadcast":
-            return "@" + element.get("range", "")
+        case "user" | "channel" | "usergroup" | "broadcast":
+            return mention_text(element, view)
         case "emoji":
             return f":{element.get('name', '')}:"
         case _:
             return ""
 
 
+def mention_text(element: dict, view: DirectoryView) -> str:
+    """The text for a rich_text user, channel, usergroup or broadcast element."""
+    match element.get("type"):
+        case "user":
+            return "@" + view.user_display(element.get("user_id", ""))
+        case "channel":
+            return "#" + view.conversation_name(element.get("channel_id", ""))
+        case "usergroup":
+            return "@" + view.usergroup_handle(element.get("usergroup_id", ""))
+        case _:
+            return "@" + element.get("range", "")
+
+
 def _text_object(obj: dict | None, view: DirectoryView) -> str:
     if not obj:
         return ""
     text = obj.get("text", "")
-    return _mrkdwn(text, view) if obj.get("type") == "mrkdwn" else text
+    return mrkdwn_plain(text, view) if obj.get("type") == "mrkdwn" else text
 
 
 def _layout_parts(blocks: list[dict], view: DirectoryView) -> list[str]:

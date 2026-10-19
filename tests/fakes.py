@@ -319,3 +319,16 @@ class RecordingReporter:
 
     def progress(self, label: str, done: int, total: int | None) -> None:
         self.progress_updates.append((label, done, total))
+
+
+class FakeAssetResolver:
+    """Answers every asset with a stable local path built from its name, URL or file id."""
+
+    def emoji_src(self, name: str) -> str | None:
+        return f"assets/emoji/{name}"
+
+    def image_src(self, url: str) -> str | None:
+        return f"assets/images/{url.rsplit('/', 1)[-1].split('?')[0]}"
+
+    def file_src(self, file_id: str) -> str | None:
+        return f"assets/files/{file_id}"
