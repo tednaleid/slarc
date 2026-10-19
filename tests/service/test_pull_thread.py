@@ -172,7 +172,7 @@ def test_file_lines_written_for_referenced_files(h: Harness):
     assert file_line.meta.id == "F0CB7HWPUTA"
     assert file_line.meta.api == "conversations.replies"
     assert file_line.meta.hash == content_hash("file", inline)
-    assert h.last_run().downloads == [
+    assert [d for d in h.last_run().downloads if d.target_kind == "file"] == [
         DownloadState(
             team_id=TEAM,
             target_kind="file",
@@ -181,7 +181,7 @@ def test_file_lines_written_for_referenced_files(h: Harness):
             status="pending",
         )
     ]
-    assert report.downloads_pending == 1
+    assert report.downloads_pending == len(h.last_run().downloads)
 
     h.pull()
     assert len(h.lines("file")) == 1
@@ -190,6 +190,7 @@ def test_file_lines_written_for_referenced_files(h: Harness):
 def test_downloaded_file_keeps_its_blob_and_is_not_queued_again(h: Harness):
     h.pull(THREAD_LINK)
     info = spike("files.info.F0CB7HWPUTA")["file"]
+    blob, _ = h.blobs.write([b"png bytes"])
     h.archive.append(
         Envelope(
             meta=Meta(
@@ -200,17 +201,16 @@ def test_downloaded_file_keeps_its_blob_and_is_not_queued_again(h: Harness):
                 run="r_20261019T140000Z",
                 api="files.info",
                 hash=content_hash("file", info),
-                blob="ab" * 32,
+                blob=blob,
             ),
             object=info,
         )
     )
 
-    report = h.pull()
+    h.pull()
 
-    assert {env.meta.blob for env in h.lines("file")[1:]} == {"ab" * 32}
-    assert h.last_run().downloads == []
-    assert report.downloads_pending == 0
+    assert {env.meta.blob for env in h.lines("file")[1:]} == {blob}
+    assert [d for d in h.last_run().downloads if d.target_kind == "file"] == []
 
 
 def test_last_read_stored_per_user(h: Harness):

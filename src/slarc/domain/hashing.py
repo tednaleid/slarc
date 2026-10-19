@@ -38,6 +38,7 @@ _FILE_EXCLUDED = (
     "is_starred",
     "file_access",
     "comments_count",
+    "skipped_shares",
 )
 
 

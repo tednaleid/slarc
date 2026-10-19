@@ -30,6 +30,8 @@ THREAD_TS = [PARENT_TS, REPLY_TS, "1792411464.844209", "1792422623.464629"]
 BASE = "https://naleidworkspace.slack.com/archives/C0CA5396G03"
 OCT_17 = 1792195200
 NALEID = Session(TEAM, "naleidworkspace", "naleid", "desktop", "xoxc-1", "xoxd-1")
+SPIKE_FILES = ("F0C9XQFTVRD", "F0CA7TKM285", "F0CB7HWPUTA")
+TOMBSTONE_FILE = "F0CAF2TQHQ9"
 
 
 def spike(name: str) -> dict:
@@ -66,6 +68,8 @@ class Harness:
     def __init__(self) -> None:
         self.archive = InMemoryArchiveStore()
         self.clock = FakeClock()
+        self.blobs = InMemoryBlobStore()
+        self.downloader = FakeDownloader(self.blobs)
         self.gateway = FakeSlackGateway(
             {CHANNEL: channel_messages()},
             infos={CHANNEL: spike("conversations.info")["channel"]},
@@ -73,14 +77,14 @@ class Harness:
             emoji=spike("emoji.list")["emoji"],
             usergroups=spike("usergroups.list")["usergroups"],
             bots={"B0CA9EBAH1C": spike("bots.info.B0CA9EBAH1C")["bot"]},
+            files={file_id: spike(f"files.info.{file_id}")["file"] for file_id in SPIKE_FILES},
+            deleted_files=[TOMBSTONE_FILE],
         )
         self.connector = CountingConnector({NALEID: self.gateway})
         self.reporter = RecordingReporter()
 
     def pull(self, *links: str, options: PullOptions | None = None) -> PullReport:
-        uow = UnitOfWork(
-            self.archive, InMemoryBlobStore(), self.clock, "pull", list(links), __version__
-        )
+        uow = UnitOfWork(self.archive, self.blobs, self.clock, "pull", list(links), __version__)
         try:
             with uow:
                 return pull(
@@ -88,7 +92,7 @@ class Harness:
                     options or PullOptions(),
                     uow,
                     self.connector,
-                    FakeDownloader(),
+                    self.downloader,
                     self.reporter,
                 )
         finally:

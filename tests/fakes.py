@@ -3,6 +3,7 @@
 import hashlib
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from slarc import archive_state
 from slarc.archive_state import LatestMessages
@@ -10,6 +11,7 @@ from slarc.domain.envelope import Envelope, Kind
 from slarc.domain.links import MessageTs
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem, run_envelope
 from slarc.ports import (
+    BlobStore,
     CredentialReadError,
     DirectoryState,
     DownloadJob,
@@ -236,15 +238,47 @@ class FakeConnector:
         raise NoSession(workspace)
 
 
-class FakeDownloader:
-    """Records the jobs it is handed and downloads nothing."""
+type FailedStatus = Literal["failed", "forbidden", "too_large", "deleted"]
 
-    def __init__(self) -> None:
+
+class FakeDownloader:
+    """Writes the bytes served for a URL into the blob store, recording each job it is handed.
+
+    A URL with nothing served yields no result, as if the run stopped before reaching it.
+    """
+
+    def __init__(self, blobs: BlobStore | None = None) -> None:
+        self.blobs = blobs if blobs is not None else InMemoryBlobStore()
         self.jobs: list[DownloadJob] = []
+        self.parallelism: list[int] = []
+        self._served: dict[str, tuple[bytes, str]] = {}
+        self._failures: dict[str, tuple[FailedStatus, str]] = {}
+
+    def serve(self, url: str, data: bytes, content_type: str = "application/octet-stream") -> None:
+        self._failures.pop(url, None)
+        self._served[url] = (data, content_type)
+
+    def fail(self, url: str, status: FailedStatus = "failed", error: str = "HTTP 500") -> None:
+        self._served.pop(url, None)
+        self._failures[url] = (status, error)
 
     def fetch(self, jobs: list[DownloadJob], parallelism: int) -> Iterator[DownloadResult]:
         self.jobs.extend(jobs)
-        return iter(())
+        self.parallelism.append(parallelism)
+        results = (self._result(job) for job in jobs)
+        return iter([result for result in results if result is not None])
+
+    def _result(self, job: DownloadJob) -> DownloadResult | None:
+        if job.url in self._failures:
+            status, error = self._failures[job.url]
+            return DownloadResult(job, status, None, None, None, error)
+        if job.url not in self._served:
+            return None
+        data, content_type = self._served[job.url]
+        if len(data) > job.max_bytes:
+            return DownloadResult(job, "too_large", None, None, None, "Larger than the limit.")
+        sha256, size = self.blobs.write([data])
+        return DownloadResult(job, "ok", sha256, size, content_type, None)
 
 
 class FakeCredentialSource:

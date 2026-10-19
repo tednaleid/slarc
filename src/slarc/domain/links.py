@@ -1,13 +1,14 @@
 # ABOUTME: Parses Slack permalinks and command-line selectors into typed values.
-# ABOUTME: Also builds message permalinks and defines the orderable MessageTs.
+# ABOUTME: Also builds message permalinks, defines the orderable MessageTs and spots file URLs.
 import re
 from dataclasses import dataclass
-from typing import Self
+from typing import Self, TypeIs
 from urllib.parse import parse_qs, urlparse
 
 CHANNEL_ID = re.compile(r"[CGD][A-Z0-9]{8,}")
 PERMALINK_DIGITS = re.compile(r"p(\d{16})")
 SLACK_HOST_SUFFIX = ".slack.com"
+SLACK_FILE_HOST = "files.slack.com"
 
 
 class MessageTs(str):
@@ -107,3 +108,13 @@ def message_link(domain: str, channel: str, ts: str, thread_ts: str | None = Non
     if thread_ts:
         link += f"?thread_ts={thread_ts}&cid={channel}"
     return link
+
+
+def is_web_url(url: object) -> TypeIs[str]:
+    return isinstance(url, str) and url.startswith(("https://", "http://"))
+
+
+def is_slack_file_url(url: str) -> bool:
+    """True for a private file URL on Slack's file host, the only URLs that need the session."""
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and parsed.hostname == SLACK_FILE_HOST

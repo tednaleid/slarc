@@ -100,6 +100,14 @@ def test_file_hash_ignores_shares():
     assert content_hash("file", changed) == before
 
 
+def test_inline_and_files_info_objects_hash_alike():
+    replies = json.loads((SPIKE / "conversations.replies.json").read_text())["messages"]
+    [inline] = [f for m in replies for f in m.get("files") or [] if f["id"] == "F0CB7HWPUTA"]
+    info = json.loads((SPIKE / "files.info.F0CB7HWPUTA.json").read_text())["file"]
+    assert "skipped_shares" in inline
+    assert content_hash("file", inline) == content_hash("file", info)
+
+
 def test_file_hash_changes_on_title():
     f = file_object()
     changed = {**f, "title": "renamed"}

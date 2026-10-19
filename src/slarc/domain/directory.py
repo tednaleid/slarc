@@ -1,6 +1,20 @@
-# ABOUTME: DirectoryView holds directory objects and answers name lookups for them.
-# ABOUTME: Lookups fall back to the raw id so rendering never fails on an unknown object.
+# ABOUTME: DirectoryView answers name lookups, falling back to the raw id for an unknown object.
+# ABOUTME: Also names the image whose blob a user or emoji line carries.
 from dataclasses import dataclass
+
+from slarc.domain.envelope import Kind
+from slarc.domain.links import is_web_url
+
+
+def directory_image_url(kind: Kind, obj: dict) -> str | None:
+    """The image URL a user (its avatar) or emoji line's blob comes from, if it has one."""
+    if kind == "user":
+        url = (obj.get("profile") or {}).get("image_512")
+    elif kind == "emoji":
+        url = obj.get("url")
+    else:
+        return None
+    return url if is_web_url(url) else None
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,5 @@
 # ABOUTME: The pull use case: refreshes the workspace directory and the tracked items it is given.
-# ABOUTME: Appends a line only for a new version, records deletes and queues file downloads.
+# ABOUTME: Appends a line only for a new version, records deletes and downloads files and images.
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -7,9 +7,8 @@ from functools import cached_property
 
 import msgspec
 
-from slarc import __version__
 from slarc.domain.directory import DirectoryView
-from slarc.domain.envelope import Envelope, Kind, Meta, fetched_at
+from slarc.domain.envelope import Envelope, Kind
 from slarc.domain.hashing import content_hash
 from slarc.domain.links import ConversationSel, MessageSel, MessageTs, Selector, message_link
 from slarc.domain.plain import plain_text
@@ -21,14 +20,23 @@ from slarc.ports import (
     Downloader,
     NotVisible,
     Reporter,
+    Session,
     SlackConnector,
     SlackGateway,
     SlarcError,
     StoredMessage,
     ThreadNotFound,
 )
+from slarc.service.appends import (
+    LINES_APPENDED,
+    append_directory,
+    append_line,
+    count,
+    fetched_now,
+    stamped_meta,
+)
 from slarc.service.auth import domain_of
-from slarc.service.downloads import queue_downloads
+from slarc.service.downloads import drain_downloads, queue_downloads
 from slarc.service.selectors import only_workspace, resolve_conversation
 from slarc.service.threads import active_threads, discover_reply_threads, infer_deletes
 from slarc.unit_of_work import UnitOfWork
@@ -36,7 +44,6 @@ from slarc.unit_of_work import UnitOfWork
 HISTORY_API = "conversations.history"
 REPLIES_API = "conversations.replies"
 BOTS_API = "bots.info"
-LINES_APPENDED = "lines_appended"
 MESSAGES_SEEN = "messages_seen"
 
 type ItemKey = tuple[str, str, str, str]
@@ -74,12 +81,15 @@ def pull(
     items = run.resolve(selectors)
     for team_id in dict.fromkeys(item.team_id for item in items):
         run.pull_workspace(team_id, [i for i in items if i.team_id == team_id])
+    pending = drain_downloads(
+        uow, downloader, options.downloads, options.max_file_bytes, run.workspaces
+    )
     counts = uow.run.counts
     return PullReport(
         lines_appended=int(counts.get(LINES_APPENDED, 0)),
         messages_seen=int(counts.get(MESSAGES_SEEN, 0)),
         skipped=run.skipped,
-        downloads_pending=sum(1 for d in uow.run.downloads if d.status == "pending"),
+        downloads_pending=pending,
     )
 
 
@@ -114,7 +124,7 @@ def refresh_directory(
         ("conversation", "conversations.info", conversations),
     ]
     for kind, api, objects in fresh:
-        _append_directory(uow, team_id, kind, objects, api)
+        append_directory(uow, team_id, kind, objects, api)
 
     def current(kind: Kind, objects: dict[str, dict]) -> dict[str, dict]:
         return archive.directory_objects(team_id, kind) | objects
@@ -169,7 +179,8 @@ class _Connection:
 class _Workspaces:
     """Connects once per workspace in a run, since each connection has its own rate limiter.
 
-    Each connection is recorded in the run's teams and auth entries.
+    Each connection is recorded in the run's teams and auth entries. As a SlackConnector it
+    hands the run's connections to the download drain.
     """
 
     def __init__(self, connector: SlackConnector, uow: UnitOfWork) -> None:
@@ -178,7 +189,13 @@ class _Workspaces:
         self._team_of: dict[str, str] = {}
         self._connections: dict[str, _Connection] = {}
 
-    def connect(self, workspace: str) -> _Connection:
+    def sessions(self) -> list[Session]:
+        return self._connector.sessions()
+
+    def connect(self, workspace: str) -> SlackGateway:
+        return self.connection(workspace).gateway
+
+    def connection(self, workspace: str) -> _Connection:
         """Takes a domain or team id."""
         team_id = self._team_of.get(workspace, workspace)
         if team_id not in self._connections:
@@ -201,7 +218,7 @@ class _Workspaces:
                 "user_id": info["user_id"],
                 "domain": domain,
                 "credential_source": session.source if session is not None else "",
-                "auth_test_at": _now(self._uow),
+                "auth_test_at": fetched_now(self._uow),
             }
         )
         return _Connection(info["team_id"], info["user_id"], domain, gateway)
@@ -233,7 +250,7 @@ class _PullRun:
             return list(tracked.values())
         items: dict[ItemKey, TrackedItem] = {}
         for selector in selectors:
-            connection = self.workspaces.connect(selector.domain or only_workspace(tracked))
+            connection = self.workspaces.connection(selector.domain or only_workspace(tracked))
             if isinstance(selector, ConversationSel):
                 channel = resolve_conversation(
                     selector, connection.team_id, connection.gateway, self.uow.archive
@@ -291,7 +308,7 @@ class _PullRun:
         return item
 
     def pull_workspace(self, team_id: str, items: list[TrackedItem]) -> None:
-        connection = self.workspaces.connect(team_id)
+        connection = self.workspaces.connection(team_id)
         conversations = [item for item in items if item.kind == "conversation"]
         threads = [item for item in items if item.kind != "conversation"]
         reads: dict[ItemKey, list[dict]] = {}
@@ -319,7 +336,7 @@ class _PullRun:
             last_read[connection.user_id] = conversation["last_read"]
         self._record(
             msgspec.structs.replace(
-                item, status="ok", last_pull_at=_now(self.uow), last_read=last_read
+                item, status="ok", last_pull_at=fetched_now(self.uow), last_read=last_read
             )
         )
 
@@ -352,7 +369,7 @@ class _PullRun:
         held = _HeldConversation(self.uow.archive, item.team_id, item.channel)
         started_at_top = not item.backfill_complete and item.oldest_ts is None
         if started_at_top:
-            item = msgspec.structs.replace(item, last_search_at=_now(self.uow))
+            item = msgspec.structs.replace(item, last_search_at=fetched_now(self.uow))
         try:
             if self.options.full and not started_at_top:
                 item = self._reread_range(connection, held, item, view)
@@ -440,7 +457,7 @@ class _PullRun:
 
         last_search_at moves only when the search succeeds, so a failed one is retried.
         """
-        searched_at = _now(self.uow)
+        searched_at = fetched_now(self.uow)
         if item.last_search_at is not None:
             since_date = _two_days_before(item.last_search_at)
             try:
@@ -468,7 +485,7 @@ class _PullRun:
         Each thread re-read records its own deleted replies, so the range covers top-level
         messages only.
         """
-        searched_at = _now(self.uow)
+        searched_at = fetched_now(self.uow)
         item = self._page_newer(connection, held, item, view, item.since)
         parents = {ts for ts in held.listed if held.has_replies(ts)}
         self._reread_threads(connection, held, parents, view)
@@ -526,7 +543,7 @@ class _PullRun:
         read = [*page, *(m for messages in threads.values() for m in messages)]
         bot_ids = {m["bot_id"] for m in read if m.get("bot_id")} - view.bots.keys()
         bots = _unknown_bots(gateway, team_id, bot_ids, uow.archive)
-        _append_directory(uow, team_id, "bot", bots, BOTS_API)
+        append_directory(uow, team_id, "bot", bots, BOTS_API)
         view.bots.update(bots)
         self._append_messages(held, page, HISTORY_API, view)
         for thread_ts, messages in threads.items():
@@ -538,14 +555,14 @@ class _PullRun:
     ) -> None:
         uow, team_id, channel = self.uow, held.team_id, held.channel
         files = {f["id"]: f for m in messages for f in m.get("files") or []}
-        _append_directory(uow, team_id, "file", files, api, keep_blob=True)
+        append_directory(uow, team_id, "file", files, api, keep_blob=True)
         for message in messages:
-            _count(uow, MESSAGES_SEEN)
+            count(uow, MESSAGES_SEEN)
             ts = message["ts"]
             digest = content_hash("message", message)
             stored = held.stored.get(ts)
             if stored is None or stored.hash != digest:
-                meta = _meta(
+                meta = stamped_meta(
                     uow,
                     "message",
                     team=team_id,
@@ -556,14 +573,16 @@ class _PullRun:
                     hash=digest,
                     plain=plain_text(message, view),
                 )
-                _append(uow, Envelope(meta=meta, object=message))
-                held.record(ts, StoredMessage(digest, message.get("thread_ts"), _now(uow)))
+                append_line(uow, Envelope(meta=meta, object=message))
+                held.record(ts, StoredMessage(digest, message.get("thread_ts"), fetched_now(uow)))
             queue_downloads(
                 message,
                 team_id,
                 uow,
                 self.options.max_file_bytes,
+                view=view,
                 files=held.files,
+                images=held.images,
                 known=held.downloads,
             )
 
@@ -579,9 +598,9 @@ class _PullRun:
     def _append_deletes(self, held: _HeldConversation, stamps: set[str]) -> None:
         uow = self.uow
         for ts in sorted(stamps, key=MessageTs):
-            meta = _meta(uow, "deleted", team=held.team_id, channel=held.channel, ts=ts)
-            _append(uow, Envelope(meta=meta))
-            held.record(ts, StoredMessage(None, held.stored[ts].thread_ts, _now(uow)))
+            meta = stamped_meta(uow, "deleted", team=held.team_id, channel=held.channel, ts=ts)
+            append_line(uow, Envelope(meta=meta))
+            held.record(ts, StoredMessage(None, held.stored[ts].thread_ts, fetched_now(uow)))
 
     def _warn(self, message: str) -> None:
         self.reporter.warn(message)
@@ -618,6 +637,10 @@ class _HeldConversation:
     @cached_property
     def files(self) -> dict[str, DirectoryState]:
         return self._archive.directory_state(self.team_id, "file")
+
+    @cached_property
+    def images(self) -> dict[str, DirectoryState]:
+        return self._archive.directory_state(self.team_id, "image")
 
     @cached_property
     def downloads(self) -> dict[tuple[str, str], DownloadState]:
@@ -670,53 +693,3 @@ def _outermost(current: str | None, page: list[dict], *, newest: bool) -> str | 
     if not stamps:
         return None
     return str(max(stamps) if newest else min(stamps))
-
-
-def _append_directory(
-    uow: UnitOfWork,
-    team_id: str,
-    kind: Kind,
-    objects: dict[str, dict],
-    api: str,
-    *,
-    keep_blob: bool = False,
-) -> None:
-    """Appends each object whose hash differs from its stored line.
-
-    keep_blob carries the stored blob onto the new line: an inline file object and the
-    files.info one differ in a few fields but describe the same downloaded bytes.
-    """
-    if not objects:
-        return
-    state = uow.archive.directory_state(team_id, kind)
-    appended = False
-    for id_, obj in objects.items():
-        digest = content_hash(kind, obj)
-        held = state.get(id_)
-        if held is not None and held.hash == digest:
-            continue
-        blob = held.blob if keep_blob and held is not None else None
-        meta = _meta(uow, kind, team=team_id, id=id_, api=api, hash=digest, blob=blob)
-        _append(uow, Envelope(meta=meta, object=obj))
-        appended = True
-    if appended:
-        # Directory state is read back from the store, which must see these lines.
-        uow.archive.flush()
-
-
-def _now(uow: UnitOfWork) -> str:
-    return fetched_at(uow.clock.now())
-
-
-def _meta(uow: UnitOfWork, kind: Kind, **fields: str | None) -> Meta:
-    stamped = Meta(kind=kind, fetched_at=_now(uow), run=uow.run.run, slarc=__version__)
-    return msgspec.structs.replace(stamped, **fields)
-
-
-def _append(uow: UnitOfWork, env: Envelope) -> None:
-    uow.archive.append(env)
-    _count(uow, LINES_APPENDED)
-
-
-def _count(uow: UnitOfWork, name: str) -> None:
-    uow.run.counts[name] = uow.run.counts.get(name, 0) + 1

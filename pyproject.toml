@@ -9,6 +9,7 @@ authors = [{ name = "Ted Naleid", email = "contact@naleid.com" }]
 requires-python = ">=3.14"
 dependencies = [
     "cryptography>=50.0.2",
+    "httpx>=0.28.1",
     "keyring>=25.7.0",
     "msgspec>=0.22.0",
     "rich>=15.0.0",
