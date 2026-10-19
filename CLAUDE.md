@@ -2,7 +2,8 @@
 
 Read-only CLI that pulls Slack conversations into an archive of append-only JSONL files.
 Spec: `docs/specs/detailed-requirements.md`. Terms: `GLOSSARY.md`. Decisions: `docs/adr/`.
-Plan and progress: `docs/plans/`. Verified Slack facts: `docs/specs/phase0-spike-findings.md`.
+Architecture: `docs/architecture.md`. Plan and progress: `docs/plans/`. Backlog: `docs/plans/backlog.md`.
+Verified Slack facts: `docs/specs/phase0-spike-findings.md`.
 
 ## Commands
 
@@ -13,10 +14,10 @@ Plan and progress: `docs/plans/`. Verified Slack facts: `docs/specs/phase0-spike
 ## Rules
 
 - Test first: write a failing test, watch it fail, then make it pass.
-- Domain and service layer never import `slack_sdk`, `duckdb`, `httpx` or `keyring`, and never touch the filesystem or environment. Every port except `QueryIndex` has an in-memory fake; `QueryIndex` is tested through DuckDB over a temp archive.
-- Exception: through `importlib.resources`, the domain reads its packaged emoji table, `src/slarc/data/emoji.json`, and the export service its templates and static files under `src/slarc/export/`.
-- slarc never calls a Slack method that changes anything. Only `scripts/seed-test-workspace.py` posts, and only to `naleidworkspace` (team `T0CB5LYPVFA`).
+- Domain and service layer never import `slack_sdk`, `duckdb`, `httpx` or `keyring`, and never touch the filesystem or environment; see `docs/architecture.md`.
+- slarc never calls a Slack method that changes anything. Only `scripts/seed-test-workspace.py` posts, directly or through `just acceptance`, and only to `naleidworkspace` (team `T0CB5LYPVFA`).
+- Run `just acceptance` only when asked or when pull's discovery or delete logic changes; it uses the live test workspace.
 - Live Slack calls are read-only, against the test workspace only, using the desktop session. The session holds tokens for other workspaces; never use them.
 - Never print, log, commit or put in fixtures a token, cookie or keychain secret.
 - Use `GLOSSARY.md` terms in code and docs.
-- Commit to `main` after each plan task and mark it done in the plan.
+- Commit to `main` in small, passing steps; when working from a plan, mark its tasks done.
