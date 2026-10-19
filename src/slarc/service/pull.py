@@ -12,7 +12,7 @@ from slarc.domain.envelope import Envelope, Kind
 from slarc.domain.hashing import content_hash
 from slarc.domain.links import ConversationSel, MessageSel, MessageTs, Selector, message_link
 from slarc.domain.plain import plain_text
-from slarc.domain.tracking import DownloadState, TrackedItem
+from slarc.domain.tracking import DownloadState, TrackedItem, item_label
 from slarc.ports import (
     ArchiveStore,
     AuthFailed,
@@ -374,7 +374,7 @@ class _PullRun:
             if item.key not in reads:
                 continue
             held = _HeldConversation(self.uow.archive, team_id, item.channel)
-            self.progress = _ItemProgress(self.reporter, _label(item, view), report_start=False)
+            self.progress = _ItemProgress(self.reporter, item_label(item, view), report_start=False)
             self._append_thread(held, item.ts or "", reads[item.key], view)
             self.progress.seen += len(reads[item.key])
             self._finish(connection, item, view)
@@ -420,7 +420,7 @@ class _PullRun:
         skips the item without deletes.
         """
         held = _HeldConversation(self.uow.archive, item.team_id, item.channel)
-        self.progress = _ItemProgress(self.reporter, _label(item, view))
+        self.progress = _ItemProgress(self.reporter, item_label(item, view))
         started_at_top = not item.backfill_complete and item.oldest_ts is None
         if started_at_top:
             item = msgspec.structs.replace(item, last_search_at=fetched_now(self.uow))
@@ -704,12 +704,6 @@ class _ItemProgress:
 
     def end(self) -> None:
         self.reporter.progress(self.label, self.seen, self.seen)
-
-
-def _label(item: TrackedItem, view: DirectoryView) -> str:
-    name = view.conversations.get(item.channel, {}).get("name")
-    where = f"#{name}" if name else item.channel
-    return where if item.kind == "conversation" else f"{where} {item.kind} {item.ts}"
 
 
 class _HeldConversation:

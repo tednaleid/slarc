@@ -1,9 +1,10 @@
 # ABOUTME: Tracked items, download states and the run record written as a run line.
-# ABOUTME: Converts a RunRecord to and from its run envelope.
+# ABOUTME: Converts a RunRecord to and from its run envelope and labels a tracked item.
 from typing import Literal
 
 import msgspec
 
+from slarc.domain.directory import DirectoryView
 from slarc.domain.envelope import Envelope, Meta
 
 
@@ -25,6 +26,12 @@ class TrackedItem(msgspec.Struct, kw_only=True):
     @property
     def key(self) -> tuple[str, str, str, str]:
         return (self.team_id, self.kind, self.channel, self.ts or "")
+
+
+def item_label(item: TrackedItem, view: DirectoryView) -> str:
+    """The conversation's label, followed by the kind and ts for a thread or message."""
+    where = view.conversation_label(item.channel)
+    return where if item.kind == "conversation" else f"{where} {item.kind} {item.ts}"
 
 
 class DownloadState(msgspec.Struct, kw_only=True):

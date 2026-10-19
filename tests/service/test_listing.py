@@ -17,6 +17,7 @@ from tests.recorded_fixtures import RECORDED_TEAM, copy_recorded
 from tests.service.pull_harness import NALEID, spike
 
 WAVE_PARENT = "1792410693.663869"
+LONE_TS = "1792422552.941749"
 GIPHY = (
     "https://media4.giphy.com/media/F9yAvk7Xpr0c/giphy.gif?cid=6104955ee4adf136dcbbrjmn0qdsjgxzsg"
     "a2bbxafvz2c6fe&ep=v1_gifs_translate&rid=giphy.gif&ct=g"
@@ -122,7 +123,7 @@ def test_list_counts_messages_and_pending(archive: Path, store: JsonlArchiveStor
     rows = rows_by_item(listing)
     assert sorted(rows) == [
         ("#all-naleid", "conversation"),
-        ("#all-naleid", "thread"),
+        (f"#all-naleid thread {WAVE_PARENT}", "thread"),
         ("#slarc-fixtures", "conversation"),
         ("#slarc-fixtures-archived", "conversation"),
         ("@Jim", "conversation"),
@@ -139,12 +140,26 @@ def test_list_counts_messages_and_pending(archive: Path, store: JsonlArchiveStor
         skipped=1,
         status="ok",
     )
-    wave = rows[("#all-naleid", "thread")]
+    wave = rows[(f"#all-naleid thread {WAVE_PARENT}", "thread")]
     assert (wave.messages, wave.last_pull, wave.pending, wave.skipped) == (4, LATER, 0, 1)
     fixtures = rows[("#slarc-fixtures", "conversation")]
     assert (fixtures.pending, fixtures.skipped) == (1, 1)
     assert rows[("@Jim", "conversation")].messages == 1
     assert (listing.pending, listing.skipped) == (2, 2)
+
+
+def test_list_tells_apart_two_threads_in_one_conversation(
+    archive: Path, store: JsonlArchiveStore
+) -> None:
+    threads = [
+        TrackedItem(team_id=RECORDED_TEAM, kind="thread", channel="C0CA5396G03", ts=ts)
+        for ts in (WAVE_PARENT, LONE_TS)
+    ]
+    append_run(store, tracked=threads)
+
+    labels = [row.conversation for row in listing_of(archive, store).rows if row.kind == "thread"]
+
+    assert labels == [f"#all-naleid thread {WAVE_PARENT}", f"#all-naleid thread {LONE_TS}"]
 
 
 def test_list_marks_not_visible(archive: Path, store: JsonlArchiveStore) -> None:

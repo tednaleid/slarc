@@ -5,7 +5,7 @@ from pathlib import Path
 
 from slarc.config import Settings
 from slarc.domain.directory import ConversationKind, DirectoryView, conversation_kind
-from slarc.domain.tracking import TrackedItem
+from slarc.domain.tracking import TrackedItem, item_label
 from slarc.ports import ArchiveStore, QueryIndex, SlackConnector
 from slarc.service.auth import domain_of
 from slarc.service.downloads import QUEUED_STATUSES, image_urls, outstanding_downloads
@@ -68,7 +68,7 @@ def list_archive(settings: Settings, archive: ArchiveStore, index: QueryIndex) -
         rows.append(
             ListRow(
                 workspace=domains.get(item.team_id) or item.team_id,
-                conversation=views[item.team_id].conversation_label(item.channel),
+                conversation=item_label(item, views[item.team_id]),
                 kind=item.kind,
                 messages=len(messages),
                 last_pull=item.last_pull_at,
