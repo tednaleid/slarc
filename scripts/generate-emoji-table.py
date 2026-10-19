@@ -5,6 +5,8 @@
 # ///
 # ABOUTME: Developer script that writes src/slarc/data/emoji.json, the standard emoji table,
 # ABOUTME: from iamcal/emoji-data's emoji.json at a release tag: short name to unified code points.
+"""Write src/slarc/data/emoji.json from iamcal/emoji-data's emoji.json at a release tag."""
+
 import argparse
 import json
 import urllib.request

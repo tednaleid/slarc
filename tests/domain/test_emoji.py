@@ -1,7 +1,9 @@
 # ABOUTME: Tests for resolve_emoji: standard emoji with skin tones, custom images and aliases.
 # ABOUTME: Unknown names and custom emoji without a local image render as :name: text.
+import pytest
+
 from slarc.domain.directory import DirectoryView
-from slarc.domain.emoji import EmojiRender, resolve_emoji, standard_emoji
+from slarc.domain.emoji import EmojiRender, code_points_text, resolve_emoji, standard_emoji
 
 SMILE = chr(0x1F604)
 WAVE_TONE_3 = chr(0x1F44B) + chr(0x1F3FC)
@@ -70,3 +72,9 @@ def test_table_keys_every_short_name():
     assert table["+1"] == table["thumbsup"]
     assert table["smile"] == {"u": "1F604"}
     assert table["wave"]["skins"]["3"] == "1F44B-1F3FC"
+
+
+def test_code_points_text_rejects_surrogates():
+    assert code_points_text("1F44B-1F3FC") == WAVE_TONE_3
+    with pytest.raises(ValueError):
+        code_points_text("D800")

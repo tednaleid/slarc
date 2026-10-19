@@ -224,3 +224,82 @@ def test_golden_recorded_messages(line: dict, update_golden: bool):
         path.write_text(html, encoding="utf-8")
     assert path.exists(), f"{path.name} is missing; run `just test --update-golden`"
     assert html == path.read_text(encoding="utf-8")
+
+
+WAVE = chr(0x1F44B)
+
+
+@pytest.mark.parametrize(
+    ("element", "title", "tone"),
+    [
+        ({"name": "wave::skin-tone-3"}, ":wave::skin-tone-3:", 0x1F3FC),
+        (
+            {"name": "wave", "unicode": "1f44b-1f3fc", "skin_tone": 3},
+            ":wave::skin-tone-3:",
+            0x1F3FC,
+        ),
+        ({"name": "wave", "unicode": "1f44b-1f3fd"}, ":wave::skin-tone-4:", 0x1F3FD),
+    ],
+    ids=["tone-in-name", "skin_tone-field", "toned-unicode"],
+)
+def test_toned_emoji_element_keeps_skin_tone(element: dict, title: str, tone: int):
+    message = _section({"type": "emoji", **element})
+    assert _html(message) == f'<p><span class="emoji" title="{title}">{WAVE}{chr(tone)}</span></p>'
+
+
+def test_emoji_element_with_invalid_unicode_renders_text():
+    message = _section({"type": "emoji", "name": "gone_custom", "unicode": "d800"})
+    assert _html(message) == "<p>:gone_custom:</p>"
+
+
+def test_date_out_of_range_renders_fallback_text():
+    message = _section({"type": "date", "timestamp": 10**18, "fallback": "<someday>"})
+    assert _html(message) == "<p>&lt;someday&gt;</p>"
+
+
+def test_malformed_text_and_url_never_raise():
+    message = {
+        "text": 5,
+        "blocks": [
+            {"type": "section", "text": {"type": "mrkdwn", "text": 5}},
+            {"type": "header", "text": {"type": "plain_text", "text": ["x"]}},
+            {"type": "image", "image_url": 7, "alt_text": "a"},
+            _section(
+                {"type": "text", "text": None},
+                {"type": "link", "url": 5, "text": 6},
+                {"type": "link", "url": ["u"]},
+                {"type": "emoji", "name": 9},
+            )["blocks"][0],
+        ],
+    }
+    assert _html(message) == (
+        '<div class="section"></div>\n'
+        '<div class="header"></div>\n'
+        '<figure class="image">a</figure>\n'
+        "<p>::</p>"
+    )
+    assert _html({"text": 5}) == ""
+
+
+def test_section_trailing_newline_before_list_adds_no_break():
+    message = {
+        "blocks": [
+            {
+                "type": "rich_text",
+                "elements": [
+                    {"type": "rich_text_section", "elements": [{"type": "text", "text": "a\n"}]},
+                    {
+                        "type": "rich_text_list",
+                        "style": "bullet",
+                        "elements": [
+                            {
+                                "type": "rich_text_section",
+                                "elements": [{"type": "text", "text": "b"}],
+                            }
+                        ],
+                    },
+                ],
+            }
+        ]
+    }
+    assert _html(message) == "<p>a</p>\n<ul><li>b</li></ul>"

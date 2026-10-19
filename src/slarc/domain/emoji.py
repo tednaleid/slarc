@@ -12,6 +12,8 @@ from slarc.domain.directory import DirectoryView
 ALIAS_PREFIX = "alias:"
 SKIN_TONE_PREFIX = "skin-tone-"
 MAX_ALIAS_DEPTH = 10
+SKIN_TONE_CODES = {"1F3FB": "2", "1F3FC": "3", "1F3FD": "4", "1F3FE": "5", "1F3FF": "6"}
+SURROGATES = (0xD800, 0xDFFF)
 
 
 @dataclass(frozen=True)
@@ -43,18 +45,30 @@ def resolve_emoji(
         target = url.removeprefix(ALIAS_PREFIX)
     else:
         return EmojiRender("text", f":{name}:")
-    code = _standard_code(target, _skin_tone_key(tones))
+    code = _standard_code(target, _skin_key_from_name(tones))
     if code is None:
         return EmojiRender("text", f":{name}:")
     return EmojiRender("unicode", code_points_text(code))
 
 
 def code_points_text(code: str) -> str:
-    """The text for dash-separated hex code points such as 1F44B-1F3FC."""
-    return "".join(chr(int(point, 16)) for point in code.split("-"))
+    """The text for dash-separated hex code points such as 1F44B-1F3FC. Raises ValueError for
+    anything that is not a list of valid, non-surrogate code points."""
+    points = [int(point, 16) for point in code.split("-")]
+    if any(SURROGATES[0] <= point <= SURROGATES[1] for point in points):
+        raise ValueError(f"surrogate code point in {code}")
+    return "".join(chr(point) for point in points)
 
 
-def _skin_tone_key(tones: str) -> str:
+def skin_key_from_code(code: str) -> str:
+    """The skin key for the tone modifiers in code points such as 1f44b-1f3fc (3), or ""."""
+    tones = [
+        SKIN_TONE_CODES[point] for point in code.upper().split("-") if point in SKIN_TONE_CODES
+    ]
+    return "-".join(tones)
+
+
+def _skin_key_from_name(tones: str) -> str:
     """The table's skin key for the part after the base name: skin-tone-3 gives 3, and
     skin-tone-2::skin-tone-4 or skin-tone-2-4 gives 2-4."""
     parts = [part.removeprefix(SKIN_TONE_PREFIX) for part in tones.split("::") if part]

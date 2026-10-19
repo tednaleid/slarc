@@ -28,8 +28,8 @@ _QUOTE_REST = ("&gt;&gt;&gt;", ">>>")
 _QUOTE = ("&gt;", ">")
 
 
-def render_mrkdwn_html(text: str, view: DirectoryView, assets: AssetResolver) -> str:
-    """text as HTML, returned as markupsafe Markup so templates do not escape it again."""
+def render_mrkdwn_html(text: str, view: DirectoryView, assets: AssetResolver) -> Markup:
+    """text as HTML. Markup escapes str operands of +, % and format, so compose with care."""
     held: list[Markup] = []
     lines = _hold(text.replace("\x00", ""), view, assets, held).split("\n")
     html = "".join(_group_html(quoted, group) for quoted, group in _quote_groups(lines))
@@ -51,7 +51,7 @@ def emoji_html(name: str, render: EmojiRender) -> Markup:
 
 def link_html(url: str | None, label: Markup) -> Markup:
     """label linked to url, or label alone when url is not a web or mailto link."""
-    if url and url.startswith(LINK_SCHEMES):
+    if isinstance(url, str) and url.startswith(LINK_SCHEMES):
         return Markup('<a href="{}">{}</a>').format(url, label)
     return label
 

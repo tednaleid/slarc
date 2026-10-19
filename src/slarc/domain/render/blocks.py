@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from markupsafe import Markup, escape
 
 from slarc.domain.directory import DirectoryView
-from slarc.domain.emoji import EmojiRender, code_points_text, resolve_emoji
+from slarc.domain.emoji import EmojiRender, code_points_text, resolve_emoji, skin_key_from_code
 from slarc.domain.links import is_web_url
 from slarc.domain.plain import mention_text
 from slarc.domain.render import AssetResolver
@@ -42,12 +42,12 @@ _EMPTY = Markup("")
 _NEWLINE = Markup("\n")
 
 
-def render_message_html(message: dict, view: DirectoryView, assets: AssetResolver) -> str:
-    """The message body as HTML, returned as markupsafe Markup. The body excludes attachments,
-    files, reactions, the edit marker and the author, time and thread around the message."""
+def render_message_html(message: dict, view: DirectoryView, assets: AssetResolver) -> Markup:
+    """The message body as HTML. The body excludes attachments, files, reactions, the edit
+    marker and the author, time and thread around the message."""
     renderer = _Renderer(view, assets)
     subtype = message.get("subtype")
-    text = message.get("text") or ""
+    text = _text(message.get("text"))
     if subtype is not None and subtype not in RENDERED_SUBTYPES:
         body = renderer.mrkdwn(text) if text else escape(subtype)
         return Markup('<div class="generic-message">{}</div>').format(body)
@@ -79,7 +79,7 @@ class _Renderer:
     assets: AssetResolver
 
     def mrkdwn(self, text: str) -> Markup:
-        return Markup(render_mrkdwn_html(text, self.view, self.assets))
+        return render_mrkdwn_html(text, self.view, self.assets)
 
     def block(self, block: dict) -> Markup:
         match block.get("type"):
@@ -124,13 +124,13 @@ class _Renderer:
     def text_object(self, obj: object) -> Markup:
         if not isinstance(obj, dict):
             return _EMPTY
-        text = obj.get("text") or ""
+        text = _text(obj.get("text"))
         return self.mrkdwn(text) if obj.get("type") == "mrkdwn" else escape(text)
 
     def image_block(self, block: dict) -> Markup:
-        url = block.get("image_url")
+        url = _text(block.get("image_url"))
         alt = block.get("alt_text") or ""
-        src = self.assets.image_src(url) if is_web_url(url) else None
+        src = self.local_image(url)
         if src:
             width, height = block.get("image_width"), block.get("image_height")
             size = (
@@ -140,17 +140,19 @@ class _Renderer:
             )
             image = Markup('<img src="{}" alt="{}"{}>').format(src, alt, size)
         else:
-            image = link_html(url, escape(alt or url or ""))
+            image = link_html(url, escape(alt or url))
         title = self.text_object(block.get("title"))
         caption = Markup("<figcaption>{}</figcaption>").format(title) if title else _EMPTY
         return Markup('<figure class="image">{}{}</figure>').format(image, caption)
 
+    def local_image(self, url: object) -> str | None:
+        return self.assets.image_src(url) if is_web_url(url) else None
+
     def context_element(self, element: dict) -> Markup:
         match element.get("type"):
             case "image":
-                url = element.get("image_url")
                 alt = element.get("alt_text") or ""
-                src = self.assets.image_src(url) if is_web_url(url) else None
+                src = self.local_image(element.get("image_url"))
                 if src is None:
                     return escape(alt)
                 return Markup('<img class="context-image" src="{}" alt="{}">').format(src, alt)
@@ -178,7 +180,7 @@ class _Renderer:
         elements = _dicts(container.get("elements"))
         match container.get("type"):
             case "rich_text_section":
-                return Markup("<p>{}</p>").format(self.inline(elements))
+                return Markup("<p>{}</p>").format(self.inline(_without_final_newline(elements)))
             case "rich_text_quote":
                 return Markup("<blockquote>{}</blockquote>").format(self.inline(elements))
             case "rich_text_preformatted":
@@ -219,38 +221,72 @@ class _Renderer:
     def leaf(self, element: dict, preformatted: bool) -> Markup:
         match element.get("type"):
             case "text":
-                text = element.get("text") or ""
+                text = _text(element.get("text"))
                 content = escape(text) if preformatted else _with_breaks(text)
                 return _styled(content, element.get("style"))
             case "link":
-                url = element.get("url")
-                label = _styled(
-                    _with_breaks(element.get("text") or url or ""), element.get("style")
-                )
-                return link_html(url, label)
+                url = _text(element.get("url"))
+                label = _with_breaks(_text(element.get("text")) or url)
+                return link_html(url, _styled(label, element.get("style")))
             case "emoji":
                 return self.emoji(element)
             case "user" | "channel" | "usergroup" | "broadcast":
                 return mention_html(mention_text(element, self.view))
             case "date" if isinstance(element.get("timestamp"), int):
-                moment = datetime.fromtimestamp(element["timestamp"], UTC)
-                iso = moment.strftime("%Y-%m-%dT%H:%M:%SZ")
-                return Markup('<time datetime="{}">{}</time>').format(
-                    iso, element.get("fallback") or iso
-                )
+                return _date(element)
             case "color":
                 return escape(element.get("value") or "")
             case _:
                 return _unknown("span", element)
 
     def emoji(self, element: dict) -> Markup:
-        name = element.get("name") or ""
+        name = _toned_emoji_name(element)
         render = resolve_emoji(name, self.view, self.assets.emoji_src)
-        unicode = element.get("unicode")
-        if render.kind == "text" and isinstance(unicode, str):
+        unicode = _text(element.get("unicode"))
+        if render.kind == "text" and unicode:
             with suppress(ValueError):
                 render = EmojiRender("unicode", code_points_text(unicode))
         return emoji_html(name, render)
+
+
+def _toned_emoji_name(element: dict) -> str:
+    """The element's emoji name with its skin tone, which Slack sends either in the name
+    (wave::skin-tone-3) or beside it as skin_tone and toned unicode code points."""
+    name = _text(element.get("name"))
+    if "::" in name:
+        return name
+    tone = element.get("skin_tone")
+    if isinstance(tone, int) and 2 <= tone <= 6:
+        key = str(tone)
+    else:
+        key = skin_key_from_code(_text(element.get("unicode")))
+    return f"{name}::skin-tone-{key}" if key else name
+
+
+def _text(value: object) -> str:
+    """value when it is a string, else "", so malformed fields render as nothing."""
+    return value if isinstance(value, str) else ""
+
+
+def _without_final_newline(elements: list[dict]) -> list[dict]:
+    """Section elements without the newline Slack ends a section with before a list or quote;
+    the next container already starts on its own line."""
+    last = elements[-1] if elements else {}
+    text = last.get("text")
+    if last.get("type") == "text" and isinstance(text, str) and text.endswith("\n"):
+        return [*elements[:-1], {**last, "text": text[:-1]}]
+    return elements
+
+
+def _date(element: dict) -> Markup:
+    """A date element as <time>, or its fallback text when the timestamp is out of range."""
+    fallback = _text(element.get("fallback"))
+    try:
+        moment = datetime.fromtimestamp(element["timestamp"], UTC)
+    except OSError, OverflowError, ValueError:
+        return escape(fallback)
+    iso = moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return Markup('<time datetime="{}">{}</time>').format(iso, fallback or iso)
 
 
 def _dicts(value: object) -> list[dict]:
