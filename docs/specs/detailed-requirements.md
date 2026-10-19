@@ -280,7 +280,7 @@ DuckDB reads the globs directly with `read_ndjson`, with the `meta` columns give
 
 **Hashed subset**
 
-- message: `text`, `blocks`, `attachments`, the `id` and `mode` of each entry in `files`, `edited`, `reactions`, `subtype`, `user`, `bot_id`. Excluded: `reply_count`, `reply_users`, `reply_users_count`, `latest_reply`, `is_locked`, `last_read`, `subscribed`, and anything else per-user or per-request.
+- message: `text`, `blocks`, `attachments`, the `id` and `mode` of each entry in `files`, `edited`, `reactions`, `subtype`, `user`, `bot_id`. `blocks` and `attachments` are hashed with every `block_id` removed, because Slack regenerates block ids on each read for API-posted messages. Excluded: `reply_count`, `reply_users`, `reply_users_count`, `latest_reply`, `is_locked`, `last_read`, `subscribed`, and anything else per-user or per-request.
 - user: the whole `profile` object plus `name`, `real_name`, `deleted`, `tz`, `is_bot`, `is_app_user`.
 - emoji: the URL or alias target.
 - conversation: `name`, `topic`, `purpose`, `is_archived`, `is_private`, `is_shared`, membership. `last_read` is per-user and lives in the run line instead.

@@ -86,6 +86,32 @@ def test_message_hash_ignores_fields_outside_subset():
     assert content_hash("message", other) == content_hash("message", parent)
 
 
+def blocks_message(block_id: str, text: str = "hello") -> dict:
+    section = {"type": "rich_text_section", "elements": [{"type": "text", "text": text}]}
+    block = {"type": "rich_text", "block_id": block_id, "elements": [section]}
+    attachment = {"id": 1, "blocks": [{"type": "section", "block_id": f"{block_id}-a"}]}
+    return {"type": "message", "text": text, "blocks": [block], "attachments": [attachment]}
+
+
+def test_message_hash_ignores_block_ids():
+    assert content_hash("message", blocks_message("WK/f")) == content_hash(
+        "message", blocks_message("CQXr")
+    )
+
+
+def test_message_hash_changes_on_text_inside_a_block():
+    before = content_hash("message", blocks_message("WK/f"))
+    changed = blocks_message("WK/f")
+    changed["blocks"][0]["elements"][0]["elements"][0]["text"] = "goodbye"
+    assert content_hash("message", changed) != before
+
+
+def test_message_hash_leaves_the_message_unchanged():
+    message = blocks_message("WK/f")
+    content_hash("message", message)
+    assert message == blocks_message("WK/f")
+
+
 def file_object() -> dict:
     return json.loads((SPIKE / "files.info.F0C9XQFTVRD.json").read_text())["file"]
 

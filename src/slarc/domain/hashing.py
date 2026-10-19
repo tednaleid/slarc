@@ -46,8 +46,24 @@ def _pick(obj: dict, keys: tuple[str, ...]) -> dict:
     return {k: obj[k] for k in keys if obj.get(k) is not None}
 
 
+def _without_block_ids(value: object) -> object:
+    """A copy of value with every block_id key removed, at any depth.
+
+    Slack builds blocks with new random block ids on each read of a message posted with text
+    only, so the ids carry no content.
+    """
+    if isinstance(value, dict):
+        return {k: _without_block_ids(v) for k, v in value.items() if k != "block_id"}
+    if isinstance(value, list):
+        return [_without_block_ids(item) for item in value]
+    return value
+
+
 def _message_subset(obj: dict) -> dict:
     subset = _pick(obj, _MESSAGE_KEYS)
+    for key in ("blocks", "attachments"):
+        if key in subset:
+            subset[key] = _without_block_ids(subset[key])
     if obj.get("files") is not None:
         subset["files"] = [{"id": f["id"], "mode": f.get("mode")} for f in obj["files"]]
     return subset

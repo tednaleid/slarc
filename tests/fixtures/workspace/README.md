@@ -27,4 +27,4 @@ The copy differs from the pulled archive in three ways:
 - The DM and the group DM: a message each, and in the group DM a thread with replies from Ted and jim.
 - `directory/`: users, emoji, conversations, bots, files and images. jim changed his name after posting: the spike's `users.list.json` has his old name, these users have `real_name` "Jim Naleid" and `display_name` "Jim".
 
-Messages posted through the API with text only come back with `blocks` that Slack builds on each read, with a new random `block_id` every time, so those messages carry a line from both `conversations.history` and `conversations.replies` when both returned them.
+The seeded messages posted through the API with text only come back with `blocks` that Slack builds on each read, with a new random `block_id` every time. The stored objects keep whichever ids the recording read; the message hash ignores block ids.
