@@ -30,6 +30,7 @@ from slarc.ports import (
 from slarc.service.auth import domain_of
 from slarc.service.downloads import queue_downloads
 from slarc.service.selectors import only_workspace, resolve_conversation
+from slarc.service.threads import active_threads, discover_reply_threads, infer_deletes
 from slarc.unit_of_work import UnitOfWork
 
 HISTORY_API = "conversations.history"
@@ -342,39 +343,144 @@ class _PullRun:
     def _pull_conversation(
         self, connection: _Connection, item: TrackedItem, view: DirectoryView
     ) -> None:
-        """Pages older history while the backfill is incomplete, then history newer than newest_ts.
+        """Pulls new history and new replies under older parents, then re-reads active threads.
 
-        The item is recorded after every page, so an interrupted pull resumes below oldest_ts.
-        Newer history also pages newest first, so newest_ts moves only once that paging ends.
+        --full re-reads the whole range instead. A first pull's history covers every reply, so
+        it skips search and later pulls search from its start. Any read failing with NotVisible
+        skips the item without deletes.
         """
         held = _HeldConversation(self.uow.archive, item.team_id, item.channel)
-        history = connection.gateway.history
         started_at_top = not item.backfill_complete and item.oldest_ts is None
+        if started_at_top:
+            item = msgspec.structs.replace(item, last_search_at=_now(self.uow))
         try:
-            if not item.backfill_complete:
-                for page in history(item.channel, item.since, item.oldest_ts or item.until):
-                    self._append_history_page(connection, held, page, view)
-                    item = msgspec.structs.replace(
-                        item,
-                        newest_ts=_outermost(item.newest_ts, page, newest=True),
-                        oldest_ts=_outermost(item.oldest_ts, page, newest=False),
-                    )
-                    self._record(item)
-                item = msgspec.structs.replace(item, backfill_complete=True)
-                self._record(item)
-            if not started_at_top:
-                newest = item.newest_ts
-                for page in history(item.channel, item.newest_ts or item.since, item.until):
-                    self._append_history_page(connection, held, page, view)
-                    newest = _outermost(newest, page, newest=True)
-                    oldest = _outermost(item.oldest_ts, page, newest=False)
-                    item = msgspec.structs.replace(item, oldest_ts=oldest)
-                    self._record(item)
-                item = msgspec.structs.replace(item, newest_ts=newest)
+            if self.options.full and not started_at_top:
+                item = self._reread_range(connection, held, item, view)
+            else:
+                item = self._pull_history(connection, held, item, view, started_at_top)
+                if not started_at_top:
+                    item = self._search_replies(connection, held, item, view)
+            now, days = self.uow.clock.now(), self.options.active_thread_days
+            active = active_threads(held.stored, now, days)
+            self._reread_threads(connection, held, _within(item, active), view)
         except NotVisible as error:
             self._skip(item, str(error))
             return
         self._finish(connection, item, view)
+
+    def _pull_history(
+        self,
+        connection: _Connection,
+        held: _HeldConversation,
+        item: TrackedItem,
+        view: DirectoryView,
+        started_at_top: bool,
+    ) -> TrackedItem:
+        """Pages older history while the backfill is incomplete, then newer than newest_ts."""
+        if not item.backfill_complete:
+            item = self._page_older(connection, held, item, view, item.oldest_ts or item.until)
+        if not started_at_top:
+            item = self._page_newer(connection, held, item, view, item.newest_ts or item.since)
+        return item
+
+    def _page_older(
+        self,
+        connection: _Connection,
+        held: _HeldConversation,
+        item: TrackedItem,
+        view: DirectoryView,
+        latest: str | None,
+    ) -> TrackedItem:
+        """Pages history from since up to latest and marks the backfill complete.
+
+        The item is recorded after every page, so an interrupted pull resumes below oldest_ts.
+        """
+        for page in connection.gateway.history(item.channel, item.since, latest):
+            self._append_history_page(connection, held, page, view)
+            item = msgspec.structs.replace(
+                item,
+                newest_ts=_outermost(item.newest_ts, page, newest=True),
+                oldest_ts=_outermost(item.oldest_ts, page, newest=False),
+            )
+            self._record(item)
+        item = msgspec.structs.replace(item, backfill_complete=True)
+        self._record(item)
+        return item
+
+    def _page_newer(
+        self,
+        connection: _Connection,
+        held: _HeldConversation,
+        item: TrackedItem,
+        view: DirectoryView,
+        oldest: str | None,
+    ) -> TrackedItem:
+        """Pages history from oldest up to until.
+
+        Pages come newest first, so newest_ts moves only once paging ends; an interrupted pull
+        then pages the same range again.
+        """
+        newest = item.newest_ts
+        for page in connection.gateway.history(item.channel, oldest, item.until):
+            self._append_history_page(connection, held, page, view)
+            newest = _outermost(newest, page, newest=True)
+            oldest_ts = _outermost(item.oldest_ts, page, newest=False)
+            item = msgspec.structs.replace(item, oldest_ts=oldest_ts)
+            self._record(item)
+        return msgspec.structs.replace(item, newest_ts=newest)
+
+    def _search_replies(
+        self,
+        connection: _Connection,
+        held: _HeldConversation,
+        item: TrackedItem,
+        view: DirectoryView,
+    ) -> TrackedItem:
+        """Re-reads each thread search finds a message in since the day before the last search.
+
+        last_search_at moves only when the search succeeds, so a failed one is retried.
+        """
+        searched_at = _now(self.uow)
+        if item.last_search_at is not None:
+            since_date = _day_before(item.last_search_at)
+            try:
+                threads = discover_reply_threads(connection.gateway, item.channel, since_date)
+            except AuthFailed:
+                raise
+            except SlarcError as error:
+                self.reporter.warn(
+                    f"Could not search conversation {item.channel} for new replies, so only its "
+                    f"active threads were re-read: {error}"
+                )
+                return item
+            self._reread_threads(connection, held, _within(item, threads), view)
+        return msgspec.structs.replace(item, last_search_at=searched_at)
+
+    def _reread_range(
+        self,
+        connection: _Connection,
+        held: _HeldConversation,
+        item: TrackedItem,
+        view: DirectoryView,
+    ) -> TrackedItem:
+        """Re-reads the whole range and every thread in it, then records deleted messages.
+
+        Each thread re-read records its own deleted replies, so the range covers top-level
+        messages only.
+        """
+        searched_at = _now(self.uow)
+        item = self._page_newer(connection, held, item, view, item.since)
+        parents = {ts for ts in held.listed if held.has_replies(ts)}
+        self._reread_threads(connection, held, parents, view)
+        stored = held.stored
+        top_level = {
+            ts: stored[ts]
+            for ts in _within(item, set(stored))
+            if stored[ts].thread_ts in (None, ts)
+        }
+        oldest = min(held.listed, key=MessageTs, default=None)
+        self._append_deletes(held, infer_deletes(top_level, held.listed, item.since, oldest))
+        return msgspec.structs.replace(item, backfill_complete=True, last_search_at=searched_at)
 
     def _append_history_page(
         self,
@@ -384,14 +490,39 @@ class _PullRun:
         view: DirectoryView,
     ) -> None:
         """Appends a page of history and the thread under each parent in it, then flushes."""
+        held.listed.update(message["ts"] for message in page)
+        parents = [m["ts"] for m in page if (m.get("reply_count") or 0) > 0]
+        self._append_read(connection, held, page, parents, view)
+
+    def _reread_threads(
+        self,
+        connection: _Connection,
+        held: _HeldConversation,
+        thread_ts: set[str],
+        view: DirectoryView,
+    ) -> None:
+        """Re-reads each of the threads not read yet in this run, oldest first."""
+        unread = sorted(thread_ts - held.read_threads, key=MessageTs)
+        if unread:
+            self._append_read(connection, held, [], unread, view)
+
+    def _append_read(
+        self,
+        connection: _Connection,
+        held: _HeldConversation,
+        page: list[dict],
+        parents: list[str],
+        view: DirectoryView,
+    ) -> None:
+        """Appends a page of history and the thread under each of parents, then flushes."""
         uow, gateway, team_id, channel = self.uow, connection.gateway, held.team_id, held.channel
         threads: dict[str, list[dict]] = {}
-        for message in page:
-            if (message.get("reply_count") or 0) > 0:
-                try:
-                    threads[message["ts"]] = gateway.replies(channel, message["ts"])
-                except ThreadNotFound:
-                    self._warn(_missing_message(connection.domain, channel, message["ts"]))
+        for ts in parents:
+            held.read_threads.add(ts)
+            try:
+                threads[ts] = gateway.replies(channel, ts)
+            except ThreadNotFound:
+                self._warn(_missing_message(connection.domain, channel, ts))
         read = [*page, *(m for messages in threads.values() for m in messages)]
         bot_ids = {m["bot_id"] for m in read if m.get("bot_id")} - view.bots.keys()
         bots = _unknown_bots(gateway, team_id, bot_ids, uow.archive)
@@ -439,19 +570,18 @@ class _PullRun:
     def _append_thread(
         self, held: _HeldConversation, thread_ts: str, messages: list[dict], view: DirectoryView
     ) -> None:
-        uow = self.uow
         self._append_messages(held, messages, REPLIES_API, view)
         returned = {message["ts"] for message in messages}
-        # Slack may stop serving the oldest messages, so only those at or after the oldest one
-        # returned can be recorded as deleted.
-        oldest = min((MessageTs(ts) for ts in returned), default=None)
-        for ts in held.thread(thread_ts):
-            stored = held.stored[ts]
-            in_range = oldest is not None and MessageTs(ts) >= oldest
-            if in_range and stored.hash is not None and ts not in returned:
-                meta = _meta(uow, "deleted", team=held.team_id, channel=held.channel, ts=ts)
-                _append(uow, Envelope(meta=meta))
-                held.record(ts, StoredMessage(None, stored.thread_ts, _now(uow)))
+        members = {ts: held.stored[ts] for ts in held.thread(thread_ts)}
+        oldest = min(returned, key=MessageTs, default=None)
+        self._append_deletes(held, infer_deletes(members, returned, None, oldest))
+
+    def _append_deletes(self, held: _HeldConversation, stamps: set[str]) -> None:
+        uow = self.uow
+        for ts in sorted(stamps, key=MessageTs):
+            meta = _meta(uow, "deleted", team=held.team_id, channel=held.channel, ts=ts)
+            _append(uow, Envelope(meta=meta))
+            held.record(ts, StoredMessage(None, held.stored[ts].thread_ts, _now(uow)))
 
     def _warn(self, message: str) -> None:
         self.reporter.warn(message)
@@ -468,13 +598,19 @@ class _PullRun:
 
 
 class _HeldConversation:
-    """What the archive holds for one conversation, read once and kept current as lines append."""
+    """What the archive holds for one conversation, read once and kept current as lines append.
+
+    listed holds the ts of each message history returned in this run, and read_threads the
+    thread_ts of each thread read in this run.
+    """
 
     def __init__(self, archive: ArchiveStore, team_id: str, channel: str) -> None:
         self.team_id = team_id
         self.channel = channel
         self._archive = archive
         self.stored = archive.stored_messages(team_id, channel)
+        self.listed: set[str] = set()
+        self.read_threads: set[str] = set()
         self._replies: dict[str, set[str]] = {}
         for ts, stored in self.stored.items():
             self._index(ts, stored)
@@ -498,9 +634,28 @@ class _HeldConversation:
             members.add(thread_ts)
         return sorted(members, key=MessageTs)
 
+    def has_replies(self, thread_ts: str) -> bool:
+        return any(ts != thread_ts for ts in self._replies.get(thread_ts, ()))
+
     def _index(self, ts: str, stored: StoredMessage) -> None:
         if stored.thread_ts is not None:
             self._replies.setdefault(stored.thread_ts, set()).add(ts)
+
+
+def _within(item: TrackedItem, stamps: set[str]) -> set[str]:
+    """The stamps inside the item's since and until bounds, which are exclusive like history's."""
+    return {
+        ts
+        for ts in stamps
+        if (item.since is None or MessageTs(ts) > item.since)
+        and (item.until is None or MessageTs(ts) < item.until)
+    }
+
+
+def _day_before(timestamp: str) -> str:
+    """The YYYY-MM-DD date in UTC of the day before a fetched_at timestamp."""
+    moment = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
+    return (moment - timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def _outermost(current: str | None, page: list[dict], *, newest: bool) -> str | None:

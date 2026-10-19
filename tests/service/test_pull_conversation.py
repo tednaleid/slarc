@@ -15,25 +15,12 @@ from tests.service.pull_harness import (
     THREAD_TS,
     Harness,
     channel_messages,
+    message,
     spike,
+    ts_on,
 )
 
-OCT_17 = 1792195200
 BROADCAST_TS = "1792422700.000100"
-
-
-def ts_on(day: int, hour: int) -> str:
-    """A ts at the given hour of the given day of October 2026, UTC."""
-    return f"{OCT_17 + (day - 17) * 86400 + hour * 3600}.000100"
-
-
-def message(ts: str, **extra: object) -> dict:
-    return {"type": "message", "user": ME, "text": f"message at {ts}", "ts": ts, **extra}
-
-
-def serve(h: Harness, stamps: list[str], page_size: int = 200) -> None:
-    h.gateway.conversations[CHANNEL] = [message(ts) for ts in stamps]
-    h.gateway.page_size = page_size
 
 
 def history_calls(h: Harness) -> list[tuple[str | None, ...]]:
@@ -54,7 +41,7 @@ def h() -> Harness:
 
 def test_first_pull_pages_whole_range(h: Harness):
     stamps = [ts_on(18, hour) for hour in range(7)]
-    serve(h, stamps, page_size=3)
+    h.serve(stamps, page_size=3)
 
     report = h.pull(BASE)
 
@@ -72,7 +59,7 @@ def test_first_pull_pages_whole_range(h: Harness):
 
 def test_since_until_bound_history(h: Harness):
     stamps = {day: ts_on(day, 12) for day in (17, 18, 19, 20)}
-    serve(h, list(stamps.values()))
+    h.serve(list(stamps.values()))
 
     h.pull(BASE, options=PullOptions(since="2026-10-18", until="2026-10-19"))
 
@@ -118,7 +105,7 @@ def test_broadcast_reply_stored_once(h: Harness):
 
 def test_incremental_pull_fetches_only_newer(h: Harness):
     stamps = [ts_on(18, hour) for hour in range(3)]
-    serve(h, stamps)
+    h.serve(stamps)
     h.pull(BASE)
     newer = [ts_on(19, hour) for hour in range(2)]
     h.gateway.conversations[CHANNEL] += [message(ts) for ts in newer]
@@ -136,7 +123,7 @@ def test_incremental_pull_fetches_only_newer(h: Harness):
 
 def test_interrupted_backfill_resumes_from_oldest_ts(h: Harness, monkeypatch: pytest.MonkeyPatch):
     stamps = [ts_on(18, hour) for hour in range(7)]
-    serve(h, stamps, page_size=2)
+    h.serve(stamps, page_size=2)
     served = h.gateway.history
 
     def interrupted_on_page_3(
@@ -168,7 +155,7 @@ def test_interrupted_backfill_resumes_from_oldest_ts(h: Harness, monkeypatch: py
 
 def test_wider_since_backfills_gap(h: Harness):
     stamps = {day: ts_on(day, 12) for day in (17, 18, 19)}
-    serve(h, list(stamps.values()))
+    h.serve(list(stamps.values()))
     h.pull(BASE, options=PullOptions(since="2026-10-19"))
     h.gateway.calls.clear()
     before = len(h.archive.lines)
@@ -184,7 +171,7 @@ def test_wider_since_backfills_gap(h: Harness):
 
 def test_later_until_widens_range(h: Harness):
     stamps = {day: ts_on(day, 12) for day in (17, 18, 19)}
-    serve(h, list(stamps.values()))
+    h.serve(list(stamps.values()))
     h.pull(BASE, options=PullOptions(until="2026-10-18"))
     h.gateway.calls.clear()
     before = len(h.archive.lines)
@@ -198,7 +185,7 @@ def test_later_until_widens_range(h: Harness):
 
 
 def test_flush_called_per_page(h: Harness, monkeypatch: pytest.MonkeyPatch):
-    serve(h, [ts_on(18, hour) for hour in range(5)], page_size=2)
+    h.serve([ts_on(18, hour) for hour in range(5)], page_size=2)
     served = h.gateway.history
     flushes_before_page: list[int] = []
 

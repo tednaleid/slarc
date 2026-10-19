@@ -28,6 +28,7 @@ PARENT_TS = "1792410693.663869"
 REPLY_TS = "1792410743.787639"
 THREAD_TS = [PARENT_TS, REPLY_TS, "1792411464.844209", "1792422623.464629"]
 BASE = "https://naleidworkspace.slack.com/archives/C0CA5396G03"
+OCT_17 = 1792195200
 NALEID = Session(TEAM, "naleidworkspace", "naleid", "desktop", "xoxc-1", "xoxd-1")
 
 
@@ -40,6 +41,15 @@ def channel_messages() -> list[dict]:
     in_thread = {m["ts"] for m in replies}
     history = [m for m in spike("conversations.history")["messages"] if m["ts"] not in in_thread]
     return replies + history
+
+
+def ts_on(day: int, hour: int) -> str:
+    """A ts at the given hour of the given day of October 2026, UTC."""
+    return f"{OCT_17 + (day - 17) * 86400 + hour * 3600}.000100"
+
+
+def message(ts: str, **extra: object) -> dict:
+    return {"type": "message", "user": ME, "text": f"message at {ts}", "ts": ts, **extra}
 
 
 class CountingConnector(FakeConnector):
@@ -98,6 +108,10 @@ class Harness:
         self.gateway.conversations[CHANNEL] = [
             {**m, **changes} if m["ts"] == ts else m for m in messages
         ]
+
+    def serve(self, stamps: list[str], page_size: int = 200) -> None:
+        self.gateway.conversations[CHANNEL] = [message(ts) for ts in stamps]
+        self.gateway.page_size = page_size
 
     def remove_messages(self, *ts: str) -> None:
         messages = self.gateway.conversations[CHANNEL]
