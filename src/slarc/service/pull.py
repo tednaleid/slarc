@@ -62,6 +62,7 @@ class PullOptions:
 
 @dataclass
 class PullReport:
+    items_pulled: int
     lines_appended: int
     messages_seen: int
     skipped: list[str]
@@ -86,6 +87,7 @@ def pull(
     )
     counts = uow.run.counts
     return PullReport(
+        items_pulled=sum(1 for item in uow.run.tracked if item.status == "ok"),
         lines_appended=int(counts.get(LINES_APPENDED, 0)),
         messages_seen=int(counts.get(MESSAGES_SEEN, 0)),
         skipped=run.skipped,
@@ -242,6 +244,7 @@ class _PullRun:
         self.workspaces = workspaces
         self.prefetched: dict[ItemKey, list[dict]] = {}
         self.skipped: list[str] = []
+        self.progress: _ItemProgress | None = None
 
     def resolve(self, selectors: list[Selector]) -> list[TrackedItem]:
         """The items to pull; a thread read while working out a selector's kind is kept."""
@@ -324,7 +327,9 @@ class _PullRun:
             if item.key not in reads:
                 continue
             held = _HeldConversation(self.uow.archive, team_id, item.channel)
+            self.progress = _ItemProgress(self.reporter, _label(item, view), report_start=False)
             self._append_thread(held, item.ts or "", reads[item.key], view)
+            self.progress.seen += len(reads[item.key])
             self._finish(connection, item, view)
         for item in conversations:
             self._pull_conversation(connection, item, view)
@@ -339,6 +344,7 @@ class _PullRun:
                 item, status="ok", last_pull_at=fetched_now(self.uow), last_read=last_read
             )
         )
+        self._end_progress()
 
     def _read_thread(self, connection: _Connection, item: TrackedItem) -> list[dict] | None:
         """The thread's messages, parent first, or None when the item cannot be read.
@@ -367,6 +373,7 @@ class _PullRun:
         skips the item without deletes.
         """
         held = _HeldConversation(self.uow.archive, item.team_id, item.channel)
+        self.progress = _ItemProgress(self.reporter, _label(item, view))
         started_at_top = not item.backfill_complete and item.oldest_ts is None
         if started_at_top:
             item = msgspec.structs.replace(item, last_search_at=fetched_now(self.uow))
@@ -549,6 +556,8 @@ class _PullRun:
         for thread_ts, messages in threads.items():
             self._append_thread(held, thread_ts, messages, view)
         uow.archive.flush()
+        if self.progress is not None:
+            self.progress.add(len(read))
 
     def _append_messages(
         self, held: _HeldConversation, messages: list[dict], api: str, view: DirectoryView
@@ -610,11 +619,41 @@ class _PullRun:
     def _skip(self, item: TrackedItem, message: str) -> None:
         self._warn(message)
         self._record(msgspec.structs.replace(item, status="not_visible"))
+        self._end_progress()
+
+    def _end_progress(self) -> None:
+        if self.progress is not None:
+            self.progress.end()
+            self.progress = None
 
     def _record(self, item: TrackedItem) -> None:
         tracked = self.uow.run.tracked
         tracked[:] = [held for held in tracked if held.key != item.key]
         tracked.append(item)
+
+
+class _ItemProgress:
+    """Reports how many messages have been read for one item, ending with the item's total."""
+
+    def __init__(self, reporter: Reporter, label: str, *, report_start: bool = True) -> None:
+        self.reporter = reporter
+        self.label = label
+        self.seen = 0
+        if report_start:
+            reporter.progress(label, 0, None)
+
+    def add(self, count: int) -> None:
+        self.seen += count
+        self.reporter.progress(self.label, self.seen, None)
+
+    def end(self) -> None:
+        self.reporter.progress(self.label, self.seen, self.seen)
+
+
+def _label(item: TrackedItem, view: DirectoryView) -> str:
+    name = view.conversations.get(item.channel, {}).get("name")
+    where = f"#{name}" if name else item.channel
+    return where if item.kind == "conversation" else f"{where} {item.kind} {item.ts}"
 
 
 class _HeldConversation:

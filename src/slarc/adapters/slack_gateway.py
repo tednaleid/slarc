@@ -177,7 +177,10 @@ def session_gateway(session: Session) -> SlackGateway:
 
 
 class SessionConnector:
-    """Picks the first session, in source priority order, that serves a workspace."""
+    """Picks the first session, in source priority order, that serves a workspace.
+
+    authenticated maps the team id auth.test returned to each session that passed it.
+    """
 
     def __init__(
         self,
@@ -187,6 +190,7 @@ class SessionConnector:
         self._source = source
         self._gateway_factory = gateway_factory
         self._sessions: list[Session] | None = None
+        self.authenticated: dict[str, Session] = {}
 
     def sessions(self) -> list[Session]:
         if self._sessions is None:
@@ -198,5 +202,5 @@ class SessionConnector:
         if session is None:
             raise NoSession(workspace)
         gateway = self._gateway_factory(session)
-        gateway.auth_test()
+        self.authenticated[gateway.auth_test()["team_id"]] = session
         return gateway

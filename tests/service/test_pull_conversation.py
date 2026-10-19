@@ -57,6 +57,22 @@ def test_first_pull_pages_whole_range(h: Harness):
     assert item.last_read == {ME: spike("conversations.info")["channel"]["last_read"]}
 
 
+def test_progress_reported_per_page_and_item(h: Harness):
+    stamps = [ts_on(18, hour) for hour in range(7)]
+    h.serve(stamps, page_size=3)
+
+    report = h.pull(BASE)
+
+    assert h.reporter.progress_updates == [
+        ("#all-naleid", 0, None),
+        ("#all-naleid", 3, None),
+        ("#all-naleid", 6, None),
+        ("#all-naleid", 7, None),
+        ("#all-naleid", 7, 7),
+    ]
+    assert report.items_pulled == 1
+
+
 def test_since_until_bound_history(h: Harness):
     stamps = {day: ts_on(day, 12) for day in (17, 18, 19, 20)}
     h.serve(list(stamps.values()))

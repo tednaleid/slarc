@@ -367,3 +367,20 @@ def test_fake_gateway_pages_and_fails_like_gateway():
         gateway.replies("C0NOTVISIBLE", THREAD_TS)
     with pytest.raises(ThreadNotFound):
         gateway.replies(CHANNEL, "1700000000.000000")
+
+
+def test_connector_records_each_authenticated_session_by_team_id():
+    env = Session("", "", "", "env", "xoxc-env", "xoxd-env")
+    connector, _ = connector_for([env])
+    assert connector.authenticated == {}
+    connector.connect("naleidworkspace")
+    assert connector.authenticated == {"T0CB5LYPVFA": env}
+
+
+def test_connector_does_not_record_a_session_that_fails_auth_test():
+    session = make_session("one", "T1")
+    gateway = FakeSlackGateway(auth_error=AuthFailed("desktop", "one"))
+    connector = SessionConnector(FakeCredentialSource([session]), lambda _: gateway)
+    with pytest.raises(AuthFailed):
+        connector.connect("one")
+    assert connector.authenticated == {}

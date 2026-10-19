@@ -331,3 +331,23 @@ def test_dm_user_resolves_to_their_dm(h: Harness):
     h.gateway.conversations = {c: [] for c in h.gateway.infos}
 
     assert resolve_conversation(sel, TEAM, h.gateway, h.archive) == "D0CAD7JE1QR"
+
+
+def test_progress_and_item_count_reported_per_thread(h: Harness):
+    report = h.pull(THREAD_LINK, LONE_LINK)
+
+    assert h.reporter.progress_updates == [
+        (f"#all-naleid thread {PARENT_TS}", 4, 4),
+        (f"#all-naleid message {LONE_TS}", 1, 1),
+    ]
+    assert report.items_pulled == 2
+
+
+def test_skipped_item_is_not_counted_as_pulled(h: Harness):
+    h.pull(THREAD_LINK)
+    del h.gateway.conversations[CHANNEL]
+
+    report = h.pull()
+
+    assert report.items_pulled == 0
+    assert h.reporter.progress_updates[1:] == []

@@ -2,17 +2,51 @@
 # ABOUTME: Tests swap in fakes with override(), which current_services() then returns.
 import os
 import sys
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
-from dataclasses import dataclass
+from collections.abc import Callable, Generator, Mapping
+from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 import keyring
 
+from slarc.adapters.blob_store import FsBlobStore
 from slarc.adapters.credentials import CompositeSource, EnvSource, KeyringSource
 from slarc.adapters.desktop_session import DesktopSessionSource
-from slarc.adapters.slack_gateway import SessionConnector, session_gateway
-from slarc.ports import Session, SlackGateway
+from slarc.adapters.downloader import HttpDownloader
+from slarc.adapters.jsonl_store import JsonlArchiveStore
+from slarc.adapters.slack_gateway import USER_AGENT, SessionConnector, session_gateway
+from slarc.ports import BlobStore, Clock, Downloader, Session, SlackGateway
+
+DOWNLOAD_TIMEOUT_S = 60.0
+
+type DownloaderFactory = Callable[
+    [BlobStore, dict[str, Session]], AbstractContextManager[Downloader]
+]
+
+
+class SystemClock:
+    def now(self) -> datetime:
+        return datetime.now(UTC)
+
+
+@contextmanager
+def http_downloader(blobs: BlobStore, sessions: dict[str, Session]) -> Generator[Downloader]:
+    """sessions maps a team id to its session and may gain entries while downloads run."""
+    headers = {"User-Agent": USER_AGENT}
+    with httpx.Client(headers=headers, timeout=DOWNLOAD_TIMEOUT_S) as client:
+        yield HttpDownloader(blobs, sessions, client)
+
+
+@contextmanager
+def archive_stores(root: Path) -> Generator[tuple[JsonlArchiveStore, FsBlobStore]]:
+    """The archive's JSONL and blob stores; the JSONL store's files are closed on exit."""
+    archive = JsonlArchiveStore(root)
+    try:
+        yield archive, FsBlobStore(root)
+    finally:
+        archive.close()
 
 
 @dataclass(frozen=True)
@@ -20,6 +54,10 @@ class Services:
     credentials: CompositeSource
     keychain: KeyringSource
     gateway_factory: Callable[[Session], SlackGateway]
+    clock: Clock = field(default_factory=SystemClock)
+    downloader: DownloaderFactory = http_downloader
+    env: Mapping[str, str] = field(default_factory=lambda: os.environ)
+    home: Path = field(default_factory=Path.home)
 
     def connector(self) -> SessionConnector:
         return SessionConnector(self.credentials, self.gateway_factory)
