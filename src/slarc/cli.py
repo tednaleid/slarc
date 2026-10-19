@@ -335,7 +335,7 @@ def sql_command(
         _fail(str(error))
     table = Table()
     for column in columns:
-        table.add_column(column, overflow="fold")
+        table.add_column(Text(column), overflow="fold")
     for row in rows:
         table.add_row(*(_cell(value) for value in row))
     out.print(table)

@@ -243,6 +243,48 @@ def test_reply_count_computed_from_stored_replies(index: DuckDbQueryIndex) -> No
     assert index.sql(query)[1] == [(True, 3, "1792422623.464629")]
 
 
+def test_parent_stored_before_its_replies_is_thread_parent(archive: Path) -> None:
+    path = month_file(archive, ALL_NALEID)
+    lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    for line in lines:
+        if line["meta"]["ts"] == WAVE_PARENT:
+            del line["object"]["thread_ts"]
+    path.write_text("")
+    for line in lines:
+        append_line(path, line)
+    with DuckDbQueryIndex(archive) as index:
+        query = (
+            "SELECT is_thread_parent, thread_ts, reply_count FROM message "
+            f"WHERE ts = '{WAVE_PARENT}'"
+        )
+        assert index.sql(query)[1] == [(True, WAVE_PARENT, 3)]
+
+
+def file_lines_differing_in_blob() -> list[dict]:
+    meta = {
+        "schema": 1,
+        "kind": "file",
+        "team": RECORDED_TEAM,
+        "id": "F0BLOB",
+        "fetched_at": LATER,
+        "run": LATER_RUN,
+        "api": "files.info",
+        "slarc": "0.1.0",
+        "hash": "f" * 64,
+    }
+    obj = {"id": "F0BLOB", "name": "notes.txt", "size": 5}
+    return [{"meta": meta, "object": obj}, {"meta": meta | {"blob": "a" * 64}, "object": obj}]
+
+
+@pytest.mark.parametrize("order", [1, -1])
+def test_directory_tie_prefers_line_with_blob(archive: Path, order: int) -> None:
+    files = archive / "directory" / RECORDED_TEAM / "files.jsonl"
+    for line in file_lines_differing_in_blob()[::order]:
+        append_line(files, line)
+    with DuckDbQueryIndex(archive) as index:
+        assert index.sql("SELECT blob FROM file WHERE id = 'F0BLOB'")[1] == [("a" * 64,)]
+
+
 def test_conversation_counts(index: DuckDbQueryIndex) -> None:
     counts = index.conversation_counts()
     assert counts[(RECORDED_TEAM, ALL_NALEID)] == 14
@@ -327,3 +369,9 @@ def test_cli_sql_bad_query_prints_error_line(archive: Path, tmp_path: Path) -> N
     assert "nothere" in result.output
     assert result.output.strip().count("\n") == 0
     assert "Traceback" not in result.output
+
+
+def test_cli_sql_column_names_are_not_markup(archive: Path, tmp_path: Path) -> None:
+    result = run_sql(tmp_path, """SELECT 'a' AS "x[/]" """, "--root", str(archive))
+    assert result.exit_code == 0, result.output
+    assert "x[/]" in result.output

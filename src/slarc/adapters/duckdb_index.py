@@ -33,13 +33,15 @@ SOURCES = {
 # Slack ts strings ordered as numbers.
 TS_ORDER = "TRY_CAST({} AS DECIMAL(18, 6))"
 
-# Directory lines reduced to the latest line per (team, id).
+# Directory lines reduced to the latest line per (team, id). A blob is only ever added to an
+# object, so on a (fetched_at, run) tie the line with a blob is the later one.
 LATEST_DIRECTORY_LINE = """
     SELECT meta.team AS team_id, meta.id AS id, meta.blob AS blob, object
     FROM {source}
     WHERE meta.team IS NOT NULL AND meta.id IS NOT NULL AND meta.hash IS NOT NULL
     QUALIFY row_number() OVER (
-        PARTITION BY meta.team, meta.id ORDER BY meta.fetched_at DESC, meta.run DESC, meta.hash
+        PARTITION BY meta.team, meta.id
+        ORDER BY meta.fetched_at DESC, meta.run DESC, meta.blob NULLS LAST, meta.hash
     ) = 1
 """
 
@@ -110,8 +112,12 @@ ENTITY_VIEWS = {
             WHERE deleted_at IS NULL AND thread_ts IS NOT NULL AND thread_ts <> ts
             GROUP BY ALL
         )
-        SELECT m.team_id, m.channel_id, m.ts, m.source_team, m.thread_ts,
-            coalesce(m.thread_ts = m.ts, false) AS is_thread_parent,
+        -- A parent stored before its first reply has no thread_ts, and thread_ts is not
+        -- hashed, so no later line adds it; stored replies make it a thread parent.
+        SELECT m.team_id, m.channel_id, m.ts, m.source_team,
+            CASE WHEN replies.reply_count IS NOT NULL THEN m.ts ELSE m.thread_ts END AS thread_ts,
+            coalesce(m.thread_ts = m.ts OR replies.reply_count IS NOT NULL, false)
+                AS is_thread_parent,
             coalesce(replies.reply_count, 0) AS reply_count,
             replies.latest_reply,
             CASE
