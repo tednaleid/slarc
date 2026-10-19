@@ -168,6 +168,17 @@ class ArchiveStore(Protocol):
     def append_run(self, run: RunRecord, slarc_version: str) -> None: ...
 
 
+class QueryIndex(Protocol):
+    def sql(self, query: str) -> tuple[list[str], list[tuple]]: ...
+    def conversation_counts(self) -> dict[tuple[str, str], int]: ...
+    def messages(
+        self, team: str, channel: str, since: str | None, until: str | None, include_deleted: bool
+    ) -> list[dict]: ...
+    def thread(
+        self, team: str, channel: str, thread_ts: str, include_deleted: bool
+    ) -> list[dict]: ...
+
+
 class Clock(Protocol):
     def now(self) -> datetime:
         """Returns an aware UTC datetime."""

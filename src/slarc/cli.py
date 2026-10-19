@@ -9,6 +9,8 @@ from typing import Annotated, Any, NoReturn
 import typer
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TaskID, TextColumn
+from rich.table import Table
+from rich.text import Text
 
 from slarc import __version__, bootstrap
 from slarc.config import (
@@ -19,7 +21,7 @@ from slarc.config import (
     read_global_config,
 )
 from slarc.domain.links import parse_selector
-from slarc.ports import NoSession, SlarcError
+from slarc.ports import NoArchive, NoSession, SlarcError
 from slarc.service.auth import AuthStatus, auth_status, store_pasted
 from slarc.service.pull import PullOptions, PullReport, pull
 from slarc.unit_of_work import UnitOfWork
@@ -302,3 +304,38 @@ def pull_command(
         err.print(INTERRUPTED, markup=False)
         raise typer.Exit(INTERRUPTED_EXIT) from None
     out.print(_summary(report), markup=False)
+
+
+def _existing_archive(root: Path | None, env: Mapping[str, str], home: Path) -> Path:
+    """The archive found from the current directory, --root or the config; raises NoArchive."""
+    found = find_archive(Path.cwd(), root, env, read_global_config(env, home))
+    if found is None or not (found / ARCHIVE_FILE).is_file():
+        raise NoArchive()
+    return found
+
+
+def _cell(value: object) -> Text:
+    return Text("NULL", style="dim") if value is None else Text(str(value))
+
+
+@app.command("sql")
+def sql_command(
+    query: Annotated[str, typer.Argument(help="A DuckDB query over the archive's views.")],
+    root: Annotated[
+        Path | None, typer.Option(metavar="DIR", help="The archive directory to use.")
+    ] = None,
+) -> None:
+    """Run a DuckDB query against the archive's views."""
+    services = bootstrap.current_services()
+    try:
+        archive_root = _existing_archive(root, services.env, services.home)
+        with bootstrap.query_index(archive_root) as index:
+            columns, rows = index.sql(query)
+    except SlarcError as error:
+        _fail(str(error))
+    table = Table()
+    for column in columns:
+        table.add_column(column, overflow="fold")
+    for row in rows:
+        table.add_row(*(_cell(value) for value in row))
+    out.print(table)

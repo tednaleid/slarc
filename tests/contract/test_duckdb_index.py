@@ -1,0 +1,329 @@
+# ABOUTME: Tests for the DuckDB query index over a copy of the recorded test workspace archive.
+# ABOUTME: Covers latest-wins views, deleted, duplicate and garbage lines, and `slarc sql`.
+import json
+import shutil
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from slarc import bootstrap
+from slarc.adapters.credentials import CompositeSource, KeyringSource
+from slarc.adapters.duckdb_index import DuckDbQueryIndex
+from slarc.cli import app
+from slarc.domain.envelope import Envelope, Meta, encode_line
+from slarc.ports import SlarcError
+from tests.fakes import FakeKeyring
+from tests.recorded_fixtures import RECORDED, RECORDED_TEAM, recorded_lines
+
+ALL_NALEID = "C0CA5396G03"
+FIXTURES = "C0CA7SNHTSP"
+WAVE_PARENT = "1792410693.663869"  # #all-naleid thread parent with wave reactions and 3 replies
+FIXTURES_TOP = "1792437061.952039"  # #slarc-fixtures top-level message
+LATER = "2026-10-20T00:00:00Z"
+EARLIER = "2026-10-01T00:00:00Z"
+LATER_RUN = "r_20261020T000000Z"
+
+VIEWS = [
+    "message",
+    "message_version",
+    "reaction",
+    "file",
+    "message_file",
+    "image",
+    "user",
+    "user_snapshot",
+    "bot",
+    "emoji",
+    "usergroup",
+    "conversation",
+    "run",
+]
+
+runner = CliRunner()
+
+
+@pytest.fixture
+def archive(tmp_path: Path) -> Path:
+    root = tmp_path / "archive"
+    shutil.copytree(RECORDED, root, ignore=shutil.ignore_patterns("blobs"))
+    return root
+
+
+@pytest.fixture
+def index(archive: Path) -> Iterator[DuckDbQueryIndex]:
+    with DuckDbQueryIndex(archive) as idx:
+        yield idx
+
+
+def month_file(root: Path, channel: str) -> Path:
+    return root / "raw" / RECORDED_TEAM / channel / "2026-10.jsonl"
+
+
+def append_line(path: Path, line: dict) -> None:
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(line, separators=(",", ":"), ensure_ascii=False) + "\n")
+
+
+def stored_line(channel: str, ts: str) -> dict:
+    lines = recorded_lines(f"raw/{RECORDED_TEAM}/{channel}/*.jsonl")
+    return next(line for line in lines if line["meta"]["ts"] == ts)
+
+
+def append_edit(root: Path, channel: str, ts: str, text: str, fetched_at: str = LATER) -> None:
+    line = stored_line(channel, ts)
+    line["meta"] |= {"fetched_at": fetched_at, "run": LATER_RUN, "hash": "e" * 64, "plain": text}
+    line["object"] |= {"text": text, "edited": {"user": "U0CA538UEN7", "ts": "1792500000.000000"}}
+    append_line(month_file(root, channel), line)
+
+
+def append_deleted(root: Path, channel: str, ts: str, fetched_at: str) -> None:
+    meta = Meta(
+        kind="deleted",
+        team=RECORDED_TEAM,
+        channel=channel,
+        ts=ts,
+        fetched_at=fetched_at,
+        run=LATER_RUN,
+        slarc="0.1.0",
+    )
+    with month_file(root, channel).open("ab") as f:
+        f.write(encode_line(Envelope(meta=meta)))
+
+
+def scalar(index: DuckDbQueryIndex, query: str):
+    return index.sql(query)[1][0][0]
+
+
+def recorded_message_keys() -> set[tuple[str, str]]:
+    lines = recorded_lines(f"raw/{RECORDED_TEAM}/*/*.jsonl")
+    return {(line["meta"]["channel"], line["meta"]["ts"]) for line in lines}
+
+
+def test_message_view_one_row_per_key(archive: Path) -> None:
+    append_edit(archive, ALL_NALEID, WAVE_PARENT, "edited text")
+    with DuckDbQueryIndex(archive) as index:
+        columns, rows = index.sql("SELECT channel_id, ts FROM message")
+        assert columns == ["channel_id", "ts"]
+        assert sorted(rows) == sorted(recorded_message_keys())
+        query = f"SELECT plain, edited_ts FROM message WHERE ts = '{WAVE_PARENT}'"
+        assert index.sql(query)[1] == [("edited text", "1792500000.000000")]
+
+
+def test_message_version_counts_lines(archive: Path) -> None:
+    raw_lines = recorded_lines(f"raw/{RECORDED_TEAM}/*/*.jsonl")
+    append_edit(archive, ALL_NALEID, WAVE_PARENT, "edited text")
+    with DuckDbQueryIndex(archive) as index:
+        assert scalar(index, "SELECT count(*) FROM message_version") == len(raw_lines) + 1
+        query = (
+            "SELECT fetched_at, hash IS NOT NULL, edited_ts FROM message_version "
+            f"WHERE ts = '{WAVE_PARENT}' ORDER BY fetched_at"
+        )
+        original = stored_line(ALL_NALEID, WAVE_PARENT)["meta"]["fetched_at"]
+        assert index.sql(query)[1] == [
+            (original, True, None),
+            (LATER, True, "1792500000.000000"),
+        ]
+
+
+def test_deleted_at_set_from_deleted_line(archive: Path) -> None:
+    with DuckDbQueryIndex(archive) as index:
+        before = index.conversation_counts()
+    append_deleted(archive, ALL_NALEID, WAVE_PARENT, LATER)
+    append_deleted(archive, FIXTURES, FIXTURES_TOP, EARLIER)
+    with DuckDbQueryIndex(archive) as index:
+        query = f"SELECT deleted_at, plain FROM message WHERE ts = '{WAVE_PARENT}'"
+        plain = stored_line(ALL_NALEID, WAVE_PARENT)["meta"]["plain"]
+        assert index.sql(query)[1] == [(LATER, plain)]
+        stale = f"SELECT deleted_at FROM message WHERE ts = '{FIXTURES_TOP}'"
+        assert index.sql(stale)[1] == [(None,)]
+        counts = index.conversation_counts()
+        assert counts[(RECORDED_TEAM, ALL_NALEID)] == before[(RECORDED_TEAM, ALL_NALEID)] - 1
+        assert counts[(RECORDED_TEAM, FIXTURES)] == before[(RECORDED_TEAM, FIXTURES)]
+        shown = index.messages(RECORDED_TEAM, ALL_NALEID, None, None, include_deleted=False)
+        assert WAVE_PARENT not in [m["ts"] for m in shown]
+        everything = index.messages(RECORDED_TEAM, ALL_NALEID, None, None, include_deleted=True)
+        parent = next(m for m in everything if m["ts"] == WAVE_PARENT)
+        assert parent["deleted_at"] == LATER
+        assert parent["object"]["ts"] == WAVE_PARENT
+
+
+def test_reaction_base_name(index: DuckDbQueryIndex) -> None:
+    query = (
+        "SELECT name, base_name, count, user_ids FROM reaction "
+        f"WHERE channel_id = '{ALL_NALEID}' AND ts = '{WAVE_PARENT}' ORDER BY name"
+    )
+    rows = index.sql(query)[1]
+    assert [(name, base, count) for name, base, count, _ in rows] == [
+        ("wave", "wave", 1),
+        ("wave::skin-tone-3", "wave", 1),
+    ]
+    assert all(len(user_ids) == 1 for *_, user_ids in rows)
+
+
+def test_user_display_fallback(archive: Path) -> None:
+    users = archive / "directory" / RECORDED_TEAM / "users.jsonl"
+    bare = {
+        "meta": {
+            "schema": 1,
+            "kind": "user",
+            "team": RECORDED_TEAM,
+            "id": "U0BARE",
+            "fetched_at": LATER,
+            "run": LATER_RUN,
+            "api": "users.list",
+            "slarc": "0.1.0",
+            "hash": "b" * 64,
+        },
+        "object": {"id": "U0BARE", "name": "bare", "profile": {"display_name": ""}},
+    }
+    append_line(users, bare)
+    with DuckDbQueryIndex(archive) as index:
+        rows = index.sql("SELECT id, display FROM user ORDER BY id")[1]
+        assert dict(rows) == {
+            "U0BARE": "bare",
+            "U0CA538UEN7": "Ted Naleid",
+            "U0CA61XJF2R": "Jim",
+            "U0CAC5YG4NS": "Tim Naleid",
+            "USLACKBOT": "Slackbot",
+        }
+
+
+def snapshot(index: DuckDbQueryIndex) -> dict[str, list[tuple]]:
+    return {view: index.sql(f"SELECT * FROM {view} ORDER BY ALL")[1] for view in VIEWS}
+
+
+def test_views_identical_after_duplicate_lines(archive: Path) -> None:
+    with DuckDbQueryIndex(archive) as index:
+        before = snapshot(index)
+    for path in archive.rglob("*.jsonl"):
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.writelines(reversed(lines))
+    with DuckDbQueryIndex(archive) as index:
+        assert snapshot(index) == before
+    assert all(before[view] for view in VIEWS if view != "usergroup")
+
+
+def test_garbage_line_in_month_file_is_skipped(archive: Path) -> None:
+    with month_file(archive, ALL_NALEID).open("a", encoding="utf-8") as f:
+        f.write('{"meta":{"schema":1,"kind":"mess\n')
+    with DuckDbQueryIndex(archive) as index:
+        assert sorted(index.sql("SELECT channel_id, ts FROM message")[1]) == sorted(
+            recorded_message_keys()
+        )
+
+
+def test_views_exist_without_any_files(tmp_path: Path) -> None:
+    with DuckDbQueryIndex(tmp_path) as index:
+        for view in VIEWS:
+            columns, rows = index.sql(f"SELECT * FROM {view}")
+            assert columns
+            assert rows == []
+        assert index.conversation_counts() == {}
+
+
+def test_conversation_view_kinds(index: DuckDbQueryIndex) -> None:
+    rows = index.sql("SELECT id, kind, name, dm_user_id FROM conversation ORDER BY id")[1]
+    assert rows == [
+        ("C0CA5396G03", "channel", "all-naleid", None),
+        ("C0CA7SNHTSP", "channel", "slarc-fixtures", None),
+        ("C0CAF9YVDMY", "channel", "slarc-fixtures-archived", None),
+        ("C0CAG251117", "group_dm", "mpdm-tim--jim--contact-1", None),
+        ("D0CAD7JE1QR", "dm", None, "U0CA61XJF2R"),
+    ]
+
+
+def test_reply_count_computed_from_stored_replies(index: DuckDbQueryIndex) -> None:
+    query = (
+        "SELECT is_thread_parent, reply_count, latest_reply FROM message "
+        f"WHERE ts = '{WAVE_PARENT}'"
+    )
+    assert index.sql(query)[1] == [(True, 3, "1792422623.464629")]
+
+
+def test_conversation_counts(index: DuckDbQueryIndex) -> None:
+    counts = index.conversation_counts()
+    assert counts[(RECORDED_TEAM, ALL_NALEID)] == 14
+    assert counts[(RECORDED_TEAM, "D0CAD7JE1QR")] == 1
+
+
+def test_messages_ordered_by_ts_within_exclusive_range(index: DuckDbQueryIndex) -> None:
+    every = index.messages(RECORDED_TEAM, ALL_NALEID, None, None, include_deleted=False)
+    stamps = [m["ts"] for m in every]
+    assert stamps == sorted(stamps, key=lambda ts: tuple(int(p) for p in ts.split(".")))
+    assert all(isinstance(ts, str) for ts in stamps)
+    bounded = index.messages(
+        RECORDED_TEAM, ALL_NALEID, stamps[0], stamps[-1], include_deleted=False
+    )
+    assert [m["ts"] for m in bounded] == stamps[1:-1]
+    first = every[0]
+    for key in ("thread_ts", "object", "plain", "deleted_at", "edited_ts", "user_id"):
+        assert key in first
+    for key in ("bot_id", "subtype", "reply_count", "latest_reply"):
+        assert key in first
+
+
+def test_thread_returns_parent_then_replies(index: DuckDbQueryIndex) -> None:
+    messages = index.thread(RECORDED_TEAM, ALL_NALEID, WAVE_PARENT, include_deleted=False)
+    assert [m["ts"] for m in messages] == [
+        WAVE_PARENT,
+        "1792410743.787639",
+        "1792411464.844209",
+        "1792422623.464629",
+    ]
+    assert messages[0]["reply_count"] == 3
+
+
+def test_bad_sql_raises_one_line_slarc_error(index: DuckDbQueryIndex) -> None:
+    with pytest.raises(SlarcError) as caught:
+        index.sql("SELEC 1")
+    assert "syntax error" in str(caught.value)
+    assert "\n" not in str(caught.value)
+
+
+def cli_services(home: Path) -> bootstrap.Services:
+    return bootstrap.Services(
+        credentials=CompositeSource([]),
+        keychain=KeyringSource(FakeKeyring()),
+        gateway_factory=lambda _: pytest.fail("sql never connects to Slack"),
+        env={},
+        home=home,
+    )
+
+
+def run_sql(home: Path, *args: str):
+    with bootstrap.override(cli_services(home)):
+        return runner.invoke(app, ["sql", *args])
+
+
+def test_cli_sql_prints_rows(archive: Path, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(archive / "raw")
+    result = run_sql(tmp_path, "SELECT id, display FROM user ORDER BY id")
+    assert result.exit_code == 0, result.output
+    assert "display" in result.output
+    assert "U0CA61XJF2R" in result.output
+    assert "Jim" in result.output
+
+
+def test_cli_sql_uses_root_flag(archive: Path, tmp_path: Path) -> None:
+    result = run_sql(tmp_path, "SELECT count(*) AS n FROM conversation", "--root", str(archive))
+    assert result.exit_code == 0, result.output
+    assert "5" in result.output
+
+
+def test_cli_sql_without_archive_fails(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = run_sql(tmp_path, "SELECT 1")
+    assert result.exit_code == 1
+    assert "No slarc archive found" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_sql_bad_query_prints_error_line(archive: Path, tmp_path: Path) -> None:
+    result = run_sql(tmp_path, "SELECT * FROM nothere", "--root", str(archive))
+    assert result.exit_code == 1
+    assert "nothere" in result.output
+    assert result.output.strip().count("\n") == 0
+    assert "Traceback" not in result.output
