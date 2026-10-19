@@ -50,16 +50,19 @@ def test_downloader_sends_auth_only_for_slack_hosts():
     ]
     results = list(downloader(handler).fetch(jobs, 2))
 
-    assert {r.status for r in results} == {"ok"}
+    statuses = {(r.job.url, r.job.slack_auth): r.status for r in results}
+    assert statuses.pop((GIPHY_URL, True)) == "failed"
+    assert set(statuses.values()) == {"ok"}
     assert seen[FILE_URL] == ("Bearer xoxc-test", "d=xoxd-test")
     others = {url: headers for url, headers in seen.items() if url != FILE_URL}
     assert len(others) == 4
     assert set(others.values()) == {(None, None)}
 
 
-def test_redirect_away_from_slack_drops_auth():
+def test_redirect_on_slack_keeps_auth_and_off_slack_drops_it(tmp_path: Path):
     seen: dict[str, tuple[str | None, str | None]] = {}
     moved = "https://files.slack.com/files-pri/moved/10k-snippet.txt"
+    leaving = FILE_URL.replace("10k", "leaving")
     cdn = "https://cdn.example.com/10k-snippet.txt"
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -67,15 +70,59 @@ def test_redirect_away_from_slack_drops_auth():
         seen[url] = (request.headers.get("authorization"), request.headers.get("cookie"))
         if url == FILE_URL:
             return httpx.Response(302, headers={"location": moved})
-        if url == moved:
+        if url == leaving:
             return httpx.Response(302, headers={"location": cdn})
         return httpx.Response(200, content=b"snippet")
 
-    [result] = downloader(handler).fetch([job(FILE_URL, slack_auth=True)], 1)
+    blobs = FsBlobStore(tmp_path)
+    jobs = [job(FILE_URL, slack_auth=True), job(leaving, slack_auth=True)]
+    results = {r.job.url: r for r in downloader(handler, blobs).fetch(jobs, 1)}
 
-    assert (result.status, result.size) == ("ok", 7)
+    assert (results[FILE_URL].status, results[FILE_URL].size) == ("ok", 7)
     assert seen[moved] == ("Bearer xoxc-test", "d=xoxd-test")
     assert seen[cdn] == (None, None)
+    left = results[leaving]
+    assert (left.status, left.sha256) == ("failed", None)
+    assert left.error and "session may have expired" in left.error
+    assert "cdn.example.com" not in left.error
+    stored = [p for p in tmp_path.rglob("*") if p.is_file()]
+    assert len(stored) == 1
+
+
+def test_slack_sign_in_page_is_not_stored(tmp_path: Path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = b"<html><body>Sign in to Slack</body></html>"
+        return httpx.Response(
+            200, headers={"content-type": "text/html; charset=utf-8"}, content=page
+        )
+
+    blobs = FsBlobStore(tmp_path)
+    [result] = downloader(handler, blobs).fetch([job(FILE_URL, slack_auth=True)], 1)
+
+    assert (result.status, result.sha256) == ("failed", None)
+    assert result.error and "session may have expired" in result.error
+    assert "xox" not in result.error and "files.slack.com" not in result.error
+    assert [p for p in tmp_path.rglob("*") if p.is_file()] == []
+
+
+def test_html_image_off_slack_is_stored():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/html"}, content=b"<html/>")
+
+    [result] = downloader(handler).fetch([job(GITHUB_URL)], 1)
+
+    assert result.status == "ok"
+
+
+def test_downloader_fails_malformed_url():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"never")
+
+    bad = ["https://[::1/direct", "https://exa mple.com/\x00"]
+    results = list(downloader(handler).fetch([job(url) for url in bad], 2))
+
+    assert [r.status for r in results] == ["failed", "failed"]
+    assert all(r.error and "[::1" not in r.error for r in results)
 
 
 def test_downloader_streams_snippet_byte_identical(tmp_path: Path):

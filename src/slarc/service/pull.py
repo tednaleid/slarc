@@ -555,7 +555,8 @@ class _PullRun:
     ) -> None:
         uow, team_id, channel = self.uow, held.team_id, held.channel
         files = {f["id"]: f for m in messages for f in m.get("files") or []}
-        append_directory(uow, team_id, "file", files, api, keep_blob=True)
+        appended = append_directory(uow, team_id, "file", files, api, keep_blob=True)
+        held.files.update(appended)
         for message in messages:
             count(uow, MESSAGES_SEEN)
             ts = message["ts"]

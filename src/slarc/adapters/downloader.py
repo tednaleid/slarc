@@ -11,6 +11,7 @@ from slarc.ports import BlobStore, DownloadJob, DownloadResult, Session
 
 FORBIDDEN_STATUSES = (403, 404)
 MAX_REDIRECTS = 5
+SESSION_HINT = "The Slack session may have expired; sign in again and pull to retry."
 
 type FailedStatus = Literal["failed", "forbidden", "too_large"]
 
@@ -44,7 +45,7 @@ class HttpDownloader:
             return self._download(job)
         except TooLarge:
             return _result(job, "too_large", f"Larger than the limit of {job.max_bytes} bytes.")
-        except httpx.HTTPError as error:
+        except (httpx.HTTPError, httpx.InvalidURL) as error:
             return _result(job, "failed", f"Download failed: {type(error).__name__}.")
 
     def _download(self, job: DownloadJob) -> DownloadResult:
@@ -59,11 +60,14 @@ class HttpDownloader:
                     return _result(job, "forbidden", f"HTTP {response.status_code}")
                 if response.status_code >= 400:
                     return _result(job, "failed", f"HTTP {response.status_code}")
+                content_type = response.headers.get("content-type", "").split(";")[0].strip()
+                refusal = _slack_refusal(job, url, content_type)
+                if refusal is not None:
+                    return _result(job, "failed", refusal)
                 declared = response.headers.get("content-length", "")
                 if declared.isdigit() and int(declared) > job.max_bytes:
                     raise TooLarge
                 sha256, size = self._blobs.write(_limited(response.iter_bytes(), job.max_bytes))
-                content_type = response.headers.get("content-type", "").split(";")[0].strip()
                 return DownloadResult(job, "ok", sha256, size, content_type or None, None)
         return _result(job, "failed", f"More than {MAX_REDIRECTS} redirects.")
 
@@ -72,6 +76,20 @@ class HttpDownloader:
         if not job.slack_auth or session is None or not is_slack_file_url(url):
             return {}
         return {"Authorization": f"Bearer {session.xoxc}", "Cookie": f"d={session.xoxd}"}
+
+
+def _slack_refusal(job: DownloadJob, url: str, content_type: str) -> str | None:
+    """Why a response to a Slack file download is not the file, or None when it is.
+
+    Slack answers an expired session by redirecting elsewhere or serving its sign-in page.
+    """
+    if not job.slack_auth:
+        return None
+    if not is_slack_file_url(url):
+        return f"Slack redirected the file download away from its file host. {SESSION_HINT}"
+    if content_type == "text/html":
+        return f"Slack answered the file download with a web page. {SESSION_HINT}"
+    return None
 
 
 def _limited(chunks: Iterator[bytes], max_bytes: int) -> Iterator[bytes]:

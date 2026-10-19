@@ -116,5 +116,8 @@ def is_web_url(url: object) -> TypeIs[str]:
 
 def is_slack_file_url(url: str) -> bool:
     """True for a private file URL on Slack's file host, the only URLs that need the session."""
-    parsed = urlparse(url)
-    return parsed.scheme == "https" and parsed.hostname == SLACK_FILE_HOST
+    try:
+        parsed = urlparse(url)
+        return parsed.scheme == "https" and parsed.hostname == SLACK_FILE_HOST
+    except ValueError:
+        return False

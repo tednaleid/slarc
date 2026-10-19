@@ -11,7 +11,7 @@ from slarc.ports import DownloadJob
 from slarc.service.downloads import drain_downloads, image_urls, outstanding_downloads
 from slarc.service.pull import PullOptions
 from slarc.unit_of_work import UnitOfWork
-from tests.service.pull_harness import BASE, ME, TEAM, TOMBSTONE_FILE, Harness, spike
+from tests.service.pull_harness import BASE, CHANNEL, ME, TEAM, TOMBSTONE_FILE, Harness, spike
 
 THREAD_LINK = f"{BASE}/p1792410693663869"
 SNIPPET_LINK = f"{BASE}/p1792422552941749"
@@ -328,3 +328,40 @@ def test_downloaded_target_is_not_outstanding(h: Harness):
 
     assert h.archive.downloads()[(TEAM, SNIPPET)].status == "pending"
     assert (TEAM, SNIPPET) not in outstanding_downloads(h.archive)
+
+
+def test_edited_snippet_downloaded_again(h: Harness):
+    first, second = snippet_bytes(), snippet_bytes()[:200_000]
+    h.downloader.serve(SNIPPET_URL, first)
+    h.pull(SNIPPET_LINK)
+    messages = h.gateway.conversations[CHANNEL]
+    [inline] = next(m for m in messages if m["ts"] == SNIPPET_TS)["files"]
+    edited = {**inline, "size": len(second), "preview": "edited"}
+    h.change_message(SNIPPET_TS, files=[edited])
+    h.gateway.files[SNIPPET] = {
+        **h.gateway.files[SNIPPET],
+        "size": len(second),
+        "preview": "edited",
+    }
+    h.downloader.serve(SNIPPET_URL, second)
+    h.downloader.jobs.clear()
+
+    h.pull()
+
+    blobs = [env.meta.blob for env in h.lines("file")]
+    assert blobs == [None, sha256(first), None, sha256(second)]
+    assert [job.target for job in h.downloader.jobs if job.target_kind == "file"] == [SNIPPET]
+    assert h.blobs.read(sha256(second)) == second
+
+
+def test_malformed_image_url_does_not_fail_the_pull(h: Harness):
+    bad = "https://[::1/direct"
+    h.change_message(SNIPPET_TS, attachments=[{"image_url": bad}])
+
+    report = h.pull(SNIPPET_LINK)
+
+    [state] = [d for d in h.last_run().downloads if d.target == bad]
+    assert state.status == "pending"
+    [job] = [job for job in h.downloader.jobs if job.target == bad]
+    assert job.slack_auth is False
+    assert report.downloads_pending >= 1

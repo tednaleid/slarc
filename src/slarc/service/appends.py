@@ -6,6 +6,7 @@ from slarc import __version__
 from slarc.domain.directory import directory_image_url
 from slarc.domain.envelope import Envelope, Kind, Meta, fetched_at
 from slarc.domain.hashing import content_hash
+from slarc.ports import DirectoryState
 from slarc.unit_of_work import UnitOfWork
 
 LINES_APPENDED = "lines_appended"
@@ -19,22 +20,24 @@ def append_directory(
     api: str,
     *,
     keep_blob: bool = False,
-) -> None:
-    """Appends each object whose hash or blob differs from its stored line.
+) -> dict[str, DirectoryState]:
+    """Appends each object whose hash or blob differs from its stored line; returns their state.
 
-    keep_blob carries the stored blob onto the new line. A user or emoji line carries the
-    blob of its image once that image is downloaded.
+    keep_blob keeps the stored blob of an object whose hash is unchanged, so it is not
+    appended again without it; a changed object's line has no blob, so its bytes are
+    downloaded again. A user or emoji line carries the blob of its image once that image is
+    downloaded.
     """
+    appended: dict[str, DirectoryState] = {}
     if not objects:
-        return
+        return appended
     state = uow.archive.directory_state(team_id, kind)
     images = uow.archive.directory_state(team_id, "image") if kind in ("user", "emoji") else {}
-    appended = False
     for id_, obj in objects.items():
         digest = content_hash(kind, obj)
         held = state.get(id_)
         if keep_blob:
-            blob = held.blob if held is not None else None
+            blob = held.blob if held is not None and held.hash == digest else None
         else:
             image = images.get(directory_image_url(kind, obj) or "")
             blob = image.blob if image is not None else None
@@ -42,10 +45,11 @@ def append_directory(
             continue
         meta = stamped_meta(uow, kind, team=team_id, id=id_, api=api, hash=digest, blob=blob)
         append_line(uow, Envelope(meta=meta, object=obj))
-        appended = True
+        appended[id_] = DirectoryState(hash=digest, blob=blob)
     if appended:
         # Directory state is read back from the store, which must see these lines.
         uow.archive.flush()
+    return appended
 
 
 def fetched_now(uow: UnitOfWork) -> str:
