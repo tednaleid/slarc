@@ -379,11 +379,14 @@ figure.image figcaption {
   font-style: italic;
 }
 
+/* The popup spans its reactions row, with the card at the row's left edge, so no pill can push
+   the card past the page or a thread panel. */
 .reactions {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 4px;
+  position: relative;
 }
 
 .reaction {
@@ -395,7 +398,6 @@ figure.image figcaption {
   border-radius: 12px;
   background: var(--soft);
   font-size: 12px;
-  position: relative;
 }
 
 .reaction:focus-visible {
@@ -403,20 +405,24 @@ figure.image figcaption {
 }
 
 /* The popup is a transparent hover area whose bottom padding spans the gap to the pill, so the
-   pointer can move onto the card without leaving the pill's hover. */
+   pointer can move onto the card without leaving the pill's hover. The transparent part takes
+   the pointer only while the pill is hovered, so a popup left open by focus never blocks clicks
+   on the message outside the visible card. */
 .reaction-popup {
   display: none;
   position: absolute;
+  right: 0;
   bottom: 100%;
   left: 0;
   z-index: 2;
   padding-bottom: 6px;
+  pointer-events: none;
 }
 
 .reaction-popup-card {
   display: block;
   width: max-content;
-  max-width: 300px;
+  max-width: min(300px, 100% - 24px);
   padding: 8px 12px;
   border-radius: 8px;
   background: #1d1c1d;
@@ -427,11 +433,16 @@ figure.image figcaption {
   white-space: normal;
   overflow-wrap: anywhere;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  pointer-events: auto;
 }
 
 .reaction:hover > .reaction-popup,
 .reaction:focus > .reaction-popup {
   display: block;
+}
+
+.reaction:hover > .reaction-popup {
+  pointer-events: auto;
 }
 
 .reaction-popup-emoji {
@@ -444,42 +455,20 @@ figure.image figcaption {
   display: block;
 }
 
-/* Below 1400px the page margin is too narrow for a 300px card beside a pill at the column's
-   right edge, and a thread panel is always that narrow. There the popup spans the reactions
-   row, with the card at its left edge, so no pill can push the card past the page or the panel
-   and the hover area covers the row above every pill. */
-@media (max-width: 1400px) {
-  .reactions {
+/* Above 1440px the page margin fits a 300px card beside a pill at the column's right edge, so
+   outside thread panels the card sits over its own pill. */
+@media (min-width: 1441px) {
+  .reaction:not(.thread-panel .reaction) {
     position: relative;
   }
 
-  .reaction {
-    position: static;
+  .reaction:not(.thread-panel .reaction) > .reaction-popup {
+    right: auto;
   }
 
-  .reaction-popup {
-    right: 0;
+  .reaction:not(.thread-panel .reaction) .reaction-popup-card {
+    max-width: 300px;
   }
-
-  .reaction-popup-card {
-    max-width: min(300px, 100% - 24px);
-  }
-}
-
-.thread-panel .reactions {
-  position: relative;
-}
-
-.thread-panel .reaction {
-  position: static;
-}
-
-.thread-panel .reaction-popup {
-  right: 0;
-}
-
-.thread-panel .reaction-popup-card {
-  max-width: min(300px, 100% - 24px);
 }
 
 .thread {

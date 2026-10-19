@@ -26,6 +26,7 @@ THREAD_LINK = (
     "https://naleidworkspace.slack.com/archives/C0CA5396G03/p1792427577619569"
     "?thread_ts=1792427542.806979"
 )
+MESSAGE_LINK = "https://naleidworkspace.slack.com/archives/C0CA5396G03/p1792427577619569"
 SCREENSHOT = "ca3f1d09a38b3f0dc102411b3c732a8cabc6cdb275e88457417ae32d098578fd"
 GIPHY = "99e5f805f84886ded9071cb7680b7846fa6b634d74eae01e15fc4c322d7d807f"
 TEAMWORK = "851a83125d6f54e37eedeab4e47e2502b05f07e48295870df540743c84749b04"
@@ -211,8 +212,9 @@ def test_broadcast_reply_links_to_its_thread_panel(archive, store, blobs) -> Non
     assert f'<a href="#thread-{FIXTURES}-1792437050.459469">view the thread</a>' in flow
 
 
-def test_thread_export_shows_replies_without_a_panel(archive, store, blobs) -> None:
-    _, writer = run_export(archive, store, blobs, THREAD_LINK)
+@pytest.mark.parametrize("link", [THREAD_LINK, MESSAGE_LINK])
+def test_thread_export_shows_replies_without_a_panel(archive, store, blobs, link) -> None:
+    _, writer = run_export(archive, store, blobs, link)
     page = writer.text(OUT / f"{ALL_NALEID}-1792427542.806979.html")
     assert "thread-panel" not in page.split("<body", 1)[1]
     assert "<details" not in page
