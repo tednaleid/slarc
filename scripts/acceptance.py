@@ -8,6 +8,7 @@
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,11 @@ FIXTURES = "C0CA7SNHTSP"
 ALL_NALEID = "C0CA5396G03"
 SEARCH_WAIT_S = 120
 RETRY_PAUSE_S = 10
+FIXTURES_TEXT = "seed: edited message, edited text"
+SAME_PULL = "(a) pulling the same channels twice changes only runs.jsonl"
+EXPORT = "(d) the export shows seeded messages, giphy, a link preview, snippets, a deleted file"
+REPLY = "(b) a new reply under an older parent lands as exactly one new line"
+EDIT = "(c) an edit lands as exactly one new line by pull --full"
 
 
 def link(channel: str) -> str:
@@ -99,11 +105,14 @@ def channel_lines(root: Path, channel: str) -> list[dict]:
 
 
 def check_same_pull_twice(root: Path) -> Criterion:
-    criterion = Criterion("(a) pulling the same channels twice changes only runs.jsonl")
+    criterion = Criterion(SAME_PULL)
     timed = Timed(criterion)
     links = [link(FIXTURES), link(ALL_NALEID)]
     slarc(timed, "first pull", root, "pull", "--yes", *links)
     criterion.notes.append(f"first pull: {run_summary(root)}")
+    for name, channel in (("#slarc-fixtures", FIXTURES), ("#all-naleid", ALL_NALEID)):
+        stored = len(channel_lines(root, channel))
+        criterion.check(stored > 0, f"{stored} message lines stored for {name}")
     before = file_hashes(root)
     slarc(timed, "second pull", root, "pull", *links)
     criterion.notes.append(f"second pull: {run_summary(root)}")
@@ -114,10 +123,11 @@ def check_same_pull_twice(root: Path) -> Criterion:
 
 
 def check_export(root: Path, out: Path) -> Criterion:
-    criterion = Criterion("(d) the export shows giphy, a link preview, snippets, a deleted file")
+    criterion = Criterion(EXPORT)
     timed = Timed(criterion)
     slarc(timed, "export", root, "export", FIXTURES, ALL_NALEID, "--out", str(out))
-    criterion.check((out / f"{FIXTURES}.html").is_file(), "#slarc-fixtures page written")
+    fixtures_page = (out / f"{FIXTURES}.html").read_text()
+    criterion.check(FIXTURES_TEXT in fixtures_page, f"#slarc-fixtures page shows {FIXTURES_TEXT!r}")
     page = (out / f"{ALL_NALEID}.html").read_text()
     giphy = re.search(r'<figure class="image"><img src="(assets/[0-9a-f]{64}\.gif)"', page)
     has_giphy = giphy is not None and (out / giphy.group(1)).is_file()
@@ -148,8 +158,8 @@ def pull_until(timed: Timed, root: Path, found: Callable[[], bool]) -> tuple[int
         time.sleep(RETRY_PAUSE_S)
 
 
-def check_dormant_reply(root: Path, tag: str) -> tuple[Criterion, str]:
-    criterion = Criterion("(b) a new reply under an older parent lands as exactly one new line")
+def check_reply_under_older_parent(root: Path, tag: str) -> tuple[Criterion, str]:
+    criterion = Criterion(REPLY)
     timed = Timed(criterion)
     parent = seed(timed, "seed parent", "post", f"acceptance {tag}: parent P")
     channel = parent["channel"]
@@ -173,14 +183,14 @@ def check_dormant_reply(root: Path, tag: str) -> tuple[Criterion, str]:
     )
     if lines:
         criterion.notes.append(
-            "found by search: the parent had no stored replies, so it was not an active thread, "
-            f"and history above newest_ts holds no replies (api {lines[0]['meta'].get('api')})"
+            "inferred, not measured: search is the only path that reads the parent's thread, "
+            "since the parent had no stored replies and history above newest_ts holds no replies"
         )
     return criterion, channel
 
 
 def check_edit(root: Path, channel: str, tag: str) -> Criterion:
-    criterion = Criterion("(c) an edit lands as exactly one new line by pull --full")
+    criterion = Criterion(EDIT)
     timed = Timed(criterion)
     original, edited = f"acceptance {tag}: edit me, original", f"acceptance {tag}: edit me, edited"
     message = seed(timed, "seed message", "post", original)
@@ -219,7 +229,8 @@ def attempt(name: str, check: Callable[[], Criterion]) -> Criterion:
     try:
         criterion = check()
     except Exception as error:
-        criterion = Criterion(name, passed=False, notes=[f"FAILED: {error}"])
+        criterion = Criterion(name)
+        criterion.check(False, f"{type(error).__name__}: {error}")
     criterion.timings.append(f"total {time.monotonic() - started:.1f}s")
     report(criterion)
     return criterion
@@ -227,27 +238,29 @@ def attempt(name: str, check: Callable[[], Criterion]) -> Criterion:
 
 def main() -> int:
     tag = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    with tempfile.TemporaryDirectory(prefix="slarc-acceptance-") as tmp:
-        fixtures, acceptance = Path(tmp) / "fixtures", Path(tmp) / "acceptance"
-        results = [
-            attempt("(a)", lambda: check_same_pull_twice(fixtures)),
-            attempt("(d)", lambda: check_export(fixtures, Path(tmp) / "export")),
-        ]
-        channel: list[str] = []
+    tmp = Path(tempfile.mkdtemp(prefix="slarc-acceptance-"))
+    fixtures, acceptance = tmp / "fixtures", tmp / "acceptance"
+    results = [
+        attempt(SAME_PULL, lambda: check_same_pull_twice(fixtures)),
+        attempt(EXPORT, lambda: check_export(fixtures, tmp / "export")),
+    ]
+    channel: list[str] = []
 
-        def dormant_reply() -> Criterion:
-            criterion, made_in = check_dormant_reply(acceptance, tag)
-            channel.append(made_in)
-            return criterion
+    def reply_under_older_parent() -> Criterion:
+        criterion, made_in = check_reply_under_older_parent(acceptance, tag)
+        channel.append(made_in)
+        return criterion
 
-        results.append(attempt("(b)", dormant_reply))
-        if channel:
-            results.append(attempt("(c)", lambda: check_edit(acceptance, channel[0], tag)))
-        else:
-            results.append(
-                attempt("(c)", lambda: Criterion("(c) skipped: (b) failed early", False))
-            )
-    return 0 if all(c.passed for c in results) else 1
+    results.append(attempt(REPLY, reply_under_older_parent))
+    if channel:
+        results.append(attempt(EDIT, lambda: check_edit(acceptance, channel[0], tag)))
+    else:
+        results.append(attempt(EDIT, lambda: Criterion(f"{EDIT}: skipped, (b) failed", False)))
+    if all(c.passed for c in results):
+        shutil.rmtree(tmp)
+        return 0
+    print(f"Scratch archives kept for inspection in {tmp}")
+    return 1
 
 
 if __name__ == "__main__":

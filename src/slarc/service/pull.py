@@ -89,7 +89,7 @@ def pull(
             uow, downloader, options.downloads, options.max_file_bytes, run.workspaces, reporter
         )
     finally:
-        counts[RATE_LIMIT_WAIT] = run.workspaces.rate_limit_wait_s()
+        counts[RATE_LIMIT_WAIT] = round(run.workspaces.rate_limit_wait_s(), 3)
     return PullReport(
         items_pulled=sum(1 for item in uow.run.tracked if item.status == "ok"),
         lines_appended=int(counts.get(LINES_APPENDED, 0)),

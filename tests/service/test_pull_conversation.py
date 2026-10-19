@@ -137,12 +137,12 @@ def test_incremental_pull_fetches_only_newer(h: Harness):
     assert (item.newest_ts, item.oldest_ts, item.backfill_complete) == (newer[-1], stamps[0], True)
 
 
-def test_run_line_records_rate_limit_waits(h: Harness):
-    h.gateway.rate_limit_wait_s = 2.5
+def test_run_line_records_rate_limit_waits_to_milliseconds(h: Harness):
+    h.gateway.rate_limit_wait_s = 7.4999998734
 
     h.pull(BASE)
 
-    assert h.last_run().counts["rate_limit_wait_s"] == 2.5
+    assert h.last_run().counts["rate_limit_wait_s"] == 7.5
 
 
 def test_interrupted_run_line_records_rate_limit_waits(h: Harness, monkeypatch: pytest.MonkeyPatch):

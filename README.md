@@ -22,7 +22,7 @@ slarc sql "SELECT channel_id, count(*) FROM message GROUP BY 1"               # 
 slarc export https://yourworkspace.slack.com/archives/C0123456789 --out ./share  # static HTML
 ```
 
-The first `pull` offers to create an archive (a directory with `slarc.toml`) in the current directory. Other commands find it from the current directory, `--root` or `SLARC_ARCHIVE`.
+The first `pull` offers to create an archive (a directory with `slarc.toml`) in the current directory. Every command finds the archive from `--root`, then `SLARC_ARCHIVE`, then the current directory or its parents, then `default_archive` in the global config.
 
 Automated access can trigger security alerts in managed Slack workspaces. Check your organization's policies before using slarc there.
 

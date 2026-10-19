@@ -375,12 +375,12 @@ def main() -> int:
     if args.command is None and args.channel is None:
         parser.error("--channel is required to seed the fixtures channel")
 
-    client = connect(args.workspace)
-    if client is None:
-        return 1
-    if args.command is None:
-        return seed(client, args.channel)
     try:
+        client = connect(args.workspace)
+        if client is None:
+            return 1
+        if args.command is None:
+            return seed(client, args.channel)
         if args.command == "post":
             result = post_acceptance(client, args.text, args.thread_ts)
         else:
