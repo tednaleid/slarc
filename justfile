@@ -113,3 +113,11 @@ retag version:
 # Compare slarc's LevelDB reader with ccl_chromium_reader on this machine's Slack Local Storage
 compare-leveldb:
     ./scripts/compare-leveldb.py
+
+# Post test content to the naleidworkspace test workspace (developer only; it writes to Slack)
+seed-test-workspace:
+    ./scripts/seed-test-workspace.py --workspace naleidworkspace --channel slarc-fixtures
+
+# Pull the test workspace into tests/fixtures/workspace/
+record-fixtures:
+    ./scripts/record-fixtures.py

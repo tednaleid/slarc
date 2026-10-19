@@ -11,6 +11,7 @@ from slarc.domain.links import ConversationSel
 from slarc.domain.tracking import DownloadState
 from slarc.ports import SlarcError
 from slarc.service.selectors import resolve_conversation
+from tests.recorded_fixtures import recorded_directory
 from tests.service.pull_harness import (
     BASE,
     CHANNEL,
@@ -24,6 +25,7 @@ from tests.service.pull_harness import (
 )
 
 LONE_TS = "1792422552.941749"
+JIM = "U0CA61XJF2R"
 THREAD_LINK = f"{BASE}/p1792410693663869"
 REPLY_LINK = f"{BASE}/p1792410743787639?thread_ts={PARENT_TS}&cid={CHANNEL}"
 LONE_LINK = f"{BASE}/p1792422552941749"
@@ -161,6 +163,19 @@ def test_directory_written_before_messages(h: Harness):
     assert conversation.object == spike("conversations.info")["channel"]
     [bot] = h.lines("bot")
     assert (bot.meta.id, bot.meta.api, bot.meta.team) == ("B0CA9EBAH1C", "bots.info", TEAM)
+
+
+def test_rename_appends_one_user_line(h: Harness):
+    h.pull(THREAD_LINK)
+    before = len(h.lines("user"))
+    h.gateway.users_list = list(recorded_directory("users.jsonl").values())
+
+    h.pull()
+
+    renamed = [env for env in h.lines("user")[before:] if env.meta.id == JIM]
+    assert len(renamed) == 1
+    assert renamed[0].object is not None
+    assert renamed[0].object["profile"]["display_name"] == "Jim"
 
 
 def test_file_lines_written_for_referenced_files(h: Harness):
