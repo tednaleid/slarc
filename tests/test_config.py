@@ -143,3 +143,33 @@ def test_read_global_config_default_location(tmp_path: Path) -> None:
     cfg_dir.mkdir(parents=True)
     (cfg_dir / "config.toml").write_text("[pull]\ndownloads = 9\n")
     assert read_global_config({}, tmp_path)["pull"] == {"downloads": 9}
+
+
+def test_env_value_not_an_integer_names_the_variable(tmp_path: Path) -> None:
+    with pytest.raises(SlarcError, match=r"SLARC_DOWNLOADS must be an integer, got 'abc'"):
+        load_settings(make_archive(tmp_path / "a"), {}, {"SLARC_DOWNLOADS": "abc"}, {})
+
+
+def test_toml_value_of_wrong_type_names_file_and_key(tmp_path: Path) -> None:
+    archive = make_archive(tmp_path / "a", '[pull]\ndownloads = "x"\n')
+    with pytest.raises(SlarcError, match=r"slarc\.toml.*pull\.downloads"):
+        load_settings(archive, {}, {}, {})
+    with pytest.raises(SlarcError, match=r"global\.toml.*pull\.downloads"):
+        load_settings(
+            make_archive(tmp_path / "b"),
+            {"_path": str(tmp_path / "global.toml"), "pull": {"downloads": "x"}},
+            {},
+            {},
+        )
+
+
+def test_toml_table_that_is_not_a_table_names_file(tmp_path: Path) -> None:
+    archive = make_archive(tmp_path / "a", "pull = 3\n")
+    with pytest.raises(SlarcError, match=r"slarc\.toml.*\[pull\]"):
+        load_settings(archive, {}, {}, {})
+
+
+def test_create_archive_keeps_existing_slarc_toml(tmp_path: Path) -> None:
+    archive = make_archive(tmp_path / "a", "[pull]\ndownloads = 2\n")
+    create_archive(archive)
+    assert (archive / "slarc.toml").read_text() == "[pull]\ndownloads = 2\n"

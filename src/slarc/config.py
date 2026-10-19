@@ -78,17 +78,30 @@ def _pick(
     flags: Mapping[str, Any],
     env_name: str | None,
     env: Mapping[str, str],
-    layers: list[Mapping[str, Any]],
+    layers: list[tuple[Path | None, Mapping[str, Any]]],
     default: Any,
+    expected: type = int,
 ) -> Any:
     if flags.get(key) is not None:
         return flags[key]
     if env_name and env.get(env_name):
-        return type(default)(env[env_name]) if default is not None else env[env_name]
-    for layer in layers:
-        value = layer.get(section, {}).get(key)
-        if value is not None:
-            return value
+        if expected is str:
+            return env[env_name]
+        try:
+            return expected(env[env_name])
+        except ValueError:
+            raise SlarcError(f"{env_name} must be an integer, got '{env[env_name]}'.") from None
+    for path, layer in layers:
+        table = layer.get(section, {})
+        if not isinstance(table, dict):
+            raise SlarcError(f"{path}: [{section}] must be a table.")
+        value = table.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, expected) or isinstance(value, bool):
+            name = "an integer" if expected is int else "a string"
+            raise SlarcError(f"{path}: {section}.{key} must be {name}, got {value!r}.")
+        return value
     return default
 
 
@@ -106,7 +119,8 @@ def load_settings(
         sources.append(local_path)
     if GLOBAL_PATH_KEY in global_config:
         sources.append(Path(global_config[GLOBAL_PATH_KEY]))
-    layers = [local, global_config]
+    global_path = Path(global_config[GLOBAL_PATH_KEY]) if GLOBAL_PATH_KEY in global_config else None
+    layers = [(local_path, local), (global_path, global_config)]
     return Settings(
         archive=archive,
         downloads=_pick(
@@ -124,11 +138,14 @@ def load_settings(
         active_thread_days=_pick(
             "active_thread_days", "pull", flags, None, env, layers, DEFAULT_ACTIVE_THREAD_DAYS
         ),
-        tz=_pick("tz", "export", flags, None, env, layers, None),
+        tz=_pick("tz", "export", flags, None, env, layers, None, str),
         sources=sources,
     )
 
 
 def create_archive(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    (path / ARCHIVE_FILE).write_text(NEW_ARCHIVE_HEADER, encoding="utf-8")
+    target = path / ARCHIVE_FILE
+    if target.exists():
+        return
+    target.write_text(NEW_ARCHIVE_HEADER, encoding="utf-8")
