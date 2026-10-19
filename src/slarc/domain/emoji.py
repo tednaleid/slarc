@@ -1,6 +1,7 @@
-# ABOUTME: resolve_emoji turns a Slack emoji name into unicode, a custom image or :name: text.
-# ABOUTME: Applies ::skin-tone-N, follows custom aliases and falls back to the standard table.
+# ABOUTME: resolve_emoji turns a Slack emoji name into unicode, a custom image or :name: text,
+# ABOUTME: through custom aliases and skin tones; also finds :name: shortcodes in mrkdwn text.
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache
@@ -14,6 +15,9 @@ SKIN_TONE_PREFIX = "skin-tone-"
 MAX_ALIAS_DEPTH = 10
 SKIN_TONE_CODES = {"1F3FB": "2", "1F3FC": "3", "1F3FD": "4", "1F3FE": "5", "1F3FF": "6"}
 SURROGATES = (0xD800, 0xDFFF)
+# The name inside a :name: shortcode in mrkdwn, with any skin tones.
+SHORTCODE = r"[a-z0-9_+'-]+(?:::skin-tone-[2-6](?:-[2-6])?)*"
+_SHORTCODE_IN_TEXT = re.compile(rf":({SHORTCODE}):")
 
 
 @dataclass(frozen=True)
@@ -34,21 +38,39 @@ def resolve_emoji(
     """How to show name: custom emoji (through aliases) as image_url_for's local image, standard
     emoji as unicode with any skin tone applied, and anything else as :name: text."""
     base, _, tones = name.partition("::")
-    target = base
-    for _ in range(MAX_ALIAS_DEPTH):
-        url = view.emoji.get(target)
-        if url is None:
-            break
-        if not url.startswith(ALIAS_PREFIX):
-            src = image_url_for(target)
-            return EmojiRender("image", src) if src else EmojiRender("text", f":{name}:")
-        target = url.removeprefix(ALIAS_PREFIX)
-    else:
+    target = _alias_target(base, view.emoji)
+    if target is None:
         return EmojiRender("text", f":{name}:")
+    if target in view.emoji:
+        src = image_url_for(target)
+        return EmojiRender("image", src) if src else EmojiRender("text", f":{name}:")
     code = _standard_code(target, _skin_key_from_name(tones))
     if code is None:
         return EmojiRender("text", f":{name}:")
     return EmojiRender("unicode", code_points_text(code))
+
+
+def custom_emoji_url(name: str, emoji: dict[str, str]) -> str | None:
+    """The image URL of a custom emoji, through its aliases; None for any other name."""
+    target = _alias_target(name, emoji)
+    return emoji.get(target) if target is not None else None
+
+
+def shortcodes(text: str) -> list[str]:
+    """The emoji names in the :name: shortcodes of mrkdwn text, skin tones included."""
+    return _SHORTCODE_IN_TEXT.findall(text)
+
+
+def _alias_target(name: str, emoji: dict[str, str]) -> str | None:
+    """The name name's custom aliases lead to: a custom emoji with an image, or a name that is
+    not custom. None for an alias cycle or a chain longer than MAX_ALIAS_DEPTH."""
+    target = name
+    for _ in range(MAX_ALIAS_DEPTH):
+        url = emoji.get(target)
+        if url is None or not url.startswith(ALIAS_PREFIX):
+            return target
+        target = url.removeprefix(ALIAS_PREFIX)
+    return None
 
 
 def code_points_text(code: str) -> str:

@@ -5,6 +5,7 @@ from typing import Literal
 import msgspec
 
 from slarc.domain.directory import DirectoryView, directory_image_url
+from slarc.domain.emoji import custom_emoji_url, shortcodes
 from slarc.domain.envelope import Envelope, Kind
 from slarc.domain.hashing import content_hash
 from slarc.domain.links import is_slack_file_url, is_web_url
@@ -163,7 +164,10 @@ def _shown_images(message: dict, view: DirectoryView | None) -> list[str]:
     """The message's images plus, through view, its custom emoji and its authors' avatars."""
     urls = image_urls(message)
     if view is not None:
-        urls += [url for name in _emoji_names(message) if (url := _emoji_url(name, view.emoji))]
+        for name in _emoji_names(message):
+            url = custom_emoji_url(name, view.emoji)
+            if is_web_url(url):
+                urls.append(url)
         authors = [message.get("user"), *(message.get("reply_users") or [])]
         for user_id in authors:
             url = directory_image_url("user", view.users.get(user_id or "") or {})
@@ -173,9 +177,12 @@ def _shown_images(message: dict, view: DirectoryView | None) -> list[str]:
 
 
 def _emoji_names(message: dict) -> list[str]:
-    """Emoji in reactions and rich_text blocks, without skin tones."""
+    """Emoji in reactions, rich_text blocks and mrkdwn text, without skin tones."""
     names = [reaction["name"] for reaction in message.get("reactions") or []]
     names += _block_emoji(message.get("blocks") or [])
+    texts = [message.get("text")]
+    texts += [attachment.get("text") for attachment in message.get("attachments") or []]
+    names += [name for text in texts if isinstance(text, str) for name in shortcodes(text)]
     return list(dict.fromkeys(name.split("::")[0] for name in names))
 
 
@@ -186,14 +193,6 @@ def _block_emoji(node: object) -> list[str]:
         return []
     names = [node["name"]] if node.get("type") == "emoji" and node.get("name") else []
     return names + [name for value in node.values() for name in _block_emoji(value)]
-
-
-def _emoji_url(name: str, emoji: dict[str, str]) -> str | None:
-    """The image of a custom emoji, following one alias; standard emoji have none."""
-    url = emoji.get(name, "")
-    if url.startswith("alias:"):
-        url = emoji.get(url.removeprefix("alias:"), "")
-    return url if is_web_url(url) else None
 
 
 def _file_state(

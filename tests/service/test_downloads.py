@@ -5,10 +5,16 @@ import hashlib
 import pytest
 
 from slarc import __version__
+from slarc.domain.directory import DirectoryView
 from slarc.domain.hashing import content_hash
 from slarc.domain.tracking import DownloadState
 from slarc.ports import AuthFailed, DownloadJob
-from slarc.service.downloads import drain_downloads, image_urls, outstanding_downloads
+from slarc.service.downloads import (
+    drain_downloads,
+    image_urls,
+    outstanding_downloads,
+    queue_downloads,
+)
 from slarc.service.pull import PullOptions
 from slarc.unit_of_work import UnitOfWork
 from tests.service.pull_harness import BASE, CHANNEL, ME, TEAM, TOMBSTONE_FILE, Harness, spike
@@ -96,6 +102,27 @@ def test_custom_emoji_and_avatars_queued(h: Harness):
     targets = {d.target for d in run_states(h, "image")}
     assert {CUSTOM_EMOJI_URL, avatar(ME), avatar("U0CA61XJF2R")} <= targets
     assert not any("emoji.slack-edge.com" in t and CUSTOM_EMOJI not in t for t in targets)
+
+
+def test_custom_emoji_in_mrkdwn_text_queued_through_aliases(h: Harness):
+    emoji = {
+        "teamwork": "https://emoji.slack-edge.com/T/teamwork/a.gif",
+        "tw2": "alias:teamwork",
+        "tw3": "alias:tw2",
+        "status": "https://emoji.slack-edge.com/T/status/b.png",
+    }
+    view = DirectoryView(users={}, conversations={}, usergroups={}, emoji=emoji, bots={})
+    message = {
+        "ts": SNIPPET_TS,
+        "bot_id": "B1",
+        "text": "deployed :tw3: :smile:",
+        "attachments": [{"text": "build :status::skin-tone-2:"}],
+    }
+
+    with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
+        jobs = queue_downloads(message, TEAM, uow, PullOptions().max_file_bytes, view=view)
+
+    assert [job.target for job in jobs] == [emoji["teamwork"], emoji["status"]]
 
 
 def test_only_slack_file_urls_carry_auth(h: Harness):

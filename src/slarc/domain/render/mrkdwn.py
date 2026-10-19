@@ -5,7 +5,7 @@ import re
 from markupsafe import Markup, escape
 
 from slarc.domain.directory import DirectoryView
-from slarc.domain.emoji import EmojiRender, resolve_emoji
+from slarc.domain.emoji import SHORTCODE, EmojiRender, resolve_emoji
 from slarc.domain.plain import mrkdwn_plain, mrkdwn_token_text, unescape_mrkdwn
 from slarc.domain.render import AssetResolver
 
@@ -15,7 +15,7 @@ _HELD = re.compile(
     r"```(?P<pre>.*?)```"
     r"|`(?P<code>[^`\n]+)`"
     r"|<(?P<token>[^<>]+)>"
-    r"|:(?P<emoji>[a-z0-9_+'-]+(?:::skin-tone-[2-6](?:-[2-6])?)*):",
+    rf"|:(?P<emoji>{SHORTCODE}):",
     re.DOTALL,
 )
 _PLACEHOLDER = re.compile("\x00(\\d+)\x00")

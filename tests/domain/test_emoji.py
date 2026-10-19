@@ -3,7 +3,14 @@
 import pytest
 
 from slarc.domain.directory import DirectoryView
-from slarc.domain.emoji import EmojiRender, code_points_text, resolve_emoji, standard_emoji
+from slarc.domain.emoji import (
+    EmojiRender,
+    code_points_text,
+    custom_emoji_url,
+    resolve_emoji,
+    shortcodes,
+    standard_emoji,
+)
 
 SMILE = chr(0x1F604)
 WAVE_TONE_3 = chr(0x1F44B) + chr(0x1F3FC)
@@ -78,3 +85,21 @@ def test_code_points_text_rejects_surrogates():
     assert code_points_text("1F44B-1F3FC") == WAVE_TONE_3
     with pytest.raises(ValueError):
         code_points_text("D800")
+
+
+def test_custom_emoji_url_follows_an_alias_chain():
+    emoji = {"teamwork": "https://e.test/t.gif", "tw2": "alias:teamwork", "tw3": "alias:tw2"}
+    assert custom_emoji_url("tw3", emoji) == "https://e.test/t.gif"
+    assert custom_emoji_url("teamwork", emoji) == "https://e.test/t.gif"
+
+
+def test_custom_emoji_url_is_none_for_standard_unknown_and_cyclic_names():
+    emoji = {"white_square": "alias:white_large_square", "a": "alias:b", "b": "alias:a"}
+    assert custom_emoji_url("white_square", emoji) is None
+    assert custom_emoji_url("smile", emoji) is None
+    assert custom_emoji_url("a", emoji) is None
+
+
+def test_shortcodes_finds_emoji_names_in_mrkdwn():
+    text = "deployed :tada: by <@U1> :wave::skin-tone-3: at 10:30"
+    assert shortcodes(text) == ["tada", "wave::skin-tone-3"]
