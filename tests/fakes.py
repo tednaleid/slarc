@@ -27,12 +27,13 @@ from slarc.ports import (
 class InMemoryArchiveStore:
     def __init__(self) -> None:
         self.lines: list[Envelope] = []
+        self.flushes = 0
 
     def append(self, env: Envelope) -> None:
         self.lines.append(env)
 
     def flush(self) -> None:
-        pass
+        self.flushes += 1
 
     def stored_messages(self, team: str, channel: str) -> dict[str, StoredMessage]:
         latest = LatestMessages()
@@ -138,7 +139,7 @@ class FakeSlackGateway:
         self.auth = SPIKE_AUTH if auth is None else auth
         self.auth_error = auth_error
         self.page_size = page_size
-        self.calls: list[tuple[str, ...]] = []
+        self.calls: list[tuple[str | None, ...]] = []
 
     def auth_test(self) -> dict:
         self.calls.append(("auth.test",))
@@ -170,7 +171,7 @@ class FakeSlackGateway:
         selected = [m for m in self.conversations[channel] if in_history(m) and in_range(m)]
         newest_first = sorted(selected, key=lambda m: MessageTs(m["ts"]), reverse=True)
         for page in _pages(newest_first, self.page_size):
-            self.calls.append(("conversations.history", channel))
+            self.calls.append(("conversations.history", channel, oldest, latest))
             yield page
 
     def replies(self, channel: str, ts: str) -> list[dict]:
