@@ -1,6 +1,8 @@
 # ABOUTME: Build, test and release recipes for slarc.
 # ABOUTME: `just check` is what CI and the pre-commit hook run.
 
+set positional-arguments
+
 default: check
 
 # Run all checks (test + lint + typecheck + format check)
@@ -8,7 +10,7 @@ check: test lint typecheck fmt-check
 
 # Run tests; pass pytest args, e.g. `just test -k links`
 test *ARGS:
-    uv run pytest {{ARGS}}
+    uv run pytest "$@"
 
 # Run ruff lints
 lint:
@@ -37,7 +39,7 @@ install:
 
 # Run slarc from the working tree with arbitrary arguments
 run *ARGS:
-    uv run slarc {{ARGS}}
+    uv run slarc "$@"
 
 # Remove build artifacts and caches
 clean:
