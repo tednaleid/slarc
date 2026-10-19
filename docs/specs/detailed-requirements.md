@@ -183,7 +183,7 @@ Items marked (spike) were confirmed against the test workspace; the rest come fr
 **Tracked conversation**
 
 1. New history: `conversations.history` from the newest stored `ts` (or `--since` on the first pull) up to `--until` or now.
-2. Replies under old parents: `search.messages` with `in:<#channel> after:<date of the previous pull minus one day>`, paged. For every match whose permalink carries a `thread_ts` that was not covered by step 1 or 3, re-read that thread.
+2. Replies under old parents: `search.messages` with `in:<#channel> after:<UTC date of the previous pull minus two days>`, paged. Slack treats `after:` as exclusive and evaluates it in the user's time zone, so two days of margin keep replies from slipping through; the extra re-reads change nothing because unchanged messages write no lines. For every match whose permalink carries a `thread_ts` that was not covered by step 1 or 3, re-read that thread.
 3. Active threads: re-read every thread with a stored reply newer than `active_thread_days` (default 7).
 4. Every thread whose parent arrived in step 1 with replies is read with `conversations.replies`.
 5. `--full` replaces steps 1 and 2 with a complete re-read of the conversation's range and every thread in it.
