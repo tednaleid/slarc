@@ -20,6 +20,7 @@ COOKIE_PREFIX = "xoxd-"
 DOMAIN_HASH_SIZE = 32
 DOMAIN_HASH_MIN_VERSION = 24
 DECRYPT_FAILED = "cookie did not decrypt"
+NO_COOKIE = "no d cookie found"
 
 
 @dataclass
@@ -91,10 +92,12 @@ def _read_encrypted_cookie(db_path: Path) -> tuple[bytes, int]:
         db_version = int(row[0]) if row else 0
         row = db.execute(
             "select encrypted_value from cookies"
-            " where name = 'd' and host_key like '%slack.com' and length(encrypted_value) > 0"
+            " where name = 'd' and host_key in ('.slack.com', 'slack.com')"
+            " and length(encrypted_value) > 0"
+            " order by host_key = '.slack.com' desc limit 1"
         ).fetchone()
     finally:
         db.close()
     if row is None:
-        raise ValueError("no d cookie found")
+        raise ValueError(NO_COOKIE)
     return row[0], db_version

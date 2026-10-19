@@ -109,3 +109,7 @@ retag version:
     git tag -d "$tag" || true
     git tag -a "$tag" -F "$notes_file"
     git push && git push --tags
+
+# Compare slarc's LevelDB reader with ccl_chromium_reader on this machine's Slack Local Storage
+compare-leveldb:
+    ./scripts/compare-leveldb.py

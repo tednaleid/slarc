@@ -1,13 +1,9 @@
 # ABOUTME: Tests for Chromium Local Storage token decoding and Cookies DB decryption.
 # ABOUTME: Builds synthetic LevelDB directories and Cookies databases; no real Slack data is used.
-import hashlib
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from slarc.adapters.chromium import (
     TeamToken,
@@ -15,6 +11,7 @@ from slarc.adapters.chromium import (
     read_d_cookie,
     read_local_config,
 )
+from tests.cookies_writer import encrypt, make_cookies_db
 from tests.leveldb_writer import write_log
 
 KEY = b"_https://app.slack.com\x00\x01localConfig_v2"
@@ -26,14 +23,6 @@ PASSWORD = b"keychain-secret"
 def config_json(token: str = "xoxc-1", domain: str = "acme") -> bytes:
     teams = {"T1": {"token": token, "domain": domain, "name": "Acme", "extra": 1}}
     return json.dumps({"teams": teams}).encode()
-
-
-def encrypt(plaintext: bytes, password: bytes, iterations: int, prefix: bytes = b"v10") -> bytes:
-    key = hashlib.pbkdf2_hmac("sha1", password, b"saltysalt", iterations, 16)
-    padder = padding.PKCS7(128).padder()
-    padded = padder.update(plaintext) + padder.finalize()
-    encryptor = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).encryptor()
-    return prefix + encryptor.update(padded) + encryptor.finalize()
 
 
 def test_reads_teams_from_latin1_value(tmp_path: Path):
@@ -82,24 +71,39 @@ def test_wrong_password_raises_without_secret_in_message():
     assert COOKIE not in str(exc.value)
 
 
-def make_cookies_db(path: Path, encrypted: bytes, version: int) -> None:
-    db = sqlite3.connect(path)
-    db.execute("create table meta(key text, value text)")
-    db.execute("insert into meta values ('version', ?)", (str(version),))
-    db.execute("create table cookies(host_key text, name text, value text, encrypted_value blob)")
-    db.execute("insert into cookies values ('.slack.com', 'b', '', ?)", (b"v10junk",))
-    db.execute("insert into cookies values ('.slack.com', 'd', '', ?)", (encrypted,))
-    db.commit()
-    db.close()
+def slack_cookie_rows(encrypted: bytes) -> list[tuple[str, str, bytes]]:
+    return [(".slack.com", "b", b"v10junk"), (".slack.com", "d", encrypted)]
 
 
 def test_read_d_cookie_from_sqlite(tmp_path: Path):
     encrypted = encrypt(b"\x07" * 32 + COOKIE.encode(), PASSWORD, 1003)
-    make_cookies_db(tmp_path / "Cookies", encrypted, 24)
+    make_cookies_db(tmp_path / "Cookies", slack_cookie_rows(encrypted), 24)
     assert read_d_cookie(tmp_path / "Cookies", [b"nope", PASSWORD], 1003) == COOKIE
 
 
 def test_read_d_cookie_without_matching_password_raises(tmp_path: Path):
-    make_cookies_db(tmp_path / "Cookies", encrypt(COOKIE.encode(), PASSWORD, 1003), 23)
+    make_cookies_db(
+        tmp_path / "Cookies", slack_cookie_rows(encrypt(COOKIE.encode(), PASSWORD, 1003)), 23
+    )
     with pytest.raises(ValueError, match="cookie did not decrypt"):
         read_d_cookie(tmp_path / "Cookies", [b"nope"], 1003)
+
+
+def test_read_d_cookie_matches_slack_host_exactly_preferring_dot_slack_com(tmp_path: Path):
+    rows = [
+        ("evilslack.com", "d", encrypt(b"xoxd-evil", PASSWORD, 1003)),
+        (".notslack.com", "d", encrypt(b"xoxd-not", PASSWORD, 1003)),
+        ("slack.com", "d", encrypt(b"xoxd-bare", PASSWORD, 1003)),
+        (".slack.com", "d", encrypt(COOKIE.encode(), PASSWORD, 1003)),
+    ]
+    make_cookies_db(tmp_path / "Cookies", rows, 23)
+    assert read_d_cookie(tmp_path / "Cookies", [PASSWORD], 1003) == COOKIE
+
+
+def test_read_d_cookie_falls_back_to_bare_slack_com(tmp_path: Path):
+    rows = [
+        ("evilslack.com", "d", encrypt(b"xoxd-evil", PASSWORD, 1003)),
+        ("slack.com", "d", encrypt(COOKIE.encode(), PASSWORD, 1003)),
+    ]
+    make_cookies_db(tmp_path / "Cookies", rows, 23)
+    assert read_d_cookie(tmp_path / "Cookies", [PASSWORD], 1003) == COOKIE
