@@ -227,6 +227,9 @@ ERROR_CASES = [
     ("files.info", "file_deleted", lambda g: g.file_info("F0C9XQFTVRD")),
     ("auth.test", "invalid_auth", lambda g: g.auth_test()),
     ("users.list", "not_authed", lambda g: list(g.users())),
+    ("auth.test", "token_revoked", lambda g: g.auth_test()),
+    ("auth.test", "token_expired", lambda g: g.auth_test()),
+    ("auth.test", "account_inactive", lambda g: g.auth_test()),
 ]
 EXPECTED = {
     "channel_not_found": NotVisible,
@@ -235,6 +238,9 @@ EXPECTED = {
     "file_deleted": FileDeleted,
     "invalid_auth": AuthFailed,
     "not_authed": AuthFailed,
+    "token_revoked": AuthFailed,
+    "token_expired": AuthFailed,
+    "account_inactive": AuthFailed,
 }
 
 

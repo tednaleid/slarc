@@ -35,7 +35,7 @@ CONVERSATION_TYPES = "public_channel,private_channel,mpim,im"
 RATE_LIMIT_RETRIES = 3
 
 NOT_VISIBLE_ERRORS = ("channel_not_found", "not_in_channel")
-AUTH_ERRORS = ("invalid_auth", "not_authed")
+AUTH_ERRORS = ("invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive")
 
 
 class WebApi(Protocol):
