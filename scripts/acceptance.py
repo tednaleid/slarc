@@ -4,7 +4,7 @@
 # dependencies = []
 # ///
 # ABOUTME: Live check of slarc's Phase 1 ship criteria against the naleidworkspace test workspace.
-# ABOUTME: Pulls into scratch archives; posts and edits only through seed-test-workspace.py.
+# ABOUTME: Pulls into scratch archives; edits and first-run posts go through seed-test-workspace.py.
 import hashlib
 import json
 import re
@@ -146,7 +146,11 @@ def check_export(root: Path, out: Path) -> Criterion:
 
 
 def pull_until(timed: Timed, root: Path, found: Callable[[], bool]) -> tuple[int, float]:
-    """Bare-pulls until found() or SEARCH_WAIT_S passes; returns the pulls made and seconds."""
+    """Bare-pulls until found() or SEARCH_WAIT_S passes; returns the pulls made and seconds.
+
+    Search indexes a reply some seconds after it is posted, so the run that posts R may need
+    more than one pull; later runs find R on the first.
+    """
     started = time.monotonic()
     attempts = 0
     while True:
@@ -158,17 +162,51 @@ def pull_until(timed: Timed, root: Path, found: Callable[[], bool]) -> tuple[int
         time.sleep(RETRY_PAUSE_S)
 
 
-def check_reply_under_older_parent(root: Path, tag: str) -> tuple[Criterion, str]:
+def forget_reply(root: Path, channel: str, reply_ts: str) -> tuple[int, int]:
+    """Edits the archive into the state a pull leaves when it runs just before R is posted.
+
+    That pull stores P (the hashed subset has no reply_count, so P's line is the same) but not
+    R, and its last_search_at precedes R. Removing R's line and moving the channel's
+    last_search_at, held in the tracked state of the only run line, to a second before R gives
+    that state. Returns the lines removed and the tracked items moved.
+    """
+    removed = 0
+    for path in sorted((root / "raw" / TEAM_ID / channel).glob("*.jsonl")):
+        lines = path.read_text().splitlines(keepends=True)
+        kept = [line for line in lines if json.loads(line)["meta"].get("ts") != reply_ts]
+        removed += len(lines) - len(kept)
+        path.write_text("".join(kept))
+    runs = root / "runs.jsonl"
+    run_lines = runs.read_text().splitlines()
+    run = json.loads(run_lines[-1])
+    before_reply = datetime.fromtimestamp(int(reply_ts.split(".")[0]) - 1, UTC)
+    moved = 0
+    for item in run["object"]["tracked"]:
+        if item["kind"] == "conversation" and item["channel"] == channel:
+            item["last_search_at"] = before_reply.strftime("%Y-%m-%dT%H:%M:%SZ")
+            moved += 1
+    run_lines[-1] = json.dumps(run, separators=(",", ":"), ensure_ascii=False)
+    runs.write_text("\n".join(run_lines) + "\n")
+    return removed, moved
+
+
+def check_reply_under_older_parent(root: Path) -> tuple[Criterion, dict]:
     criterion = Criterion(REPLY)
     timed = Timed(criterion)
-    parent = seed(timed, "seed parent", "post", f"acceptance {tag}: parent P")
-    channel = parent["channel"]
-    seed(timed, "seed newer message", "post", f"acceptance {tag}: newer message M")
-    slarc(timed, "first pull", root, "pull", "--yes", link(channel))
-    stored = len(channel_lines(root, channel))
-    reply = seed(
-        timed, "seed reply", "post", f"acceptance {tag}: reply R", "--thread-ts", parent["ts"]
+    fixed = seed(timed, "ensure P, R and E", "ensure-acceptance")
+    criterion.notes.append(
+        f"ensure-acceptance posted {fixed['posted']} messages; #slarc-acceptance held "
+        f"{fixed['messages_before']} before it"
     )
+    channel, reply = fixed["channel"], fixed["reply"]
+    root.mkdir(parents=True)
+    # No thread is active, so only search can find R.
+    (root / "slarc.toml").write_text("[pull]\nactive_thread_days = 0\n")
+    slarc(timed, "first pull", root, "pull", link(channel))
+    removed, moved = forget_reply(root, channel, reply)
+    criterion.check(removed == 1, f"removed {removed} line for R from the archive")
+    criterion.check(moved == 1, f"moved last_search_at before R for {moved} tracked item")
+    stored = len(channel_lines(root, channel))
 
     def new_lines() -> list[dict]:
         return channel_lines(root, channel)[stored:]
@@ -178,36 +216,33 @@ def check_reply_under_older_parent(root: Path, tag: str) -> tuple[Criterion, str
     criterion.notes.append(f"{attempts} bare pulls over {elapsed:.0f}s; last: {run_summary(root)}")
     criterion.check(len(lines) == 1, f"{len(lines)} new lines in the channel")
     criterion.check(
-        [line["meta"].get("ts") for line in lines] == [reply["ts"]],
-        f"the new line has the reply's ts {reply['ts']}",
+        [line["meta"].get("ts") for line in lines] == [reply],
+        f"the new line has R's ts {reply}",
     )
     searched = last_run(root)["counts"].get("threads_read", {}).get("search", 0)
     criterion.check(searched >= 1, f"threads_read.search={searched} in the last pull's run line")
-    return criterion, channel
+    return criterion, fixed
 
 
-def check_edit(root: Path, channel: str, tag: str) -> Criterion:
+def check_edit(root: Path, fixed: dict, tag: str) -> Criterion:
     criterion = Criterion(EDIT)
     timed = Timed(criterion)
-    original, edited = f"acceptance {tag}: edit me, original", f"acceptance {tag}: edit me, edited"
-    message = seed(timed, "seed message", "post", original)
-    slarc(timed, "pull", root, "pull")
+    channel, target = fixed["channel"], fixed["edit_target"]
+    edited = f"{fixed['edit_marker']}, edited by run {tag}"
 
-    def lines_for_message() -> list[dict]:
-        return [
-            line for line in channel_lines(root, channel) if line["meta"].get("ts") == message["ts"]
-        ]
+    def lines_for_target() -> list[dict]:
+        return [line for line in channel_lines(root, channel) if line["meta"].get("ts") == target]
 
-    stored = len(lines_for_message())
-    criterion.check(stored == 1, f"{stored} line holds the message before the edit")
-    seed(timed, "seed edit", "edit", message["ts"], edited)
+    stored = len(lines_for_target())
+    criterion.check(stored == 1, f"{stored} line holds E before the edit")
+    seed(timed, "seed edit", "edit", target, edited)
     slarc(timed, "bare pull", root, "pull")
-    after_bare = len(lines_for_message()) - stored
+    after_bare = len(lines_for_target()) - stored
     criterion.notes.append(f"bare pull after the edit: {after_bare} new lines; {run_summary(root)}")
     slarc(timed, "pull --full", root, "pull", "--full")
     criterion.notes.append(f"pull --full: {run_summary(root)}")
-    new = lines_for_message()[stored:]
-    criterion.check(len(new) == 1, f"{len(new)} new lines for the message across both pulls")
+    new = lines_for_target()[stored:]
+    criterion.check(len(new) == 1, f"{len(new)} new lines for E across both pulls")
     text = new[-1]["object"].get("text") if new else None
     criterion.check(text == edited, f"the new line has the edited text: {text!r}")
     return criterion
@@ -241,16 +276,16 @@ def main() -> int:
         attempt(SAME_PULL, lambda: check_same_pull_twice(fixtures)),
         attempt(EXPORT, lambda: check_export(fixtures, tmp / "export")),
     ]
-    channel: list[str] = []
+    fixed: list[dict] = []
 
     def reply_under_older_parent() -> Criterion:
-        criterion, made_in = check_reply_under_older_parent(acceptance, tag)
-        channel.append(made_in)
+        criterion, ensured = check_reply_under_older_parent(acceptance)
+        fixed.append(ensured)
         return criterion
 
     results.append(attempt(REPLY, reply_under_older_parent))
-    if channel:
-        results.append(attempt(EDIT, lambda: check_edit(acceptance, channel[0], tag)))
+    if fixed:
+        results.append(attempt(EDIT, lambda: check_edit(acceptance, fixed[0], tag)))
     else:
         results.append(attempt(EDIT, lambda: Criterion(f"{EDIT}: skipped, (b) failed", False)))
     if all(c.passed for c in results):

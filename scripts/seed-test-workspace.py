@@ -10,7 +10,7 @@
 # slarc = { path = "..", editable = true }
 # ///
 # ABOUTME: Developer-only script that posts test content to the naleidworkspace test workspace.
-# ABOUTME: Aborts on any other workspace; its post and edit commands write to #slarc-acceptance.
+# ABOUTME: Aborts on any other workspace; its acceptance commands write to #slarc-acceptance.
 import argparse
 import json
 import subprocess
@@ -29,6 +29,9 @@ TEAM_ID = "T0CB5LYPVFA"
 MARKER = "slarc seed v1"
 ARCHIVED_CHANNEL = "slarc-fixtures-archived"
 ACCEPTANCE_CHANNEL = "slarc-acceptance"
+PARENT_MARKER = "slarc acceptance: parent P"
+REPLY_MARKER = "slarc acceptance: reply R"
+EDIT_MARKER = "slarc acceptance: edit target E"
 JIM = "U0CA61XJF2R"
 TOPIC = "Fixtures for slarc tests"
 PURPOSE = "Seeded content that slarc's recorded fixtures are pulled from"
@@ -312,11 +315,25 @@ def acceptance_channel(client: WebClient) -> str:
     return channel["id"]
 
 
-def post_acceptance(client: WebClient, text: str, thread_ts: str | None) -> dict:
-    channel = acceptance_channel(client)
-    extra = {"thread_ts": thread_ts} if thread_ts else {}
-    ts = client.chat_postMessage(channel=channel, text=text, **extra)["ts"]
-    return {"channel": channel, "ts": ts}
+def ensure_acceptance(client: WebClient) -> dict:
+    """Finds, by marker text, the parent P, its reply R and the edit target E, posting any missing.
+
+    Edits of E keep its marker, so later runs find it. Nothing is ever deleted.
+    """
+    acceptance = Conversation(client, acceptance_channel(client))
+    held = len(acceptance.texts)
+    parent = acceptance.find(PARENT_MARKER) or acceptance.post(PARENT_MARKER)
+    reply = acceptance.find(REPLY_MARKER) or acceptance.post(REPLY_MARKER, thread_ts=parent)
+    edit_target = acceptance.find(EDIT_MARKER) or acceptance.post(EDIT_MARKER)
+    return {
+        "channel": acceptance.id,
+        "parent": parent,
+        "reply": reply,
+        "edit_target": edit_target,
+        "edit_marker": EDIT_MARKER,
+        "messages_before": held,
+        "posted": len(acceptance.texts) - held,
+    }
 
 
 def edit_acceptance(client: WebClient, ts: str, text: str) -> dict:
@@ -359,15 +376,16 @@ def seed(client: WebClient, channel: str) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Without a command, seeds the fixtures channel named by --channel. "
-        f"The post and edit commands write to #{ACCEPTANCE_CHANNEL}, creating it when missing, "
-        "and print the message's channel and ts as JSON."
+        f"The ensure-acceptance and edit commands write to #{ACCEPTANCE_CHANNEL}, creating it "
+        "when missing, and print JSON."
     )
     parser.add_argument("--workspace", required=True, help="domain of the test workspace")
     parser.add_argument("--channel", help="name of the existing fixtures channel to seed")
     commands = parser.add_subparsers(dest="command")
-    post = commands.add_parser("post", help=f"post a message to #{ACCEPTANCE_CHANNEL}")
-    post.add_argument("text")
-    post.add_argument("--thread-ts", help="ts of the parent to reply under")
+    commands.add_parser(
+        "ensure-acceptance",
+        help=f"find or post the fixed acceptance messages in #{ACCEPTANCE_CHANNEL}",
+    )
     edit = commands.add_parser("edit", help=f"edit a message in #{ACCEPTANCE_CHANNEL}")
     edit.add_argument("ts")
     edit.add_argument("text")
@@ -381,8 +399,8 @@ def main() -> int:
             return 1
         if args.command is None:
             return seed(client, args.channel)
-        if args.command == "post":
-            result = post_acceptance(client, args.text, args.thread_ts)
+        if args.command == "ensure-acceptance":
+            result = ensure_acceptance(client)
         else:
             result = edit_acceptance(client, args.ts, args.text)
     except SlackApiError as error:
