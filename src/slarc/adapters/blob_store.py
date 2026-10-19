@@ -1,0 +1,44 @@
+# ABOUTME: BlobStore over the archive's content-addressed blob directory, blobs/sha256/ab/cd/<hash>.
+# ABOUTME: Streams each write to a temp file while hashing, then renames it into place.
+import hashlib
+import os
+import tempfile
+from collections.abc import Iterable
+from pathlib import Path
+
+
+class FsBlobStore:
+    def __init__(self, root: Path) -> None:
+        self._dir = root / "blobs" / "sha256"
+
+    def write(self, chunks: Iterable[bytes]) -> tuple[str, int]:
+        self._dir.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256()
+        size = 0
+        with tempfile.NamedTemporaryFile(dir=self._dir, prefix=".tmp-", delete=False) as tmp:
+            try:
+                for chunk in chunks:
+                    tmp.write(chunk)
+                    digest.update(chunk)
+                    size += len(chunk)
+            except BaseException:
+                tmp.close()
+                os.unlink(tmp.name)
+                raise
+        sha256 = digest.hexdigest()
+        path = self._path(sha256)
+        if path.exists():
+            os.unlink(tmp.name)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(tmp.name, path)
+        return sha256, size
+
+    def exists(self, sha256: str) -> bool:
+        return self._path(sha256).exists()
+
+    def read(self, sha256: str) -> bytes:
+        return self._path(sha256).read_bytes()
+
+    def _path(self, sha256: str) -> Path:
+        return self._dir / sha256[:2] / sha256[2:4] / sha256
