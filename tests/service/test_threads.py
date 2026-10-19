@@ -75,11 +75,13 @@ def test_new_reply_under_old_parent_found_by_search(h: Harness):
     h.change_message(parent, reply_count=2)
     h.gateway.search_results[FIRST_SEARCH] = [search_match(new_reply, parent)]
     before = len(h.archive.lines)
+    assert h.last_run().counts["threads_read"] == {"history": 1}
 
     h.pull()
 
     assert lines_since(h, before) == [("message", new_reply), ("run", None)]
     assert h.archive.lines[before].meta.api == "conversations.replies"
+    assert h.last_run().counts["threads_read"] == {"search": 1}
     [item] = h.tracked()
     assert item.last_search_at == "2026-10-19T14:40:11Z"
 
@@ -110,6 +112,7 @@ def test_active_threads_reread(h: Harness):
 
     assert replies_calls(h) == [parent]
     assert lines_since(h, before) == [("message", reply), ("run", None)]
+    assert h.last_run().counts["threads_read"] == {"active": 1}
 
 
 def test_dormant_thread_not_reread_without_search_hit(h: Harness):
@@ -144,6 +147,7 @@ def test_full_pull_records_deletes_in_range(h: Harness):
 
     assert deleted_ts(h) == {top[1], reply, emptied_reply}
     assert [kind for kind, _ in lines_since(h, before)] == ["deleted"] * 3 + ["run"]
+    assert h.last_run().counts["threads_read"] == {"full": 2}
 
 
 def test_full_pull_does_not_delete_below_oldest_returned(h: Harness):

@@ -125,7 +125,12 @@ def make_run() -> RunRecord:
         finished="2026-10-19T12:31:00Z",
         teams=["T1"],
         auth=[{"team_id": "T1", "domain": "naleidworkspace", "source": "desktop"}],
-        counts={"messages_seen": 12, "rate_limit_wait_s": 1.5},
+        counts={
+            "messages_seen": 12,
+            "rate_limit_wait_s": 1.5,
+            "api_calls": {"auth.test": 1, "conversations.replies": 2},
+            "threads_read": {"history": 2},
+        },
         errors=[{"channel": "C9", "error": "not_visible"}],
         tracked=[
             TrackedItem(

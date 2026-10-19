@@ -109,6 +109,8 @@ class SlackGateway(Protocol):
     def file_info(self, file_id: str) -> dict: ...  # the file object; raises FileDeleted
     @property
     def rate_limit_wait_s(self) -> float: ...  # seconds its calls waited for the limiter
+    @property
+    def api_calls(self) -> dict[str, int]: ...  # calls made per Web API method, pages included
 
 
 class SlackConnector(Protocol):

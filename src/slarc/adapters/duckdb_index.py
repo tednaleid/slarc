@@ -275,6 +275,8 @@ ENTITY_VIEWS = {
             CAST(object -> 'counts' -> 'messages_seen' AS BIGINT) AS messages_seen,
             CAST(object -> 'counts' -> 'lines_appended' AS BIGINT) AS lines_appended,
             CAST(object -> 'counts' -> 'rate_limit_wait_s' AS DOUBLE) AS rate_limit_wait_s,
+            object -> 'counts' -> 'api_calls' AS api_calls,
+            object -> 'counts' -> 'threads_read' AS threads_read,
             object -> 'errors' AS errors,
             object -> 'tracked' AS tracked,
             object -> 'downloads' AS downloads

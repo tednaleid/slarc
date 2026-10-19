@@ -1,6 +1,7 @@
 # ABOUTME: In-memory doubles for slarc's ports: archive, blobs, export files, Slack and credentials.
 # ABOUTME: The archive fake reads like the JSONL store; the Slack fake pages and fails like Slack.
 import hashlib
+from collections import Counter
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -156,11 +157,19 @@ class FakeSlackGateway:
         self.page_size = page_size
         self.calls: list[tuple[str | None, ...]] = []
         self.rate_limit_wait_s = 0.0
+        self._authenticated = False
+
+    @property
+    def api_calls(self) -> dict[str, int]:
+        return dict(Counter(str(call[0]) for call in self.calls))
 
     def auth_test(self) -> dict:
-        self.calls.append(("auth.test",))
+        """Like the gateway, calls auth.test only until it first succeeds."""
+        if self.auth_error is not None or not self._authenticated:
+            self.calls.append(("auth.test",))
         if self.auth_error is not None:
             raise self.auth_error
+        self._authenticated = True
         return dict(self.auth)
 
     def conversation_info(self, channel: str) -> dict:

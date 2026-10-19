@@ -159,6 +159,52 @@ def test_interrupted_run_line_records_rate_limit_waits(h: Harness, monkeypatch: 
     assert h.last_run().counts["rate_limit_wait_s"] == 1.25
 
 
+def test_run_line_counts_api_calls_per_method(h: Harness):
+    h.serve([ts_on(18, hour) for hour in range(3)], page_size=2)
+
+    h.pull(BASE)
+
+    assert h.last_run().counts["api_calls"] == {
+        "auth.test": 1,
+        "conversations.history": 2,
+        "conversations.info": 1,
+        "emoji.list": 1,
+        "usergroups.list": 1,
+        "users.list": 1,
+    }
+
+
+def test_interrupted_run_line_records_api_calls_and_thread_reads(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+):
+    parent, reply, older = ts_on(18, 5), ts_on(18, 6), ts_on(18, 1)
+    h.gateway.conversations[CHANNEL] = [
+        message(parent, thread_ts=parent, reply_count=1),
+        message(reply, thread_ts=parent),
+        message(older),
+    ]
+    h.gateway.page_size = 1
+    served = h.gateway.history
+
+    def interrupted_on_page_2(
+        channel: str, oldest: str | None, latest: str | None
+    ) -> Iterator[list[dict]]:
+        for number, page in enumerate(served(channel, oldest, latest), start=1):
+            if number == 2:
+                raise KeyboardInterrupt
+            yield page
+
+    monkeypatch.setattr(h.gateway, "history", interrupted_on_page_2)
+    with pytest.raises(KeyboardInterrupt):
+        h.pull(BASE)
+
+    counts = h.last_run().counts
+    assert counts["threads_read"] == {"history": 1}
+    api_calls = counts["api_calls"]
+    assert isinstance(api_calls, dict)
+    assert (api_calls["auth.test"], api_calls["conversations.replies"]) == (1, 1)
+
+
 def test_interrupted_backfill_resumes_from_oldest_ts(h: Harness, monkeypatch: pytest.MonkeyPatch):
     stamps = [ts_on(18, hour) for hour in range(7)]
     h.serve(stamps, page_size=2)

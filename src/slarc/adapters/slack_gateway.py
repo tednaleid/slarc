@@ -88,6 +88,7 @@ class SessionTokenGateway:
         self._workspace = session.domain or session.team_id or "unknown"
         self._auth: dict | None = None
         self.rate_limit_wait_s = 0.0
+        self.api_calls: dict[str, int] = {}
 
     def auth_test(self) -> dict:
         if self._auth is None:
@@ -159,6 +160,7 @@ class SessionTokenGateway:
         if method not in READ_METHODS:
             raise ValueError(f"{method} is not a read method slarc may call")
         self.rate_limit_wait_s += self._limiter.acquire(method)
+        self.api_calls[method] = self.api_calls.get(method, 0) + 1
         try:
             return self._api.call(method, params)
         except SlackApiError as error:

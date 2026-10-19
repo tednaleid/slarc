@@ -67,4 +67,10 @@ def append_line(uow: UnitOfWork, env: Envelope) -> None:
 
 
 def count(uow: UnitOfWork, name: str) -> None:
-    uow.run.counts[name] = uow.run.counts.get(name, 0) + 1
+    uow.run.counts[name] = counted(uow, name) + 1
+
+
+def counted(uow: UnitOfWork, name: str) -> int:
+    """The run's count under name, or 0 when nothing is counted there."""
+    value = uow.run.counts.get(name, 0)
+    return int(value) if isinstance(value, int | float) else 0

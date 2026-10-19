@@ -264,6 +264,23 @@ def test_workspace_view_takes_latest_auth_per_team(archive: Path) -> None:
         assert index.sql("SELECT name FROM workspace")[0] == ["name"]
 
 
+def test_run_view_exposes_api_calls_and_threads_read_as_json(archive: Path) -> None:
+    line = auth_run(LATER_RUN, LATER, [])
+    line["object"]["counts"] = {
+        "messages_seen": 3,
+        "api_calls": {"auth.test": 1, "conversations.replies": 2},
+        "threads_read": {"search": 1},
+    }
+    append_line(archive / "runs.jsonl", line)
+    with DuckDbQueryIndex(archive) as index:
+        query = (
+            "SELECT messages_seen, CAST(api_calls ->> 'conversations.replies' AS BIGINT), "
+            "CAST(threads_read ->> 'search' AS BIGINT), json_keys(api_calls) "
+            f"FROM run WHERE run = '{LATER_RUN}'"
+        )
+        assert index.sql(query)[1] == [(3, 2, 1, ["auth.test", "conversations.replies"])]
+
+
 def test_reply_count_computed_from_stored_replies(index: DuckDbQueryIndex) -> None:
     query = (
         "SELECT is_thread_parent, reply_count, latest_reply FROM message "

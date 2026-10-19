@@ -1,9 +1,11 @@
 # ABOUTME: The pull use case: refreshes the workspace directory and the tracked items it is given.
 # ABOUTME: Appends a line only for a new version, records deletes and downloads files and images.
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cached_property
+from typing import Literal
 
 import msgspec
 
@@ -33,6 +35,7 @@ from slarc.service.appends import (
     append_directory,
     append_line,
     count,
+    counted,
     fetched_now,
     stamped_meta,
 )
@@ -47,8 +50,13 @@ REPLIES_API = "conversations.replies"
 BOTS_API = "bots.info"
 MESSAGES_SEEN = "messages_seen"
 RATE_LIMIT_WAIT = "rate_limit_wait_s"
+API_CALLS = "api_calls"
+THREADS_READ = "threads_read"
 
 type ItemKey = tuple[str, str, str, str]
+# Why a thread was read: a thread or message link, a parent in history, a search hit, an active
+# thread, or a --full re-read.
+type ThreadReason = Literal["link", "history", "search", "active", "full"]
 
 
 @dataclass
@@ -112,10 +120,12 @@ def pull(
         )
     finally:
         counts[RATE_LIMIT_WAIT] = round(run.workspaces.rate_limit_wait_s(), 3)
+        counts[API_CALLS] = run.workspaces.api_calls()
+        counts[THREADS_READ] = dict(run.threads_read)
     return PullReport(
         items_pulled=sum(1 for item in uow.run.tracked if item.status == "ok"),
-        lines_appended=int(counts.get(LINES_APPENDED, 0)),
-        messages_seen=int(counts.get(MESSAGES_SEEN, 0)),
+        lines_appended=counted(uow, LINES_APPENDED),
+        messages_seen=counted(uow, MESSAGES_SEEN),
         skipped=run.skipped,
         downloads_pending=pending,
         unreachable=unreachable,
@@ -228,6 +238,12 @@ class _Workspaces:
     def rate_limit_wait_s(self) -> float:
         return sum(c.gateway.rate_limit_wait_s for c in self._connections.values())
 
+    def api_calls(self) -> dict[str, int]:
+        total: Counter[str] = Counter()
+        for connection in self._connections.values():
+            total.update(connection.gateway.api_calls)
+        return dict(sorted(total.items()))
+
     def connection(self, workspace: str) -> _Connection:
         """Takes a domain or team id."""
         team_id = self._team_of.get(workspace, workspace)
@@ -292,6 +308,8 @@ class _PullRun:
         self.prefetched: dict[ItemKey, list[dict]] = {}
         self.skipped: list[str] = []
         self.progress: _ItemProgress | None = None
+        self.threads_read: dict[str, int] = {}
+        self._threads_counted: set[tuple[str, str, str]] = set()
 
     def resolve(self, selectors: list[Selector]) -> list[TrackedItem]:
         """The items to pull; a thread read while working out a selector's kind is kept."""
@@ -354,6 +372,7 @@ class _PullRun:
             return None
         kind = "thread" if len(messages) > 1 else "message"
         item = TrackedItem(team_id=team_id, kind=kind, channel=channel, ts=messages[0]["ts"])
+        self._count_thread_read(team_id, channel, messages[0]["ts"], "link")
         self.prefetched[item.key] = messages
         return item
 
@@ -403,12 +422,15 @@ class _PullRun:
             return self.prefetched[item.key]
         ts = item.ts or ""
         try:
-            return connection.gateway.replies(item.channel, ts)
+            messages = connection.gateway.replies(item.channel, ts)
         except NotVisible as error:
             self._skip(item, str(error))
+            return None
         except ThreadNotFound:
             self._skip(item, _missing_message(connection.domain, item.channel, ts))
-        return None
+            return None
+        self._count_thread_read(item.team_id, item.channel, ts, "link")
+        return messages
 
     def _pull_conversation(
         self, connection: _Connection, item: TrackedItem, view: DirectoryView
@@ -433,7 +455,7 @@ class _PullRun:
                     item = self._search_replies(connection, held, item, view)
             now, days = self.uow.clock.now(), self.options.active_thread_days
             active = active_threads(held.stored, now, days)
-            self._reread_threads(connection, held, _within(item, active), view)
+            self._reread_threads(connection, held, _within(item, active), view, "active")
         except NotVisible as error:
             self._skip(item, str(error))
             return
@@ -451,7 +473,8 @@ class _PullRun:
         if not item.backfill_complete:
             item = self._page_older(connection, held, item, view, item.oldest_ts or item.until)
         if not started_at_top:
-            item = self._page_newer(connection, held, item, view, item.newest_ts or item.since)
+            oldest = item.newest_ts or item.since
+            item = self._page_newer(connection, held, item, view, oldest, "history")
         return item
 
     def _page_older(
@@ -467,7 +490,7 @@ class _PullRun:
         The item is recorded after every page, so an interrupted pull resumes below oldest_ts.
         """
         for page in connection.gateway.history(item.channel, item.since, latest):
-            self._append_history_page(connection, held, page, view)
+            self._append_history_page(connection, held, page, view, "history")
             item = msgspec.structs.replace(
                 item,
                 newest_ts=_outermost(item.newest_ts, page, newest=True),
@@ -485,15 +508,16 @@ class _PullRun:
         item: TrackedItem,
         view: DirectoryView,
         oldest: str | None,
+        reason: ThreadReason,
     ) -> TrackedItem:
-        """Pages history from oldest up to until.
+        """Pages history from oldest up to until, reading each parent's thread for reason.
 
         Pages come newest first, so newest_ts moves only once paging ends; an interrupted pull
         then pages the same range again.
         """
         newest = item.newest_ts
         for page in connection.gateway.history(item.channel, oldest, item.until):
-            self._append_history_page(connection, held, page, view)
+            self._append_history_page(connection, held, page, view, reason)
             newest = _outermost(newest, page, newest=True)
             oldest_ts = _outermost(item.oldest_ts, page, newest=False)
             item = msgspec.structs.replace(item, oldest_ts=oldest_ts)
@@ -524,7 +548,7 @@ class _PullRun:
                     f"active threads were re-read: {error}"
                 )
                 return item
-            self._reread_threads(connection, held, _within(item, threads), view)
+            self._reread_threads(connection, held, _within(item, threads), view, "search")
         return msgspec.structs.replace(item, last_search_at=searched_at)
 
     def _reread_range(
@@ -540,9 +564,9 @@ class _PullRun:
         messages only.
         """
         searched_at = fetched_now(self.uow)
-        item = self._page_newer(connection, held, item, view, item.since)
+        item = self._page_newer(connection, held, item, view, item.since, "full")
         parents = {ts for ts in held.listed if held.has_replies(ts)}
-        self._reread_threads(connection, held, parents, view)
+        self._reread_threads(connection, held, parents, view, "full")
         stored = held.stored
         top_level = {
             ts: stored[ts]
@@ -559,11 +583,12 @@ class _PullRun:
         held: _HeldConversation,
         page: list[dict],
         view: DirectoryView,
+        reason: ThreadReason,
     ) -> None:
         """Appends a page of history and the thread under each parent in it, then flushes."""
         held.listed.update(message["ts"] for message in page)
         parents = [m["ts"] for m in page if (m.get("reply_count") or 0) > 0]
-        self._append_read(connection, held, page, parents, view)
+        self._append_read(connection, held, page, parents, view, reason)
 
     def _reread_threads(
         self,
@@ -571,11 +596,12 @@ class _PullRun:
         held: _HeldConversation,
         thread_ts: set[str],
         view: DirectoryView,
+        reason: ThreadReason,
     ) -> None:
         """Re-reads each of the threads not read yet in this run, oldest first."""
         unread = sorted(thread_ts - held.read_threads, key=MessageTs)
         if unread:
-            self._append_read(connection, held, [], unread, view)
+            self._append_read(connection, held, [], unread, view, reason)
 
     def _append_read(
         self,
@@ -584,6 +610,7 @@ class _PullRun:
         page: list[dict],
         parents: list[str],
         view: DirectoryView,
+        reason: ThreadReason,
     ) -> None:
         """Appends a page of history and the thread under each of parents, then flushes."""
         uow, gateway, team_id, channel = self.uow, connection.gateway, held.team_id, held.channel
@@ -594,6 +621,8 @@ class _PullRun:
                 threads[ts] = gateway.replies(channel, ts)
             except ThreadNotFound:
                 self._warn(_missing_message(connection.domain, channel, ts))
+                continue
+            self._count_thread_read(team_id, channel, ts, reason)
         read = [*page, *(m for messages in threads.values() for m in messages)]
         bot_ids = {m["bot_id"] for m in read if m.get("bot_id")} - view.bots.keys()
         bots = _unknown_bots(gateway, team_id, bot_ids, uow.archive)
@@ -681,6 +710,15 @@ class _PullRun:
         if self.progress is not None:
             self.progress.end()
             self.progress = None
+
+    def _count_thread_read(
+        self, team_id: str, channel: str, thread_ts: str, reason: ThreadReason
+    ) -> None:
+        """Counts a thread read under its reason, once per thread in the run."""
+        key = (team_id, channel, thread_ts)
+        if key not in self._threads_counted:
+            self._threads_counted.add(key)
+            self.threads_read[reason] = self.threads_read.get(reason, 0) + 1
 
     def _record(self, item: TrackedItem) -> None:
         tracked = self.uow.run.tracked

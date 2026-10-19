@@ -192,6 +192,21 @@ def test_gateway_totals_rate_limiter_waits():
     assert gateway.rate_limit_wait_s == 1.75
 
 
+def test_gateway_counts_each_call_per_method():
+    first = page({"ok": True, "messages": [], "has_more": True}, "cursor-2")
+    api = FakeWebApi({"conversations.replies": [first]}, errors={"files.info": "file_deleted"})
+    gateway, _ = make_gateway(api)
+
+    assert gateway.api_calls == {}
+    gateway.auth_test()
+    gateway.auth_test()
+    gateway.replies(CHANNEL, THREAD_TS)
+    with pytest.raises(FileDeleted):
+        gateway.file_info("F1")
+
+    assert gateway.api_calls == {"auth.test": 1, "conversations.replies": 2, "files.info": 1}
+
+
 def test_gateway_pages_directories_and_unwraps_objects():
     users = spike("users.list")["members"]
     api = FakeWebApi(

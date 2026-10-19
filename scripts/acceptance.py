@@ -181,11 +181,8 @@ def check_reply_under_older_parent(root: Path, tag: str) -> tuple[Criterion, str
         [line["meta"].get("ts") for line in lines] == [reply["ts"]],
         f"the new line has the reply's ts {reply['ts']}",
     )
-    if lines:
-        criterion.notes.append(
-            "inferred, not measured: search is the only path that reads the parent's thread, "
-            "since the parent had no stored replies and history above newest_ts holds no replies"
-        )
+    searched = last_run(root)["counts"].get("threads_read", {}).get("search", 0)
+    criterion.check(searched >= 1, f"threads_read.search={searched} in the last pull's run line")
     return criterion, channel
 
 

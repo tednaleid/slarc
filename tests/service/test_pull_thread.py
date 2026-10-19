@@ -398,6 +398,36 @@ def test_connects_once_per_workspace(h: Harness):
     assert {item.kind for item in h.tracked()} == {"thread", "message"}
 
 
+def test_run_line_sums_api_calls_across_workspaces(h: Harness):
+    h.connector.gateways = {OTHER: other_gateway(), NALEID: h.gateway}
+
+    h.pull(OTHER_LINK, THREAD_LINK)
+
+    api_calls = h.last_run().counts["api_calls"]
+    assert isinstance(api_calls, dict)
+    assert (api_calls["auth.test"], api_calls["users.list"]) == (2, 2)
+    assert (api_calls["conversations.history"], api_calls["conversations.replies"]) == (1, 1)
+
+
+def test_run_line_counts_thread_link_reads(h: Harness):
+    h.pull(THREAD_LINK)
+    assert h.last_run().counts["threads_read"] == {"link": 1}
+
+    h.pull()
+
+    assert h.last_run().counts["threads_read"] == {"link": 1}
+
+
+def test_thread_read_for_two_reasons_counts_once_under_the_first(h: Harness):
+    h.pull(THREAD_LINK, BASE)
+
+    counts = h.last_run().counts
+    assert counts["threads_read"] == {"link": 1}
+    api_calls = counts["api_calls"]
+    assert isinstance(api_calls, dict)
+    assert api_calls["conversations.replies"] == 2
+
+
 def test_non_link_selector_needs_a_single_workspace(h: Harness):
     with pytest.raises(SlarcError, match="link"):
         h.pull("#all-naleid")
