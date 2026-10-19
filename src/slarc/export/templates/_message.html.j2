@@ -2,7 +2,7 @@
 {# ABOUTME: reactions and its thread. System messages are muted and have no avatar. #}
 <article class="message{% if m.system %} system{% endif %}{% if m.deleted %} deleted{% endif %}" id="{{ m.anchor }}" data-ts="{{ m.ts }}">
 {% if not m.system %}
-<div class="avatar">{% if m.avatar %}<img src="{{ m.avatar }}" alt="">{% endif %}</div>
+<div class="avatar">{% if m.avatar %}{{ m.avatar.html("avatar-img", m.author) }}{% endif %}</div>
 {% endif %}
 <div class="content">
 <div class="meta">

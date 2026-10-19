@@ -1,11 +1,9 @@
 {# ABOUTME: One link preview or app attachment, a: color bar, service icon and name, title, #}
-{# ABOUTME: text, and an image or thumbnail from the archive's copy. #}
+{# ABOUTME: text, and an image or a thumbnail beside the text, from the archive's copies. #}
 <div class="attachment"{% if a.color %} style="border-left-color: {{ a.color }}"{% endif %}>
-{% if a.thumb %}
-<img class="thumb" src="{{ a.thumb }}" alt="">
-{% endif %}
+<div class="attachment-body">
 {% if a.icon or a.service %}
-<div class="service">{% if a.icon %}<img class="service-icon" src="{{ a.icon }}" alt="">{% endif %}{{ a.service }}</div>
+<div class="service">{% if a.icon %}{{ a.icon.html("service-icon", a.service) }}{% endif %}{{ a.service }}</div>
 {% endif %}
 {% if a.title %}
 <div class="title">{% if a.link %}<a href="{{ a.link }}">{{ a.title }}</a>{% else %}{{ a.title }}{% endif %}</div>
@@ -18,5 +16,9 @@
 {% endif %}
 {% if a.image %}
 <img class="attachment-image" src="{{ a.image }}" alt="">
+{% endif %}
+</div>
+{% if a.thumb %}
+<img class="thumb" src="{{ a.thumb }}" alt="">
 {% endif %}
 </div>

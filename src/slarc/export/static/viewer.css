@@ -97,7 +97,16 @@ section.conversation > header h1 {
   flex: 0 0 36px;
 }
 
-.avatar img {
+.avatar-img,
+.participant-img,
+.service-icon {
+  display: inline-block;
+  background-position: center;
+  background-size: cover;
+  vertical-align: middle;
+}
+
+.avatar-img {
   width: 36px;
   height: 36px;
   border-radius: 4px;
@@ -140,6 +149,26 @@ section.conversation > header h1 {
 .body ul,
 .body ol {
   margin: 0 0 4px;
+}
+
+.body ol li > ol {
+  list-style-type: lower-alpha;
+}
+
+.body ol li > ol li > ol {
+  list-style-type: lower-roman;
+}
+
+.body ol li > ol li > ol li > ol {
+  list-style-type: decimal;
+}
+
+.body ol li > ol li > ol li > ol li > ol {
+  list-style-type: lower-alpha;
+}
+
+.body ol li > ol li > ol li > ol li > ol li > ol {
+  list-style-type: lower-roman;
 }
 
 .body blockquote {
@@ -249,8 +278,9 @@ figure.image figcaption {
   font-size: 12px;
 }
 
-.system,
-.system-group summary {
+.message.system > .content > .meta,
+.message.system > .content > .body,
+.system-group > summary {
   color: var(--muted);
   font-size: 13px;
 }
@@ -263,7 +293,7 @@ figure.image figcaption {
   cursor: pointer;
 }
 
-.deleted .body {
+.message.deleted > .content > .body {
   opacity: 0.6;
 }
 
@@ -274,10 +304,18 @@ figure.image figcaption {
 }
 
 .attachment {
-  overflow: hidden;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  width: fit-content;
+  max-width: min(100%, 600px);
   margin: 4px 0;
   padding: 4px 12px;
   border-left: 4px solid var(--line);
+}
+
+.attachment-body {
+  min-width: 0;
 }
 
 .attachment .service {
@@ -298,10 +336,9 @@ figure.image figcaption {
 }
 
 .attachment .thumb {
-  float: right;
+  flex: 0 0 75px;
   width: 75px;
   height: 75px;
-  margin-left: 12px;
   border-radius: 4px;
   object-fit: cover;
 }
@@ -371,7 +408,7 @@ figure.image figcaption {
   font-size: 13px;
 }
 
-.participants img {
+.participant-img {
   width: 20px;
   height: 20px;
   border-radius: 3px;

@@ -54,10 +54,14 @@ CONTENT_TYPE_EXTENSIONS = {
 EXTENSION_CONTENT_TYPES = {
     ext: content_type for content_type, ext in CONTENT_TYPE_EXTENSIONS.items()
 }
+# Image suffixes an image URL may give its asset; anything else without a known type is bin.
+IMAGE_EXTENSIONS = frozenset({"png", "gif", "jpg", "jpeg", "webp", "bmp", "ico", "avif"})
 # Extensions a browser would run as a page or script when an asset is opened from the export.
 ACTIVE_EXTENSIONS = frozenset({"htm", "html", "xhtml", "js", "mjs", "svg"})
 EXTENSION = re.compile(r"[a-z0-9]{1,8}")
 COLOR = re.compile(r"#?([0-9a-fA-F]{6})")
+NAMED_COLORS = {"good": "#2eb886", "warning": "#daa038", "danger": "#a30200"}
+MEDIA_TYPE = re.compile(r"[a-z]+/[a-z0-9.+-]+")
 UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 ICON_KEYS = ("image_72", "image_48", "image_36")
 # System messages whose text leaves out who acted, so the author is shown before it.
@@ -78,8 +82,26 @@ class Moment:
 
 
 @dataclass(frozen=True)
-class Avatar:
+class Picture:
+    """A chrome image that repeats, such as an avatar: an src, or in a single-file export a
+    blob-<sha256> class whose one CSS rule holds the image's data: URI."""
+
     src: str | None
+    blob_class: str | None
+
+    def html(self, css_class: str, label: str) -> Markup:
+        if self.blob_class is not None:
+            return Markup(
+                '<span class="{} {}" role="img" aria-label="{}" title="{}"></span>'
+            ).format(css_class, self.blob_class, label, label)
+        return Markup('<img class="{}" src="{}" alt="{}" title="{}">').format(
+            css_class, self.src, label, label
+        )
+
+
+@dataclass(frozen=True)
+class Avatar:
+    picture: Picture | None
     name: str
 
 
@@ -93,7 +115,7 @@ class Reaction:
 @dataclass(frozen=True)
 class Attachment:
     color: str | None
-    icon: str | None
+    icon: Picture | None
     service: str
     title: str
     link: str | None
@@ -142,7 +164,7 @@ class MessageView:
     anchor: str
     ts: str
     author: str
-    avatar: str | None
+    avatar: Picture | None
     app: str | None
     time: Moment
     author_time: str
@@ -171,6 +193,7 @@ class Entry:
 class Page:
     filename: str
     name: str
+    thread_ts: str | None
     title: str
     count: int
     entries: list[Entry]
@@ -199,19 +222,26 @@ def export(
     zone = _zone(tz)
     domains = {domain: team for team, domain in workspace_domains(index).items()}
     used: dict[str, str] = {}
+    styles: dict[str, str] = {}
     workspaces: dict[str, _Workspace] = {}
     pages: dict[str, Page] = {}
-    first_name = ""
     for selector in selectors:
         team = _team(selector, domains, archive)
         if team not in workspaces:
-            workspaces[team] = _Workspace.load(team, archive, blobs, single_file, used, zone)
+            workspaces[team] = _Workspace.load(
+                team, archive, blobs, single_file, used, styles, zone
+            )
         workspace = workspaces[team]
         page = _page(selector, workspace, index, include_deleted)
         pages.setdefault(page.filename, page)
-        first_name = first_name or page.name
-    default = "slarc-export-" + (UNSAFE_FILENAME.sub("-", first_name).strip("-.") or "export")
+    first = next(iter(pages.values()))
+    stem = first.name + (f"-{first.thread_ts}" if first.thread_ts else "")
+    default = "slarc-export-" + (UNSAFE_FILENAME.sub("-", stem).strip("-.") or "export")
     css = _static("viewer.css") + HtmlFormatter().get_style_defs(".highlight")
+    if single_file:
+        css += "".join(
+            f'\n.blob-{blob}{{background-image:url("{uri}")}}' for blob, uri in styles.items()
+        )
     js = _static("viewer.js")
     common = {"tz": tz, "inline": single_file, "css": Markup(css), "js": Markup(js)}
     conversation = _templates().get_template("conversation.html.j2")
@@ -292,18 +322,19 @@ def _page(
     label = workspace.view.conversation_label(channel)
     if isinstance(selector, ConversationSel):
         rows = index.messages(team, channel, None, None, include_deleted)
-        filename, title, thread_page = f"{channel}.html", label, False
+        filename, title, thread_ts = f"{channel}.html", label, None
     else:
         thread_ts = selector.thread_ts or _thread_of(index, team, channel, selector.ts)
         rows = index.thread(team, channel, thread_ts, include_deleted)
-        filename, title, thread_page = f"{channel}-{thread_ts}.html", f"Thread in {label}", True
+        filename, title = f"{channel}-{thread_ts}.html", f"Thread in {label}"
     rows = [row for row in rows if row["object"] is not None]
     if not rows:
         raise SlarcError(f"The archive holds no messages for {title}. Pull it first.")
-    messages = _top_level(rows, channel, workspace, thread_page)
+    messages = _top_level(rows, channel, workspace, thread_ts is not None)
     return Page(
         filename=filename,
         name=workspace.view.conversation_name(channel),
+        thread_ts=thread_ts,
         title=title,
         count=len(rows),
         entries=_entries(messages),
@@ -367,12 +398,14 @@ def _entries(messages: list[MessageView]) -> list[Entry]:
 @dataclass
 class _Assets:
     """AssetResolver over one workspace's directory lines. A src is a copied blob's path under
-    assets/, recorded in used, or a data: URI when the export is one file."""
+    assets/, recorded in used, or a data: URI when the export is one file. A picture in a
+    single-file export is a class whose data: URI is recorded once in styles."""
 
     view: DirectoryView
     blobs: BlobStore
     inline: bool
     used: dict[str, str]
+    styles: dict[str, str]
     images: dict[str, DirectoryState]
     image_types: dict[str, str]
     emoji: dict[str, DirectoryState]
@@ -383,17 +416,23 @@ class _Assets:
     def emoji_src(self, name: str) -> str | None:
         url = self.view.emoji.get(name) or ""
         content_type = self.image_types.get(url)
-        extension = CONTENT_TYPE_EXTENSIONS.get(content_type or "") or _extension(
-            urlparse(url).path, None
-        )
-        return self._src(self.emoji.get(name), extension, content_type)
+        return self._src(self.emoji.get(name), _image_extension(url, content_type), content_type)
 
     def image_src(self, url: str) -> str | None:
         content_type = self.image_types.get(url)
-        extension = CONTENT_TYPE_EXTENSIONS.get(content_type or "") or _extension(
-            urlparse(url).path, None
-        )
-        return self._src(self.images.get(url), extension, content_type)
+        return self._src(self.images.get(url), _image_extension(url, content_type), content_type)
+
+    def picture(self, url: str) -> Picture | None:
+        if not self.inline:
+            src = self.image_src(url)
+            return Picture(src, None) if src else None
+        state = self.images.get(url)
+        blob = state.blob if state else None
+        if not blob or not self.blobs.exists(blob):
+            return None
+        content_type = self.image_types.get(url)
+        self.styles[blob] = self._data_uri(blob, _image_extension(url, content_type), content_type)
+        return Picture(None, f"blob-{blob}")
 
     def file_src(self, file_id: str) -> str | None:
         obj = self.file_objects.get(file_id) or {}
@@ -412,16 +451,18 @@ class _Assets:
         if not blob or not self.blobs.exists(blob):
             return None
         if self.inline:
-            if blob not in self.data_uris:
-                media = content_type or EXTENSION_CONTENT_TYPES.get(extension)
-                encoded = base64.b64encode(self.blobs.read(blob)).decode()
-                self.data_uris[blob] = (
-                    f"data:{media or 'application/octet-stream'};base64,{encoded}"
-                )
-            return self.data_uris[blob]
+            return self._data_uri(blob, extension, content_type)
         name = f"{blob}.{extension}"
         self.used[name] = blob
         return f"assets/{name}"
+
+    def _data_uri(self, blob: str, extension: str, content_type: str | None) -> str:
+        if blob not in self.data_uris:
+            media = content_type if MEDIA_TYPE.fullmatch(content_type or "") else None
+            media = media or EXTENSION_CONTENT_TYPES.get(extension) or "application/octet-stream"
+            encoded = base64.b64encode(self.blobs.read(blob)).decode()
+            self.data_uris[blob] = f"data:{media};base64,{encoded}"
+        return self.data_uris[blob]
 
 
 @dataclass
@@ -444,6 +485,7 @@ class _Workspace:
         blobs: BlobStore,
         inline: bool,
         used: dict[str, str],
+        styles: dict[str, str],
         zone: tzinfo,
     ) -> _Workspace:
         emoji = archive.directory_objects(team, "emoji")
@@ -460,6 +502,7 @@ class _Workspace:
             blobs=blobs,
             inline=inline,
             used=used,
+            styles=styles,
             images=archive.directory_state(team, "image"),
             image_types={url: _text(obj.get("content_type")) for url, obj in image_objects.items()},
             emoji=archive.directory_state(team, "emoji"),
@@ -469,8 +512,11 @@ class _Workspace:
         return cls(team, archive, blobs, view, assets, archive.downloads(), zone)
 
     def thread(self, rows: list[dict], channel: str, thread_page: bool) -> Thread:
+        # On a conversation page a broadcast reply's anchor belongs to its copy in the flow.
         replies = [
-            self.message(row, channel, None, "to_channel" if row["is_broadcast"] else None)
+            self.message(row, channel, None, "to_channel", "" if thread_page else "-thread")
+            if row["is_broadcast"]
+            else self.message(row, channel, None, None)
             for row in rows
         ]
         authors = list(dict.fromkeys(row["user_id"] for row in rows if row["user_id"]))
@@ -485,6 +531,7 @@ class _Workspace:
         channel: str,
         thread: Thread | None,
         broadcast: Literal["to_channel", "from_thread"] | None,
+        anchor_suffix: str = "",
     ) -> MessageView:
         message = row["object"]
         system = row["author_kind"] == "system"
@@ -493,10 +540,10 @@ class _Workspace:
         parent = row["thread_ts"]
         named = not system or message.get("subtype") in ACTOR_SUBTYPES
         return MessageView(
-            anchor=f"{channel}-{row['ts']}",
+            anchor=f"{channel}-{row['ts']}{anchor_suffix}",
             ts=row["ts"],
             author=self.view.author_display(message) if named else "",
-            avatar=self.author_avatar(message),
+            avatar=None if system else self.author_avatar(message),
             app=self.app_name(message),
             time=self.moment(_seconds(row["ts"])),
             author_time=self.author_time(message, _seconds(row["ts"])) if named else "",
@@ -536,11 +583,12 @@ class _Workspace:
             return ""
         return f"{_clock(local)} {local.tzname()} for the author"
 
-    def avatar_of(self, user_id: str) -> str | None:
+    def avatar_of(self, user_id: str) -> Picture | None:
         url = directory_image_url("user", self.view.users.get(user_id) or {})
-        return self.assets.image_src(url) if url else None
+        return self.assets.picture(url) if url else None
 
-    def author_avatar(self, message: dict) -> str | None:
+    def author_avatar(self, message: dict) -> Picture | None:
+        """The user's avatar, else the first bot icon the archive holds a copy of."""
         user_id = _text(message.get("user"))
         if user_id in self.view.users:
             return self.avatar_of(user_id)
@@ -550,10 +598,13 @@ class _Workspace:
             (message.get("bot_profile") or {}).get("icons"),
             bot.get("icons"),
         ):
-            if isinstance(icons, dict):
-                url = next((icons[key] for key in ICON_KEYS if is_web_url(icons.get(key))), None)
-                if url:
-                    return self.assets.image_src(url)
+            if not isinstance(icons, dict):
+                continue
+            for key in ICON_KEYS:
+                url = icons.get(key)
+                picture = self.assets.picture(url) if is_web_url(url) else None
+                if picture is not None:
+                    return picture
         return None
 
     def app_name(self, message: dict) -> str | None:
@@ -589,15 +640,17 @@ class _Workspace:
     def attachments(self, message: dict) -> list[Attachment]:
         shown = []
         for attachment in _dicts(message.get("attachments")):
-            color = COLOR.fullmatch(_text(attachment.get("color")))
+            color_text = _text(attachment.get("color"))
+            color = COLOR.fullmatch(color_text)
             text = _text(attachment.get("text"))
             image = self.local_image(attachment.get("image_url"))
             title = _text(attachment.get("title"))
             link = attachment.get("title_link")
+            icon = attachment.get("service_icon")
             shown.append(
                 Attachment(
-                    color=f"#{color.group(1)}" if color else None,
-                    icon=self.local_image(attachment.get("service_icon")),
+                    color=f"#{color.group(1)}" if color else NAMED_COLORS.get(color_text),
+                    icon=self.assets.picture(icon) if is_web_url(icon) else None,
                     service=_text(attachment.get("service_name"))
                     or _text(attachment.get("author_name")),
                     title=title,
@@ -676,6 +729,16 @@ def _extension(name: str | None, content_type: str | None) -> str:
     else:
         extension = CONTENT_TYPE_EXTENSIONS.get(content_type or "", "bin")
     return "txt" if extension in ACTIVE_EXTENSIONS else extension
+
+
+def _image_extension(url: str, content_type: str | None) -> str:
+    """The asset extension for an image: from its content type, else an image suffix of its
+    URL, else bin."""
+    known = CONTENT_TYPE_EXTENSIONS.get(content_type or "")
+    if known:
+        return known
+    suffix = PurePosixPath(urlparse(url).path).suffix.removeprefix(".").lower()
+    return suffix if suffix in IMAGE_EXTENSIONS else "bin"
 
 
 def _clock(moment: datetime) -> str:

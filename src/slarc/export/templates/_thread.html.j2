@@ -4,8 +4,8 @@
 <summary>
 <span class="participants">
 {% for p in thread.participants %}
-{% if p.src %}
-<img src="{{ p.src }}" alt="{{ p.name }}" title="{{ p.name }}">
+{% if p.picture %}
+{{ p.picture.html("participant-img", p.name) }}
 {% else %}
 <span class="participant">{{ p.name }}</span>
 {% endif %}
