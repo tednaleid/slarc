@@ -131,11 +131,11 @@ def test_gateway_pages_history_through_limiter():
     assert api.calls == [
         (
             "conversations.history",
-            {"channel": CHANNEL, "limit": 200, "oldest": "1792410000.000000"},
+            {"channel": CHANNEL, "limit": 999, "oldest": "1792410000.000000"},
         ),
         (
             "conversations.history",
-            {"channel": CHANNEL, "limit": 200, "oldest": "1792410000.000000", "cursor": "cursor-2"},
+            {"channel": CHANNEL, "limit": 999, "oldest": "1792410000.000000", "cursor": "cursor-2"},
         ),
     ]
     assert limiter.acquired == ["conversations.history", "conversations.history"]
@@ -150,8 +150,8 @@ def test_gateway_pages_replies_through_limiter():
 
     assert gateway.replies(CHANNEL, THREAD_TS) == messages
     assert [params for _, params in api.calls] == [
-        {"channel": CHANNEL, "ts": THREAD_TS, "limit": 200},
-        {"channel": CHANNEL, "ts": THREAD_TS, "limit": 200, "cursor": "cursor-2"},
+        {"channel": CHANNEL, "ts": THREAD_TS, "limit": 999},
+        {"channel": CHANNEL, "ts": THREAD_TS, "limit": 999, "cursor": "cursor-2"},
     ]
     assert limiter.acquired == ["conversations.replies", "conversations.replies"]
 
@@ -209,6 +209,10 @@ def test_gateway_pages_directories_and_unwraps_objects():
     gateway, _ = make_gateway(api)
 
     assert list(gateway.users()) == users
+    assert [params for method, params in api.calls if method == "users.list"] == [
+        {"limit": 1000},
+        {"limit": 1000, "cursor": "cursor-2"},
+    ]
     assert gateway.conversation_info(CHANNEL) == spike("conversations.info")["channel"]
     assert gateway.emoji() == spike("emoji.list")["emoji"]
     assert gateway.bot_info("B0CA9EBAH1C") == spike("bots.info.B0CA9EBAH1C")["bot"]

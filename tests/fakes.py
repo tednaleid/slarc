@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from slarc import archive_state
+from slarc.adapters.slack_gateway import MESSAGE_PAGE_LIMIT
 from slarc.archive_state import LatestMessages
 from slarc.domain.envelope import Envelope, Kind
 from slarc.domain.links import MessageTs
@@ -139,7 +140,7 @@ class FakeSlackGateway:
         search_results: dict[str, list[dict]] | None = None,
         auth: dict | None = None,
         auth_error: SlarcError | None = None,
-        page_size: int = 200,
+        page_size: int = MESSAGE_PAGE_LIMIT,
     ) -> None:
         self.conversations = conversations or {}
         self.infos = infos or {}

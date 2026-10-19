@@ -27,6 +27,9 @@ from slarc.ports import (
 READ_METHODS = frozenset(METHOD_TIERS)
 USER_AGENT = f"slarc/{__version__}"
 PAGE_LIMIT = 200
+# Slack's largest page for history and replies; users.list accepted 1000 in a live check.
+MESSAGE_PAGE_LIMIT = 999
+USER_PAGE_LIMIT = 1000
 SEARCH_COUNT = 100
 CONVERSATION_TYPES = "public_channel,private_channel,mpim,im"
 RATE_LIMIT_RETRIES = 3
@@ -101,7 +104,7 @@ class SessionTokenGateway:
             yield from response["channels"]
 
     def history(self, channel: str, oldest: str | None, latest: str | None) -> Iterator[list[dict]]:
-        params: dict[str, Any] = {"channel": channel, "limit": PAGE_LIMIT}
+        params: dict[str, Any] = {"channel": channel, "limit": MESSAGE_PAGE_LIMIT}
         if oldest is not None:
             params["oldest"] = oldest
         if latest is not None:
@@ -110,7 +113,9 @@ class SessionTokenGateway:
             yield response["messages"]
 
     def replies(self, channel: str, ts: str) -> list[dict]:
-        pages = self._pages("conversations.replies", channel=channel, ts=ts, limit=PAGE_LIMIT)
+        pages = self._pages(
+            "conversations.replies", channel=channel, ts=ts, limit=MESSAGE_PAGE_LIMIT
+        )
         return [message for response in pages for message in response["messages"]]
 
     def search(self, query: str) -> Iterator[dict]:
@@ -126,7 +131,7 @@ class SessionTokenGateway:
             page += 1
 
     def users(self) -> Iterator[dict]:
-        for response in self._pages("users.list", limit=PAGE_LIMIT):
+        for response in self._pages("users.list", limit=USER_PAGE_LIMIT):
             yield from response["members"]
 
     def usergroups(self) -> list[dict]:

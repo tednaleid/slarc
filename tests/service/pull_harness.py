@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from slarc import __version__
+from slarc.adapters.slack_gateway import MESSAGE_PAGE_LIMIT
 from slarc.domain.envelope import Envelope, Kind
 from slarc.domain.links import parse_selector
 from slarc.domain.tracking import RunRecord, TrackedItem, run_from_envelope
@@ -113,7 +114,7 @@ class Harness:
             {**m, **changes} if m["ts"] == ts else m for m in messages
         ]
 
-    def serve(self, stamps: list[str], page_size: int = 200) -> None:
+    def serve(self, stamps: list[str], page_size: int = MESSAGE_PAGE_LIMIT) -> None:
         self.gateway.conversations[CHANNEL] = [message(ts) for ts in stamps]
         self.gateway.page_size = page_size
 
