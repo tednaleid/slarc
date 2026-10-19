@@ -22,7 +22,7 @@ Python 3.14 with uv, `slack_sdk`, Typer and DuckDB. Hexagonal architecture in th
 
 - Writing anything to Slack. slarc never calls a method that changes anything. Posting to the test workspace happens only in a separate developer script (see Tests).
 - Real-time capture through the Events API or Socket Mode.
-- Canvases, huddles, lists, bookmarks, channel sections and sidebar groups (they render as placeholders where they appear in messages).
+- Lists, channel sections and sidebar groups. Canvases, huddles, pins and bookmarks are Someday items in `docs/plans/backlog.md`; until then canvases and huddles render as placeholders where they appear in messages.
 - Apps beyond being the author of messages or the other party in a DM.
 - Recovering pre-edit message text; Slack never exposes it.
 - Knowing about git. slarc writes files that suit git and never runs git or writes git files (ADR 0001).
@@ -341,15 +341,13 @@ One set of Jinja2 partials drives every output: `export` (static files plus a sm
 
 ## Architecture
 
-Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cases, ports as abstract classes, and adapters that implement them. Nothing in the domain or service layer imports `slack_sdk`, `duckdb`, `httpx`, `keyring` or touches the filesystem or environment.
+Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cases, ports as `typing.Protocol` classes in `src/slarc/ports.py`, and adapters that implement them. Nothing in the domain or service layer imports `slack_sdk`, `duckdb`, `httpx`, `keyring` or touches the filesystem or environment, except reading packaged data through `importlib.resources`. `docs/architecture.md` describes the code in detail, with the full ports table; ADR 0003 records the decision.
 
-- **Domain**: dataclasses and value objects (`MessageTs` with string ordering and permalink conversion, `SlackLink`, `ContentHash`, `EmojiRef(team_id, name)`), the hashed-subset functions, and pure renderers: rich_text and layout blocks to HTML, mrkdwn to HTML, and `meta.plain`.
-- **Ports**: `SlackGateway` (auth_test, list_conversations, conversation_info, history, replies, search, users, bots, emoji, usergroups, file_info); `Downloader` (fetch many URLs with a parallelism limit, streaming each into the blob store); `CredentialSource` (credentials for a workspace domain or team id); `ArchiveStore` (append envelopes, last hash per key for a conversation or directory kind, iterate lines, latest tracked and download state, append a run); `BlobStore` (put, open, exists by sha256); `QueryIndex` (what `search`, `list`, `sql`, `export` read); `Clock`.
-- **Unit of work**: scopes one run. Appends are flushed after each page of results so an interrupted pull keeps what it read; the run line is appended when the run ends, including on an exception or Ctrl-C. A run killed outright loses only its run line, and the next pull re-reads without duplicating lines because hashes match. No message bus or domain events: the service layer collects download jobs during the pull and hands them to the `Downloader` at the end.
-- **Adapters**: `SessionTokenGateway` (`slack_sdk.WebClient` with the token, cookie header, retry handlers and per-method token bucket); `HttpDownloader`; `DesktopSessionSource`, `KeyringSource` and `EnvSource` composed in priority order; `JsonlArchiveStore`; `FsBlobStore`; `DuckDbQueryIndex`; `SystemClock`. Test doubles: `FakeSlackGateway`, `FakeDownloader`, `FakeCredentialSource`, `InMemoryArchiveStore`, `InMemoryBlobStore`, `FakeClock`, composed by `InMemoryUnitOfWork`.
-- **Service layer**: one function per CLI verb, taking the unit of work and gateways as arguments.
-- **Config**: a `Settings` value object built by the layered loader and passed into the bootstrap.
-- **Entrypoints**: the Typer CLI and the static exporter (later the Starlette app), each composing real adapters in a small bootstrap module.
+- **Domain**: value types (`MessageTs` with numeric ordering and permalink conversion, `ConversationSel` and `MessageSel` selectors, envelopes, tracked items and run records), the hashed-subset functions, and pure renderers: rich_text and layout blocks to HTML, mrkdwn to HTML, and `meta.plain`.
+- **Ports**: `SlackGateway` and `SlackConnector` (a gateway per workspace session), `CredentialSource`, `ArchiveStore`, `BlobStore`, `Downloader`, `ExportWriter` (writes export files), `QueryIndex` (what `search`, `list`, `sql` and `export` read), `Clock`, and `Reporter` (progress and warnings). Every port except `QueryIndex` has an in-memory fake in `tests/fakes.py`; `QueryIndex` is tested through DuckDB over a temp archive.
+- **Unit of work**: one `UnitOfWork` class scopes one pull run over the archive store, blob store and clock; tests give it the in-memory stores. Appends are flushed after each page of results so an interrupted pull keeps what it read; the run line is appended when the run ends, including on an exception or Ctrl-C. A run killed outright loses only its run line, and the next pull re-reads without duplicating lines because hashes match. No message bus or domain events: the service layer collects download jobs during the pull and hands them to the `Downloader` at the end.
+- **Service layer**: one module per use case, taking its ports as arguments.
+- **Composition**: `bootstrap.py` is the only place real adapters are built; the Typer CLI takes them from it, and tests swap in fakes with `override()`. A `Settings` value from the layered loader in `config.py` configures each command.
 
 ## Tests and fixtures
 
