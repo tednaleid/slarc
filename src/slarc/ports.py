@@ -3,7 +3,7 @@
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol
 
 from slarc.domain.envelope import Envelope, Kind
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
@@ -125,6 +125,30 @@ class StoredMessage:
 class DirectoryState:
     hash: str
     blob: str | None
+
+
+@dataclass(frozen=True)
+class DownloadJob:
+    team_id: str
+    target_kind: Literal["file", "image"]
+    target: str
+    url: str
+    max_bytes: int
+    slack_auth: bool
+
+
+@dataclass(frozen=True)
+class DownloadResult:
+    job: DownloadJob
+    status: Literal["ok", "failed", "forbidden", "too_large", "deleted"]
+    sha256: str | None
+    size: int | None
+    content_type: str | None
+    error: str | None
+
+
+class Downloader(Protocol):
+    def fetch(self, jobs: list[DownloadJob], parallelism: int) -> Iterator[DownloadResult]: ...
 
 
 class BlobStore(Protocol):

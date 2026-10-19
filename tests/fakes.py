@@ -12,6 +12,8 @@ from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem, run_env
 from slarc.ports import (
     CredentialReadError,
     DirectoryState,
+    DownloadJob,
+    DownloadResult,
     FileDeleted,
     NoSession,
     NotVisible,
@@ -231,6 +233,17 @@ class FakeConnector:
                 gateway.auth_test()
                 return gateway
         raise NoSession(workspace)
+
+
+class FakeDownloader:
+    """Records the jobs it is handed and downloads nothing."""
+
+    def __init__(self) -> None:
+        self.jobs: list[DownloadJob] = []
+
+    def fetch(self, jobs: list[DownloadJob], parallelism: int) -> Iterator[DownloadResult]:
+        self.jobs.extend(jobs)
+        return iter(())
 
 
 class FakeCredentialSource:
