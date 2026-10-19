@@ -103,7 +103,8 @@ slarc authenticates as the user with the two credentials the Slack client uses: 
 
 **Token lifecycle**
 
-- Every command that talks to Slack starts with `auth.test` for each workspace it will touch. On `invalid_auth` or `not_authed` the CLI names the source that failed and how to refresh it (sign into the desktop app again, or re-paste), then exits non-zero.
+- Every command that talks to Slack starts with `auth.test` for each workspace it will touch. On `invalid_auth`, `not_authed`, `token_revoked`, `token_expired` or `account_inactive` the CLI names the source that failed and how to refresh it (sign into the desktop app again, or re-paste), then exits non-zero.
+- A workspace with no session, or whose credentials Slack rejects, is skipped with a warning while the other workspaces are pulled; the run line's `errors` names it. The pull then exits non-zero if no workspace was pulled or any credentials were rejected.
 - The archive records only `team_id`, the user id from `auth.test`, the credential source and the time of the last successful `auth.test`, in the run line.
 - Signing out of the desktop app invalidates the pair; slarc never does that itself.
 
@@ -194,7 +195,6 @@ Items marked (spike) were confirmed against the test workspace; the rest come fr
 
 - A message is recorded as deleted only when (a) Slack returns it as `subtype: tombstone` (which is a new version, not a delete), or (b) it is missing from a range slarc fully re-read in this run (a whole thread or a `--full` range) and that range lies entirely inside what Slack still serves: if the oldest message Slack returned is newer than the range's start, only the part from that message onward counts.
 - A conversation or thread the current session cannot see (`channel_not_found`, `not_in_channel`, `thread_not_found`) is skipped with a warning and never produces deletes. This is what makes a colleague's pull in a clone of the archive safe.
-- A workspace with no session, or whose credentials Slack rejects, is skipped with a warning while the other workspaces are pulled; the run line's `errors` names it. The pull then exits non-zero if no workspace was pulled or any credentials were rejected.
 
 **Downloads**
 
@@ -321,7 +321,7 @@ Notes
 
 ## Rendering
 
-One set of Jinja2 partials drives every output: `export` (static files plus a small JS viewer), Phase 2 `serve` (Starlette plus HTMX), and Phase 3 PDF (Playwright print-to-PDF over the static HTML).
+One set of Jinja2 partials drives every output: `export` (static files plus a small JS viewer), Phase 2 `serve` (Starlette plus HTMX), and a later PDF export (Playwright print-to-PDF over the static HTML; see `docs/plans/backlog.md`).
 
 | Element | Requirement |
 | --- | --- |
@@ -377,8 +377,9 @@ Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cas
 
 1. **Phase 0, spike.** Done; see `phase0-spike-findings.md`.
 2. **Phase 1, MVP.** Project skeleton and tooling; link parsing; settings and archive lookup; desktop session (macOS and Linux) with env and paste fallbacks; `auth`; the JSONL store, blob store and run lines; `pull` for conversations, threads and single messages with date ranges, the search-based reply discovery, active-thread re-reads, `--full`, delete inference, file and image downloads; users, emoji, usergroups and bots directory; `meta.plain`; DuckDB views; `list`, `search`, `sql`; a minimal static `export` covering threads, reactions, images, snippets, previews and giphy; the seed script and recorded fixtures. Ships when: pulling the same channel twice changes no file; a new reply in a dormant thread is found by a bare `pull` and lands as exactly one new line; an edit to an old message lands as exactly one new line under `--full`; and the export of the test channel matches the Slack client in substance.
-3. **Phase 2.** `serve` with HTMX; full-text search with filters; observed-version history in the viewer; `import` (likely `slarc pull <export.zip>`) from Slack export ZIPs and slackdump SQLite; Slack export ZIP output so slarchive and slack-export-viewer can read archives; generated JSON Schema and a `validate` check; a probe that warns if Slack starts limiting session tokens; Slack Connect `source_team` resolution; pins and bookmarks; obfuscated fixture recording from real workspaces.
-4. **Phase 3.** PDF export; an `xoxp` app-token adapter for workspaces where a sanctioned app is preferable; canvases and huddles; scheduled pulls. Only if measured: a persisted query cache in `$XDG_CACHE_HOME`, concurrent API calls.
+3. **Phase 2.** `serve` with HTMX; full-text search with filters; observed-version history in the viewer; `import` (likely `slarc pull <export.zip>`) from Slack export ZIPs and slackdump SQLite; Slack export ZIP output so slarchive and slack-export-viewer can read archives; generated JSON Schema and a `validate` check; a probe that warns if Slack starts limiting session tokens; Slack Connect `source_team` resolution; obfuscated fixture recording from real workspaces.
+
+Someday items and Phase 1 leftovers are in `docs/plans/backlog.md`.
 
 ## Prior art
 
