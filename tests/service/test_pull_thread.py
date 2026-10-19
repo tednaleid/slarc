@@ -288,6 +288,7 @@ def test_run_records_auth_per_workspace(h: Harness):
             "team_id": TEAM,
             "user_id": ME,
             "domain": "naleidworkspace",
+            "name": "naleid",
             "credential_source": "desktop",
             "auth_test_at": "2026-10-19T13:40:11Z",
         }

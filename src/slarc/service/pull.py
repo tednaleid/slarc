@@ -226,6 +226,7 @@ class _Workspaces:
                 "team_id": info["team_id"],
                 "user_id": info["user_id"],
                 "domain": domain,
+                "name": info.get("team", ""),
                 "credential_source": session.source if session is not None else "",
                 "auth_test_at": fetched_now(self._uow),
             }
