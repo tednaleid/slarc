@@ -87,6 +87,7 @@ section.conversation > header h1 {
   display: flex;
   gap: 8px;
   padding: 6px 0;
+  scroll-margin-top: 80px;
 }
 
 .message:target {
@@ -456,12 +457,31 @@ figure.image figcaption {
   margin-top: 4px;
 }
 
-.thread > summary {
+.thread-summary {
   display: flex;
   align-items: center;
   gap: 6px;
-  cursor: pointer;
+  width: fit-content;
   font-size: 13px;
+}
+
+a.thread-summary {
+  margin-top: 4px;
+  padding: 2px 8px 2px 2px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: inherit;
+  text-decoration: none;
+}
+
+a.thread-summary:hover,
+a.thread-summary:focus-visible {
+  border-color: var(--line);
+  background: var(--background);
+}
+
+a.thread-summary:hover .reply-count {
+  text-decoration: underline;
 }
 
 .participant-img {
@@ -479,4 +499,91 @@ figure.image figcaption {
   margin-top: 4px;
   padding-left: 12px;
   border-left: 2px solid var(--line);
+}
+
+/* A thread's panel stays hidden until the URL targets it or a message in it. It is fixed to
+   the right, so opening it does not scroll the conversation. */
+.thread-panel {
+  display: none;
+}
+
+.thread-panel:target,
+.thread-panel:has(:target) {
+  display: block;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  box-sizing: border-box;
+  width: 40%;
+  min-width: 360px;
+  padding: 0 16px 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--background);
+  border-left: 1px solid var(--line);
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.12);
+}
+
+.thread-panel-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 10px 0;
+  background: var(--background);
+  border-bottom: 1px solid var(--line);
+}
+
+.thread-panel-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.thread-close {
+  font-size: 13px;
+}
+
+@media screen {
+  .thread-panel .replies {
+    padding-left: 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+}
+
+@media (max-width: 700px) {
+  .thread-panel:target,
+  .thread-panel:has(:target) {
+    left: 0;
+    width: auto;
+    min-width: 0;
+    border-left: 0;
+    box-shadow: none;
+  }
+}
+
+/* Printed, each thread follows its parent with its replies indented, as nothing is targeted. */
+@media print {
+  a.thread-summary,
+  .thread-panel-header,
+  .thread-panel > .message {
+    display: none;
+  }
+
+  .thread-panel,
+  .thread-panel:target,
+  .thread-panel:has(:target) {
+    display: block;
+    position: static;
+    width: auto;
+    min-width: 0;
+    padding: 0 0 0 44px;
+    overflow: visible;
+    border: 0;
+    box-shadow: none;
+  }
 }

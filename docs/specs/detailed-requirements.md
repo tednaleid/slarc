@@ -332,7 +332,7 @@ One set of Jinja2 partials drives every output: `export` (static files plus a sm
 | Edits | "(edited)" marker with time |
 | Files | Images and thumbnails from blobs; snippets syntax-highlighted in full with filename; video and audio players; download links; placeholders for `tombstone` ("This file was deleted."), `hidden_by_limit`, `too_large` and external files |
 | Previews and app posts | Attachments: title, text, image or thumb, service icon and name, color bar. Giphy and other app posts through their layout blocks, with the app name from `bot_profile` |
-| Threads | Reply count and participant avatars under the parent, expandable inline; broadcast replies in both places |
+| Threads | Reply count, participant avatars and last reply time under the parent, linking to a side panel with the parent and its replies (CSS only, opened by `:target`, full screen on narrow screens, inline when printed); a thread or message link's page shows the replies inline; broadcast replies in both places |
 | System messages | Joins, leaves, topic and name changes shown muted and collapsible |
 | Deleted | Hidden in exports unless `--include-deleted`; shown with a marker in `serve` |
 | Time | Day dividers and timestamps in the viewer's time zone (computed in the browser for static export), or `--tz`; author's local time on hover |

@@ -21,7 +21,7 @@
 <div class="deleted-marker">Deleted from Slack, noticed <time datetime="{{ m.deleted.iso }}" data-format="full">{{ m.deleted.full }}</time></div>
 {% endif %}
 {% if m.broadcast == "from_thread" %}
-<div class="broadcast">Replied to a thread: <a href="#{{ m.parent_anchor }}">view the thread</a></div>
+<div class="broadcast">Replied to a thread: <a href="#{{ m.thread_anchor }}">view the thread</a></div>
 {% elif m.broadcast == "to_channel" %}
 <div class="broadcast">Also sent to the channel</div>
 {% endif %}

@@ -2,7 +2,7 @@
 # ABOUTME: Writes index.html, one page each and assets/<sha256>.<ext>, or one file with data URIs.
 import base64
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, tzinfo
 from functools import cache
 from importlib.resources import files
@@ -160,10 +160,15 @@ class FileView:
 
 @dataclass(frozen=True)
 class Thread:
+    """A thread's replies. On a thread page they show inline under the parent; on a conversation
+    page the parent links to a panel, anchor, holding a copy of the parent and the replies."""
+
+    anchor: str
+    parent: MessageView
     replies: list[MessageView]
     participants: list[Avatar]
     latest: Moment | None
-    open: bool
+    inline: bool
 
 
 @dataclass(frozen=True)
@@ -184,7 +189,7 @@ class MessageView:
     system: bool
     deleted: Moment | None
     broadcast: Literal["to_channel", "from_thread"] | None
-    parent_anchor: str | None
+    thread_anchor: str | None
 
 
 @dataclass(frozen=True)
@@ -374,15 +379,17 @@ def _top_level(
             flow.append(row)
     views = []
     for row in flow:
-        thread_rows = replies.get(row["ts"]) if row["thread_ts"] == row["ts"] else None
-        thread = None
-        if thread_rows:
-            thread = workspace.thread(thread_rows, channel, thread_page)
         in_flow_broadcast = row["is_broadcast"] and row["thread_ts"] in present
-        views.append(
-            workspace.message(row, channel, thread, "from_thread" if in_flow_broadcast else None)
-        )
+        view = workspace.message(row, channel, None, "from_thread" if in_flow_broadcast else None)
+        thread_rows = replies.get(row["ts"]) if row["thread_ts"] == row["ts"] else None
+        if thread_rows:
+            view = replace(view, thread=workspace.thread(thread_rows, view, channel, thread_page))
+        views.append(view)
     return views
+
+
+def _thread_anchor(channel: str, ts: str) -> str:
+    return f"thread-{channel}-{ts}"
 
 
 def _entries(messages: list[MessageView]) -> list[Entry]:
@@ -518,8 +525,11 @@ class _Workspace:
         )
         return cls(team, archive, blobs, view, assets, archive.downloads(), zone)
 
-    def thread(self, rows: list[dict], channel: str, thread_page: bool) -> Thread:
-        # On a conversation page a broadcast reply's anchor belongs to its copy in the flow.
+    def thread(
+        self, rows: list[dict], parent: MessageView, channel: str, thread_page: bool
+    ) -> Thread:
+        # On a conversation page a message's anchor belongs to its copy in the flow, so its
+        # copy in the thread panel takes the -thread suffix.
         replies = [
             self.message(row, channel, None, "to_channel", "" if thread_page else "-thread")
             if row["is_broadcast"]
@@ -530,7 +540,14 @@ class _Workspace:
         participants = [
             Avatar(self.avatar_of(user_id), self.view.user_display(user_id)) for user_id in authors
         ]
-        return Thread(replies, participants, replies[-1].time if replies else None, thread_page)
+        return Thread(
+            anchor=_thread_anchor(channel, parent.ts),
+            parent=replace(parent, anchor=f"{parent.anchor}-thread"),
+            replies=replies,
+            participants=participants,
+            latest=replies[-1].time if replies else None,
+            inline=thread_page,
+        )
 
     def message(
         self,
@@ -563,7 +580,7 @@ class _Workspace:
             system=system,
             deleted=self.moment(_parse_iso(deleted_at)) if deleted_at else None,
             broadcast=broadcast,
-            parent_anchor=f"{channel}-{parent}" if broadcast == "from_thread" else None,
+            thread_anchor=_thread_anchor(channel, parent) if broadcast == "from_thread" else None,
         )
 
     def moment(self, seconds: int) -> Moment:

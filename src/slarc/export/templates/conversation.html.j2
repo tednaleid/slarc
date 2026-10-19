@@ -35,6 +35,9 @@
 {% else %}
 {% for m in entry.messages %}
 {% include "_message.html.j2" %}
+{% if m.thread and not m.thread.inline %}
+{% include "_thread_panel.html.j2" %}
+{% endif %}
 {% endfor %}
 {% endif %}
 {% endfor %}

@@ -1,0 +1,16 @@
+{# ABOUTME: A thread's side panel after its parent m: a copy of the parent and every reply. #}
+{# ABOUTME: Hidden until it or a message in it is the URL's target; print shows it inline. #}
+<aside class="thread-panel" id="{{ m.thread.anchor }}" aria-label="Thread">
+<div class="thread-panel-header">
+<span class="thread-panel-title">Thread</span>
+<a class="thread-close" href="#{{ m.anchor }}">Close</a>
+</div>
+{% with thread = m.thread, m = m.thread.parent %}
+{% include "_message.html.j2" %}
+<div class="replies">
+{% for m in thread.replies %}
+{% include "_message.html.j2" %}
+{% endfor %}
+</div>
+{% endwith %}
+</aside>

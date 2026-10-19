@@ -43,6 +43,17 @@ SYNTHETIC = "1792500000.000100"
 LATER = "2026-10-20T00:00:00Z"
 LATER_RUN = "r_20261020T000000Z"
 EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+\.[\w.-]+")
+THREADS = {
+    ALL_NALEID: {
+        "1792427542.806979": ["1792427577.619569", "1792427679.271249", "1792427779.502989"],
+        "1792410693.663869": ["1792410743.787639", "1792411464.844209", "1792422623.464629"],
+    },
+    FIXTURES: {
+        "1792437051.761119": ["1792437052.019739"],
+        "1792437050.459469": ["1792437050.716469", BROADCAST],
+        "1792427960.377109": ["1792427974.789599"],
+    },
+}
 
 
 @pytest.fixture
@@ -121,6 +132,12 @@ def article(page: str, channel: str, ts: str) -> str:
     return page[start : following if following != -1 else len(page)]
 
 
+def panel(page: str, channel: str, ts: str) -> str:
+    """The HTML of one thread's panel."""
+    start = page.index(f'<aside class="thread-panel" id="thread-{channel}-{ts}"')
+    return page[start : page.index("</aside>", start)]
+
+
 def test_export_conversation_writes_index_and_page(archive, store, blobs) -> None:
     written, writer = run_export(archive, store, blobs, "#all-naleid")
     assert written == OUT
@@ -134,7 +151,7 @@ def test_export_conversation_writes_index_and_page(archive, store, blobs) -> Non
     assert 'class="day-divider"' in page
     assert '<time datetime="2026-10-19T' in page
     parent = article(page, ALL_NALEID, "1792427542.806979")
-    assert "<details" in parent
+    assert f'href="#thread-{ALL_NALEID}-1792427542.806979"' in parent
     assert "3 replies" in parent
     assert f'id="{ALL_NALEID}-1792427577.619569"' in page
     assert "reply from Jim" in page
@@ -154,6 +171,62 @@ def test_export_thread_link_writes_only_thread(archive, store, blobs) -> None:
     assert "Hello!" not in page
     assert "has joined the channel" not in page
     assert written == OUT
+
+
+@pytest.mark.parametrize("channel", [ALL_NALEID, FIXTURES])
+def test_thread_summary_links_to_its_panel(archive, store, blobs, channel) -> None:
+    _, writer = run_export(archive, store, blobs, "#all-naleid", "#slarc-fixtures")
+    page = writer.text(OUT / f"{channel}.html")
+    assert '<details class="thread"' not in page
+    assert page.count('<aside class="thread-panel"') == len(THREADS[channel])
+    for parent in THREADS[channel]:
+        flow = article(page, channel, parent)
+        assert f'<a class="thread-summary" href="#thread-{channel}-{parent}">' in flow
+        assert page.count(f'id="thread-{channel}-{parent}"') == 1
+
+
+@pytest.mark.parametrize("channel", [ALL_NALEID, FIXTURES])
+def test_thread_panel_holds_parent_and_each_reply_once(archive, store, blobs, channel) -> None:
+    _, writer = run_export(archive, store, blobs, "#all-naleid", "#slarc-fixtures")
+    page = writer.text(OUT / f"{channel}.html")
+    for parent, replies in THREADS[channel].items():
+        html = panel(page, channel, parent)
+        assert html.count('<article class="message') == 1 + len(replies)
+        assert html.count(f'data-ts="{parent}"') == 1
+        assert f'id="{channel}-{parent}-thread"' in html
+        assert f'class="thread-close" href="#{channel}-{parent}"' in html
+        for reply in replies:
+            assert html.count(f'data-ts="{reply}"') == 1
+            suffix = "-thread" if reply == BROADCAST else ""
+            assert f'id="{channel}-{reply}{suffix}"' in html
+    ids = re.findall(r' id="([^"]+)"', page)
+    assert len(ids) == len(set(ids))
+
+
+def test_broadcast_reply_links_to_its_thread_panel(archive, store, blobs) -> None:
+    _, writer = run_export(archive, store, blobs, "#slarc-fixtures")
+    page = writer.text(OUT / f"{FIXTURES}.html")
+    flow = article(page, FIXTURES, BROADCAST)
+    assert f'<a href="#thread-{FIXTURES}-1792437050.459469">view the thread</a>' in flow
+
+
+def test_thread_export_shows_replies_without_a_panel(archive, store, blobs) -> None:
+    _, writer = run_export(archive, store, blobs, THREAD_LINK)
+    page = writer.text(OUT / f"{ALL_NALEID}-1792427542.806979.html")
+    assert "thread-panel" not in page.split("<body", 1)[1]
+    assert "<details" not in page
+    assert '<a class="thread-summary"' not in page
+    for reply in THREADS[ALL_NALEID]["1792427542.806979"]:
+        assert page.count(f'id="{ALL_NALEID}-{reply}"') == 1
+    assert "3 replies" in page
+
+
+def test_single_file_holds_the_panel_css(archive, store, blobs) -> None:
+    written, writer = run_export(archive, store, blobs, "#all-naleid", single_file=True)
+    page = writer.text(written)
+    assert ".thread-panel:target" in page
+    assert ".thread-panel:has(:target)" in page
+    assert page.count('<aside class="thread-panel"') == 2
 
 
 def test_assets_copied_by_hash(archive, store, blobs) -> None:
