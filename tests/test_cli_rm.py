@@ -15,7 +15,14 @@ from slarc.ports import ArchiveWriteFailed
 from tests.contract.test_duckdb_index import envelope
 from tests.recorded_fixtures import RECORDED, RECORDED_TEAM, recorded_lake, recorded_lines
 from tests.test_cli_list_search import services
-from tests.test_cli_pull import BASE, Fixture, f, lake_count, lake_rows  # noqa: F401
+from tests.test_cli_pull import (  # noqa: F401
+    BASE,
+    Fixture,
+    f,
+    lake_count,
+    lake_queries,
+    lake_rows,
+)
 
 runner = CliRunner()
 ALL_NALEID = "C0CA5396G03"
@@ -42,7 +49,8 @@ def invoke(home: Path, *args: str, input: str | None = None):
 
 def snapshot(root: Path, ext_dir: Path) -> dict[str, object]:
     """Every lake table's rows and every blob's bytes."""
-    tables = {t: lake_rows(root, ext_dir, f"SELECT * FROM {t} ORDER BY ALL") for t in TABLES}
+    rows = lake_queries(root, ext_dir, *(f"SELECT * FROM {t} ORDER BY ALL" for t in TABLES))
+    tables = dict(zip(TABLES, rows, strict=True))
     blobs = {p.relative_to(root): p.read_bytes() for p in root.rglob("blobs/**/*") if p.is_file()}
     return {"tables": tables, "blobs": blobs}
 

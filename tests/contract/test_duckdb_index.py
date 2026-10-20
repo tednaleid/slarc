@@ -56,9 +56,11 @@ def archive(tmp_path: Path) -> Path:
     return recorded_lake(tmp_path / "archive")
 
 
-@pytest.fixture
-def index(archive: Path, ext_dir: Path) -> Iterator[DuckDbQueryIndex]:
-    with DuckDbQueryIndex(archive, ext_dir) as idx:
+@pytest.fixture(scope="module")
+def index(tmp_path_factory: pytest.TempPathFactory, ext_dir: Path) -> Iterator[DuckDbQueryIndex]:
+    """An index over one recorded lake that the module's read-only tests share."""
+    root = recorded_lake(tmp_path_factory.mktemp("recorded") / "archive")
+    with DuckDbQueryIndex(root, ext_dir) as idx:
         yield idx
 
 
@@ -451,18 +453,22 @@ def test_tracked_item_and_download_views(tmp_path: Path, ext_dir: Path) -> None:
 
 
 def test_run_view_keeps_tracked_and_downloads_columns(archive: Path, ext_dir: Path) -> None:
+    """Imported runs keep their lists; a new run's state is in the tables, so its are empty."""
     recorded_run = recorded_lines("runs.jsonl")[0]["object"]
+    item = TrackedItem(team_id=RECORDED_TEAM, kind="conversation", channel=ALL_NALEID)
     state = DownloadState(
         team_id=RECORDED_TEAM, target_kind="file", target="F0PDF", status="pending"
     )
-    commit(archive, ext_dir, run=later_run(downloads=[state]))
+    commit(archive, ext_dir, run=later_run(tracked=[item], downloads=[state]))
     with DuckDbQueryIndex(archive, ext_dir) as index:
-        rows = index.sql("SELECT run, tracked, downloads FROM run ORDER BY run")[1]
-        (imported, imported_tracked, _), (later, _, later_downloads) = rows
-        assert imported == recorded_run["run"]
-        assert json.loads(imported_tracked) == recorded_run["tracked"]
-        assert later == LATER_RUN
-        assert [d["target"] for d in json.loads(later_downloads)] == ["F0PDF"]
+        columns, rows = index.sql("SELECT run, tracked, downloads FROM run ORDER BY run")
+        assert columns == ["run", "tracked", "downloads"]
+        assert [(run, json.loads(t), json.loads(d)) for run, t, d in rows] == [
+            (recorded_run["run"], recorded_run["tracked"], recorded_run["downloads"]),
+            (LATER_RUN, [], []),
+        ]
+        query = "SELECT target, status FROM download WHERE target = 'F0PDF'"
+        assert index.sql(query)[1] == [("F0PDF", "pending")]
 
 
 def test_bad_sql_raises_one_line_slarc_error(index: DuckDbQueryIndex) -> None:

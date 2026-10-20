@@ -22,9 +22,11 @@ def archive(tmp_path: Path) -> Path:
     return recorded_lake(tmp_path / "archive")
 
 
-@pytest.fixture
-def index(archive: Path, ext_dir: Path) -> Iterator[DuckDbQueryIndex]:
-    with DuckDbQueryIndex(archive, ext_dir) as idx:
+@pytest.fixture(scope="module")
+def index(tmp_path_factory: pytest.TempPathFactory, ext_dir: Path) -> Iterator[DuckDbQueryIndex]:
+    """An index over one recorded lake that the module's read-only tests share."""
+    root = recorded_lake(tmp_path_factory.mktemp("recorded") / "archive")
+    with DuckDbQueryIndex(root, ext_dir) as idx:
         yield idx
 
 

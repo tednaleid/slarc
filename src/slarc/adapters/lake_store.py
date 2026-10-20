@@ -149,12 +149,17 @@ class DuckLakeArchiveStore:
     def append_run(self, run: RunRecord, slarc_version: str) -> None:
         """Commits the open batch, the run, and its tracked items and download states together.
 
-        Commits are serialized, so the last commit's tracked items and download states win.
-        On failure nothing is written and the open batch is kept.
+        The run row's tracked and downloads lists are empty: the tracked_item and
+        download_state tables hold that state. Commits are serialized, so the last commit's
+        tracked items and download states win. On failure nothing is written and the open
+        batch is kept.
         """
+        recorded = msgspec.structs.replace(run, tracked=[], downloads=[])
         with self._transaction():
             self._insert_batch()
-            insert_rows(self._con, "run", RUN_COLUMNS, [run_row(run_envelope(run, slarc_version))])
+            insert_rows(
+                self._con, "run", RUN_COLUMNS, [run_row(run_envelope(recorded, slarc_version))]
+            )
             self._upsert_tracked(run.tracked)
             self._upsert_downloads(run.downloads)
         self._batch.clear()
@@ -398,7 +403,7 @@ def directory_envelope(row: dict) -> Envelope:
 
 
 def run_row(env: Envelope) -> dict:
-    """The run row of a run line; its object is the whole run record."""
+    """The run row of a run line; its object is the run line's whole object."""
     obj = env.object or {}
     return {
         "run": env.meta.run,

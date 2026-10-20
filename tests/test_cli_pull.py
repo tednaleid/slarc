@@ -13,10 +13,16 @@ from typer.testing import CliRunner
 from slarc import bootstrap
 from slarc.adapters.credentials import CompositeSource, KeyringSource
 from slarc.adapters.lake import CATALOG, connect_lake
-from slarc.adapters.lake_store import VERSION_ORDER
+from slarc.adapters.lake_store import (
+    DOWNLOAD_COLUMNS,
+    TRACKED_COLUMNS,
+    VERSION_ORDER,
+    download_state,
+    tracked_item,
+)
 from slarc.cli import RichReporter, _summary, app
 from slarc.config import create_archive
-from slarc.domain.tracking import RunRecord
+from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem
 from slarc.ports import AuthFailed, BlobStore, CredentialReadError, Session
 from slarc.service.downloads import QUEUED_STATUSES
 from slarc.service.pull import PullReport
@@ -43,13 +49,17 @@ runner = CliRunner()
 PROMPT = "No archive here. Create one in"
 
 
-def lake_rows(root: Path, ext_dir: Path, query: str) -> list[tuple]:
-    """The rows of a query over the archive's lake tables."""
+def lake_queries(root: Path, ext_dir: Path, *queries: str) -> list[list[tuple]]:
+    """The rows of each query over the archive's lake tables, on one read-only connection."""
     con = connect_lake(root, ext_dir, read_only=True)
     try:
-        return con.execute(query).fetchall()
+        return [con.execute(query).fetchall() for query in queries]
     finally:
         con.close()
+
+
+def lake_rows(root: Path, ext_dir: Path, query: str) -> list[tuple]:
+    return lake_queries(root, ext_dir, query)[0]
 
 
 def lake_count(root: Path, ext_dir: Path, table: str) -> int:
@@ -99,14 +109,26 @@ class Fixture:
         rows = lake_rows(self.work, self.ext_dir, query)
         return [msgspec.json.decode(obj, type=RunRecord) for (obj,) in rows]
 
-    def messages(self, channel: str | None = None) -> int:
-        if channel is None:
-            return lake_count(self.work, self.ext_dir, "message_version")
+    def messages(self, channel: str) -> int:
         query = f"SELECT count(*) FROM message_version WHERE channel = '{channel}'"
         return lake_rows(self.work, self.ext_dir, query)[0][0]
 
-    def directory_entries(self) -> int:
-        return lake_count(self.work, self.ext_dir, "directory_entry")
+    def state(self) -> tuple[dict[ItemKey, TrackedItem], list[DownloadState], int, int]:
+        """The tracked items, download states, message rows and directory rows in the lake."""
+        tracked, downloads, messages, directory = lake_queries(
+            self.work,
+            self.ext_dir,
+            f"SELECT {', '.join(f'"{name}"' for name in TRACKED_COLUMNS)} FROM tracked_item",
+            f"SELECT {', '.join(DOWNLOAD_COLUMNS)} FROM download_state",
+            "SELECT count(*) FROM message_version",
+            "SELECT count(*) FROM directory_entry",
+        )
+        items = [tracked_item(dict(zip(TRACKED_COLUMNS, row, strict=True))) for row in tracked]
+        states = [download_state(dict(zip(DOWNLOAD_COLUMNS, r, strict=True))) for r in downloads]
+        return {item.key: item for item in items}, states, messages[0][0], directory[0][0]
+
+    def tracked(self) -> dict[ItemKey, TrackedItem]:
+        return self.state()[0]
 
 
 @pytest.fixture
@@ -235,27 +257,24 @@ def test_pull_root_with_archive_skips_prompt(f: Fixture, tmp_path):
 def test_pull_without_selectors_refreshes_tracked(f: Fixture):
     assert f.pull("--yes", BASE).exit_code == 0
     history_reads = sum(1 for call in f.gateway.calls if call[0] == "conversations.history")
+    [first] = f.tracked().values()
 
     result = f.pull()
     assert result.exit_code == 0, result.output
     later_reads = sum(1 for call in f.gateway.calls if call[0] == "conversations.history")
     assert later_reads > history_reads
-    first, second = f.runs()
-    assert second.args == []
-    assert [(item.kind, item.channel, item.status) for item in second.tracked] == [
-        ("conversation", CHANNEL, "ok")
-    ]
-    assert second.tracked[0].last_pull_at != first.tracked[0].last_pull_at
+    assert f.runs()[-1].args == []
+    [second] = f.tracked().values()
+    assert (second.kind, second.channel, second.status) == ("conversation", CHANNEL, "ok")
+    assert second.last_pull_at != first.last_pull_at
 
 
 def test_pull_reports_summary(f: Fixture):
     result = f.pull("--yes", BASE)
     assert result.exit_code == 0, result.output
-    downloads = f.runs()[-1].downloads
+    _, downloads, messages, directory = f.state()
     pending = sum(1 for state in downloads if state.status in QUEUED_STATUSES)
     assert pending > 0
-    messages = f.messages()
-    directory = f.directory_entries()
     assert result.stdout.splitlines() == [
         f"Pulled 1 item: {messages} new messages, {directory} new directory lines "
         "(users, emoji, files).",
@@ -466,19 +485,23 @@ def test_env_session_for_another_workspace_exits_1(f: Fixture):
     assert result.exit_code == 1
     assert "The env credentials are for workspace naleidworkspace, not other." in result.output
     assert "Traceback" not in result.output
-    assert f.runs()[-1].tracked == []
+    assert f.tracked() == {}
 
 
 def test_bare_pull_skips_a_workspace_without_a_session(f: Fixture):
     f.sessions = [OTHER, NALEID]
     f.gateways[OTHER_TEAM] = other_gateway()
     assert f.pull("--yes", OTHER_LINK, BASE).exit_code == 0
+    before = {item.team_id: item for item in f.tracked().values()}
     f.sessions = [NALEID]
     result = f.pull()
     assert result.exit_code == 0, result.output
     assert f"Could not connect to workspace {OTHER_TEAM}" in result.output
     assert "Pulled 1 item:" in result.stdout
-    assert [(item.team_id, item.status) for item in f.runs()[-1].tracked] == [(TEAM, "ok")]
+    after = {item.team_id: item for item in f.tracked().values()}
+    assert after[OTHER_TEAM] == before[OTHER_TEAM]
+    assert after[TEAM].status == "ok"
+    assert after[TEAM].last_pull_at != before[TEAM].last_pull_at
 
 
 def test_bare_pull_exits_1_when_a_workspace_rejects_its_credentials(f: Fixture):
