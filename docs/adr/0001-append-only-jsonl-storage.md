@@ -12,3 +12,7 @@ An archive stores Slack data as append-only JSONL files split by month, plus dow
 - Reading the current state of a message means taking its last line; every query goes through views that do this.
 - Startup cost for `search` and `serve` grows with archive size. If that becomes a problem, the fix is a rebuildable cache in `~/.cache/slarc`, never a database inside the archive.
 - slarc knows nothing about git. It only writes files that git handles well, and reading tolerates the duplicate or out-of-order lines a git merge can produce.
+
+## Amendment
+
+`slarc rm` is the one exception: it rewrites the files that lose lines, deleting the lines no remaining tracked item covers. See `docs/specs/2026-10-19-rm-design.md`.
