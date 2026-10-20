@@ -108,19 +108,3 @@ def test_tracked_items_round_trip_every_field(tmp_path: Path, ext_dir: Path) -> 
     reopened = DuckLakeArchiveStore(tmp_path, ext_dir)
     assert reopened.tracked_items() == {thread.key: thread, conversation.key: conversation}
     reopened.close()
-
-
-def test_downloads_leave_out_targets_whose_directory_row_has_a_blob(
-    tmp_path: Path, ext_dir: Path
-) -> None:
-    store = DuckLakeArchiveStore(tmp_path, ext_dir)
-    store.append_run(
-        run_record(R1, T1, downloads=[download("F1", "pending", 0), download("F2", "pending", 0)]),
-        VERSION,
-    )
-    store.append(file_line("F1", T2, R2, "ab" * 32))
-    store.append(file_line("F2", T2, R2, None))
-    store.append_run(run_record(R2, T2), VERSION)
-
-    assert list(store.downloads()) == [(TEAM, "F2")]
-    store.close()

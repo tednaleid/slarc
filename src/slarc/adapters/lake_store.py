@@ -85,15 +85,6 @@ DOWNLOAD_KEY = ("team", "target")
 # expect: of two lines with the same version, the later one wins.
 VERSION_ORDER = "coalesce(fetched_at, ''), coalesce(run, ''), rowid"
 
-# The latest directory row of each file and image, by the same rule as archive_state.
-LATEST_BLOBS = """
-    SELECT team, kind, id, blob FROM directory_entry
-    WHERE kind IN ('file', 'image') AND id IS NOT NULL AND hash IS NOT NULL
-    QUALIFY row_number() OVER (
-        PARTITION BY team, kind, id
-        ORDER BY coalesce(fetched_at, '') DESC, coalesce(run, '') DESC, rowid DESC) = 1
-"""
-
 _decode = msgspec.json.Decoder()
 
 
@@ -145,12 +136,9 @@ class DuckLakeArchiveStore:
         return self._tracked_where("status = 'removed'")
 
     def downloads(self) -> dict[tuple[str, str], DownloadState]:
-        """The download state of each target whose latest directory row has no blob."""
-        names = ", ".join(f"d.{name}" for name in DOWNLOAD_COLUMNS)
+        names = ", ".join(DOWNLOAD_COLUMNS)
         rows = self._con.execute(
-            f"WITH latest AS ({LATEST_BLOBS}) SELECT {names} FROM download_state d "
-            "LEFT JOIN latest l ON l.team = d.team AND l.kind = d.target_kind AND l.id = d.target "
-            "WHERE l.blob IS NULL ORDER BY d.team, d.target"
+            f"SELECT {names} FROM download_state ORDER BY team, target"
         ).fetchall()
         states = {}
         for team, target_kind, target, url, status, attempts, last_error in rows:

@@ -331,6 +331,17 @@ def test_downloads_latest_entry_across_runs(store_and_reopen):
         assert len(states) == 2
 
 
+def test_downloads_keep_a_downloaded_targets_earlier_state(store_and_reopen):
+    """A downloaded target drops out of its run's list; its directory blob records the download."""
+    store, reopen = store_and_reopen
+    store.append_run(run_record(R1, T1, downloads=[download("F1", "pending", 0)]), VERSION)
+    store.append(file_line("F1", T2, R2, "ab" * 32))
+    store.append_run(run_record(R2, T2), VERSION)
+
+    for current in (store, reopen()):
+        assert current.downloads() == {(TEAM, "F1"): download("F1", "pending", 0)}
+
+
 def test_run_lines_appended_after_a_read_fold_in_version_order(store_and_reopen):
     store, reopen = store_and_reopen
     if isinstance(store, DuckLakeArchiveStore):
