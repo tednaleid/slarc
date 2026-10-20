@@ -38,11 +38,12 @@ The CLI is the product's surface, so it stays small and each command does a lot.
 | `slarc list [--remote]` | Archive location and the config files in effect, then each tracked item with message count, last pull time, pending and skipped files. `--remote` lists every conversation the session can see and marks which are tracked |
 | `slarc search QUERY [--in CONV] [--from USER]` | Matches with author, conversation, time, snippet and Slack link |
 | `slarc export SELECTOR... [--out DIR] [--single-file] [--include-deleted] [--tz ZONE]` | Static HTML of what the links name; a workspace name exports every tracked conversation of that workspace, and every tracked thread or message outside a tracked conversation, to `slarc-export-<workspace>`. Later phases add `--format pdf` |
+| `slarc rm SELECTOR... [--channel] [--yes]` | Stops tracking what the links name and deletes the message lines, files, images and blobs that no remaining tracked item needs. It shows a summary and asks first (default No); `--yes` skips the prompt. A selector naming only already removed items finishes an interrupted removal. Do not run it while a pull is running on the same archive |
 | `slarc auth [--paste]` | Lists the Slack sessions found and who the user is in each workspace. `--paste` prompts for a browser token and cookie and stores them in the OS keychain |
 | `slarc sql QUERY` | Runs a DuckDB query against the archive's views; the escape hatch |
 | `slarc serve` | Phase 2: local web viewer over one archive |
 
-`pull`, `list`, `search` and `export` accept the same selectors: a Slack link, a conversation id, `#channel-name` or `@user` for a DM. `pull` and `export` also accept a workspace name such as `acme`, which stands for everything tracked in that workspace; `search --in` does not. Only `pull` and `auth` need Slack credentials. Developer tooling (fixture recording, the LevelDB comparison check, test workspace seeding) lives in `just` recipes, not in the CLI.
+`pull`, `list`, `search`, `export` and `rm` accept the same selectors: a Slack link, a conversation id, `#channel-name` or `@user` for a DM. `pull`, `export` and `rm` also accept a workspace name such as `acme`, which stands for everything tracked in that workspace; `search --in` does not. Only `pull` and `auth` need Slack credentials. Developer tooling (fixture recording, the LevelDB comparison check, test workspace seeding) lives in `just` recipes, not in the CLI.
 
 **Links**
 

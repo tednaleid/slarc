@@ -27,6 +27,7 @@ from slarc.service.auth import AuthStatus, auth_status, store_pasted
 from slarc.service.export import export
 from slarc.service.listing import ArchiveListing, RemoteRow, list_archive, list_remote
 from slarc.service.pull import PullOptions, PullReport, pull
+from slarc.service.remove import Removal, apply_removal, plan_removal, sweep
 from slarc.service.search import search
 from slarc.unit_of_work import UnitOfWork
 
@@ -55,6 +56,10 @@ LOCAL_TIME = "%Y-%m-%d %H:%M"
 FETCHED_AT = "%Y-%m-%dT%H:%M:%SZ"
 DOWNLOADS_ROW = "Downloads"
 DIRECTORY_KINDS = "(users, emoji, files)"
+NOTHING_TO_REMOVE = "Nothing to remove."
+NOTHING_REMOVED = "Nothing removed."
+CANNOT_PULL_AGAIN = "Messages deleted from Slack since they were pulled cannot be pulled again."
+LEFTOVERS = "what is left of removed items"
 
 
 def _print_version(value: bool) -> None:
@@ -620,3 +625,93 @@ def export_command(
     except SlarcError as error:
         _fail(str(error))
     out.print(f"Exported to {written.absolute()}.", markup=False)
+
+
+def _deleted_parts(removal: Removal) -> str:
+    """The lines, files and images a removal deletes, such as "2 lines and 1 file"; may be empty."""
+    parts = [
+        _plural(count, noun)
+        for count, noun in (
+            (removal.lines, "line"),
+            (removal.files, "file"),
+            (removal.images, "image"),
+        )
+        if count
+    ]
+    return " and ".join([", ".join(parts[:-1]), parts[-1]] if len(parts) > 1 else parts)
+
+
+def _removal_question(removal: Removal) -> str:
+    """The prompt: what is untracked and deleted, then a warning when anything is deleted."""
+    deleted = _deleted_parts(removal)
+    tracking = f"Stop tracking {_plural(len(removal.items), 'item')}"
+    if removal.items and not deleted:
+        return f"{tracking}?"
+    if removal.items:
+        question = f"{tracking} and delete {deleted}?"
+    else:
+        question = f"Delete {deleted or LEFTOVERS}?"
+    return f"{question}\n{CANNOT_PULL_AGAIN}"
+
+
+def _removal_result(removal: Removal) -> str:
+    deleted = _deleted_parts(removal)
+    if not removal.items:
+        return f"Cleaned up {deleted or LEFTOVERS}."
+    result = f"Stopped tracking {_plural(len(removal.items), 'item')}"
+    result += f"; deleted {deleted}." if deleted else "."
+    if removal.kept_messages:
+        kept = _plural(removal.kept_messages, "message")
+        result += f" Kept {kept} that other tracked items cover."
+    return result
+
+
+@app.command("rm")
+def rm_command(
+    selectors: Annotated[
+        list[str],
+        typer.Argument(
+            help="Slack links, conversation ids, #channel-name, @user or a workspace name "
+            "to stop tracking. Do not run while a pull is running on the same archive.",
+            show_default=False,
+        ),
+    ],
+    channel: Annotated[
+        bool,
+        typer.Option("--channel", help="Remove the whole conversation a message link is in."),
+    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Remove without asking.")] = False,
+    root: Annotated[
+        Path | None, typer.Option(metavar="DIR", help="The archive directory to use.")
+    ] = None,
+) -> None:
+    """Stop tracking what the links name and delete what only they kept in the archive."""
+    try:
+        parsed = [(text, parse_selector(text)) for text in selectors]
+    except ValueError as error:
+        _fail(str(error))
+    services = bootstrap.current_services()
+    args = _run_args(selectors, None, None, {"--channel": channel})
+    try:
+        archive_root = _existing_archive(root, services.env, services.home)
+        with bootstrap.archive_stores(archive_root) as (archive, blobs):
+            with bootstrap.query_index(archive_root) as index:
+                removal = plan_removal(parsed, channel, archive, blobs, index)
+            if removal.nothing_to_do:
+                out.print(NOTHING_TO_REMOVE, markup=False)
+                return
+            try:
+                declined = not yes and not typer.confirm(_removal_question(removal), default=False)
+            except typer.Abort:
+                declined = True
+            if declined:
+                _fail(NOTHING_REMOVED)
+            with UnitOfWork(archive, blobs, services.clock, "rm", args, __version__) as uow:
+                apply_removal(removal, uow)
+            sweep(removal.teams, archive, blobs)
+    except SlarcError as error:
+        _fail(str(error))
+    except KeyboardInterrupt:
+        err.print(INTERRUPTED, markup=False)
+        raise typer.Exit(INTERRUPTED_EXIT) from None
+    out.print(_removal_result(removal), markup=False)
