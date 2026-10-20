@@ -256,6 +256,100 @@ def test_failed_download_retried_next_pull(h: Harness):
     assert h.lines("file")[-1].meta.blob == sha256(snippet_bytes())
 
 
+def image_status(h: Harness, url: str) -> tuple[str, int]:
+    state = outstanding_downloads(h.archive)[(TEAM, url)]
+    return state.status, state.attempts
+
+
+def test_outside_image_gives_up_after_three_failures(h: Harness):
+    h.downloader.fail(GIPHY_URL, error="timed out")
+
+    statuses = []
+    h.pull(THREAD_LINK)
+    statuses.append(image_status(h, GIPHY_URL))
+    for _ in range(2):
+        h.pull()
+        statuses.append(image_status(h, GIPHY_URL))
+
+    assert statuses == [("failed", 1), ("failed", 2), ("gave_up", 3)]
+    h.downloader.jobs.clear()
+    h.pull()
+    assert GIPHY_URL not in {job.target for job in h.downloader.jobs}
+    assert image_status(h, GIPHY_URL) == ("gave_up", 3)
+
+
+def test_gave_up_counts_as_skipped(h: Harness):
+    h.downloader.fail(GIPHY_URL, error="timed out")
+    for _ in range(3):
+        h.pull(THREAD_LINK)
+
+    assert h.reporter.download_updates[-1][2] >= 1
+
+
+def test_slack_file_failures_never_give_up(h: Harness):
+    h.downloader.fail(SNIPPET_URL, error="HTTP 500")
+
+    h.pull(SNIPPET_LINK)
+    for _ in range(4):
+        h.pull()
+
+    assert image_status(h, SNIPPET) == ("failed", 5)
+
+
+def test_full_pull_retries_given_up_and_forbidden_outside_images(h: Harness):
+    h.downloader.fail(GIPHY_URL, error="timed out")
+    h.downloader.fail(GITHUB_THUMB, status="forbidden", error="HTTP 403")
+    h.pull(THREAD_LINK)
+    h.pull()
+    h.pull()
+    assert image_status(h, GIPHY_URL) == ("gave_up", 3)
+    assert image_status(h, GITHUB_THUMB) == ("forbidden", 1)
+
+    h.downloader.jobs.clear()
+    h.pull(options=PullOptions(full=True))
+
+    retried = {job.target for job in h.downloader.jobs}
+    assert {GIPHY_URL, GITHUB_THUMB} <= retried
+    assert image_status(h, GIPHY_URL) == ("failed", 1)
+    assert image_status(h, GITHUB_THUMB) == ("forbidden", 1)
+
+
+def test_removed_prior_state_queues_afresh(h: Harness):
+    h.pull(THREAD_LINK)
+    prior = {
+        (TEAM, SNIPPET): DownloadState(
+            team_id=TEAM,
+            target_kind="file",
+            target=SNIPPET,
+            url=SNIPPET_URL,
+            status="removed",
+            attempts=2,
+        ),
+        (TEAM, GIPHY_URL): DownloadState(
+            team_id=TEAM,
+            target_kind="image",
+            target=GIPHY_URL,
+            url=GIPHY_URL,
+            status="removed",
+            attempts=2,
+        ),
+    }
+    message = {
+        "ts": SNIPPET_TS,
+        "files": [{"id": SNIPPET, "url_private_download": SNIPPET_URL, "size": 10}],
+        "attachments": [{"image_url": GIPHY_URL}],
+    }
+
+    with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
+        jobs = queue_downloads(
+            message, TEAM, uow, PullOptions().max_file_bytes, files={}, images={}, known=prior
+        )
+        states = list(uow.run.downloads)
+
+    assert {job.target for job in jobs} == {SNIPPET, GIPHY_URL}
+    assert [(s.status, s.attempts) for s in states] == [("pending", 0)] * 2
+
+
 def test_drain_retries_earlier_runs_queue(h: Harness):
     h.pull(SNIPPET_LINK)
     serve_every_job(h)

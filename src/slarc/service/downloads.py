@@ -27,15 +27,16 @@ from slarc.ports import (
 from slarc.service.appends import append_directory, append_line, stamped_meta
 from slarc.unit_of_work import UnitOfWork
 
-TERMINAL_STATUSES = ("forbidden", "deleted", "external")
+TERMINAL_STATUSES = ("forbidden", "deleted", "external", "gave_up")
 QUEUED_STATUSES = ("pending", "failed")
-SKIPPED_STATUSES = ("too_large", "forbidden")
+SKIPPED_STATUSES = ("too_large", "forbidden", "gave_up")
+OUTSIDE_MAX_ATTEMPTS = 3
 DOWNLOAD_API = "download"
 FILES_INFO_API = "files.info"
 DIRECTORY_LIST_APIS: dict[Kind, str] = {"user": "users.list", "emoji": "emoji.list"}
 
 type DownloadKey = tuple[str, str]
-type SettledStatus = Literal["failed", "forbidden", "too_large", "deleted"]
+type SettledStatus = Literal["failed", "forbidden", "too_large", "deleted", "gave_up"]
 
 
 @dataclass(frozen=True)
@@ -73,11 +74,13 @@ def queue_downloads(
     files: dict[str, DirectoryState] | None = None,
     images: dict[str, DirectoryState] | None = None,
     known: dict[DownloadKey, DownloadState] | None = None,
+    retry_skipped: bool = False,
 ) -> list[DownloadJob]:
     """Queues the message's files and images that are neither downloaded nor settled.
 
     The custom emoji and author avatars it shows are found through view. files, images and
     known, the archive's file, image and download state, are read here when not given.
+    retry_skipped queues forbidden and gave_up outside-site images afresh.
     """
     referenced = message.get("files") or []
     urls = _shown_images(message, view)
@@ -94,7 +97,7 @@ def queue_downloads(
         if not _downloaded(uow, stored.get(file["id"]))
     ]
     states += [
-        _image_state(url, team_id, known.get((team_id, url)))
+        _image_state(url, team_id, known.get((team_id, url)), retry_skipped)
         for url in urls
         if not _downloaded(uow, images.get(url))
     ]
@@ -227,6 +230,8 @@ def _file_state(
     file: dict, team_id: str, max_bytes: int, prior: DownloadState | None
 ) -> DownloadState | None:
     """The state to record for a referenced file, or None when there is nothing to record."""
+    if prior is not None and prior.status == "removed":
+        prior = None
     if prior is not None and prior.status in TERMINAL_STATUSES:
         return None
     url = file.get("url_private_download") or file.get("url_private")
@@ -252,8 +257,22 @@ def _file_state(
     return state
 
 
-def _image_state(url: str, team_id: str, prior: DownloadState | None) -> DownloadState | None:
-    """An image over the size limit stays too_large: its size is known only by fetching it."""
+def _image_state(
+    url: str, team_id: str, prior: DownloadState | None, retry_skipped: bool
+) -> DownloadState | None:
+    """An image over the size limit stays too_large: its size is known only by fetching it.
+
+    With retry_skipped, an outside-site image that was forbidden or gave_up starts over.
+    """
+    if prior is not None and prior.status == "removed":
+        prior = None
+    if (
+        retry_skipped
+        and prior is not None
+        and prior.status in ("forbidden", "gave_up")
+        and not is_slack_file_url(url)
+    ):
+        prior = None
     if prior is not None and prior.status in (*TERMINAL_STATUSES, "too_large"):
         return None
     attempts = prior.attempts if prior is not None else 0
@@ -369,9 +388,10 @@ class _Recorder:
     def _settle(self, job: DownloadJob, status: SettledStatus, error: str | None) -> None:
         key = (job.team_id, job.target)
         held = next(d for d in self.uow.run.downloads if (d.team_id, d.target) == key)
-        settled = msgspec.structs.replace(
-            held, status=status, attempts=held.attempts + 1, last_error=error
-        )
+        attempts = held.attempts + 1
+        if status == "failed" and not job.slack_auth and attempts >= OUTSIDE_MAX_ATTEMPTS:
+            status = "gave_up"
+        settled = msgspec.structs.replace(held, status=status, attempts=attempts, last_error=error)
         self._replace(job, settled)
 
     def _replace(self, job: DownloadJob, state: DownloadState | None) -> None:

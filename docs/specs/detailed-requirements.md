@@ -203,13 +203,13 @@ Items marked (spike) were confirmed against the test workspace; the rest come fr
 - Files: everything referenced, video included, up to `max_file_size_mb` (default 100). Larger files are recorded as `too_large` and listed by `slarc list`; raising the limit picks them up on the next pull.
 - Images: every image a message references is downloaded under the same limit: `image` blocks (giphy), attachment `image_url` and `thumb_url`, `service_icon`, `bot_profile` icons, custom emoji images and user avatars (`profile.image_512`). External URLs rot, so the archive keeps its own copy.
 - Downloads run in parallel (`--downloads N`, default 4). API calls run one at a time through the rate limiter; concurrent API calls are added only if measurement shows the need.
-- A failed download stays queued and is retried on the next pull. `forbidden`, `deleted` and `external` are terminal.
+- A failed download stays queued and is retried on the next pull. `forbidden`, `deleted`, `external` and `gave_up` are terminal. A download that is not a Slack file (link previews, attachment images, other outside-site images) settles as `gave_up` once its third attempt fails; Slack file downloads keep retrying without a cap. `slarc pull --full` queues `forbidden` and `gave_up` outside-site images afresh, with `attempts` reset to 0, when it walks the messages that show them.
 - A Slack file download, one sent with the session's credentials, times out after 60 seconds; any other download after 15.
 
 **Progress and summary**
 
-- Each item gets a progress bar showing messages read, each counted once per conversation per run, and how many were new. The bar moves after each history page and each thread read. Downloads get one more bar, `Downloads`, showing done of total, then how many failed (left pending for the next pull) and how many were skipped (too large or forbidden) when either is nonzero.
-- A pull ends with `Pulled N items: M new messages, D new directory lines (users, emoji, files).`, then, when there were any, `Downloads:` with the files and images saved, those pending for the next pull and those skipped (too large or forbidden).
+- Each item gets a progress bar showing messages read, each counted once per conversation per run, and how many were new. The bar moves after each history page and each thread read. Downloads get one more bar, `Downloads`, showing done of total, then how many failed (left pending for the next pull) and how many were skipped (too large, forbidden or given up) when either is nonzero.
+- A pull ends with `Pulled N items: M new messages, D new directory lines (users, emoji, files).`, then, when there were any, `Downloads:` with the files and images saved, those pending for the next pull and those skipped (too large, forbidden or given up).
 
 ## Storage
 
@@ -319,7 +319,7 @@ The entities below are DuckDB views over the files; none is stored separately. E
 | usergroup | `usergroups.jsonl`, last line per id | (team_id, id) | handle, name, user_ids |
 | run | `runs.jsonl` | run | command, args, started, finished, teams, auth per team, messages_seen, lines_appended, rate_limit_wait_s, api_calls (Web API calls per method, pages included), threads_read (threads read per reason ∈ link, history, search, active, full, retry; a thread counts once, under its first reason), errors, tracked, downloads |
 | tracked_item | `runs.jsonl`, the latest entry per item across all run lines | (team_id, kind, channel_id, ts) | kind ∈ conversation, thread, message; since, until, newest_ts, oldest_ts, backfill_complete, last_search_at, last_pull_at, status ∈ ok, not_visible (pull warns once when an item turns not visible, then skips it quietly until it reads again; the summary counts not-visible items); archived (the last finished pull found the conversation Slack-archived); last_read per user_id; retry_threads (threads whose read failed, re-read first on the next pull). An interrupted first pull resumes paging older history from `oldest_ts` while `backfill_complete` is false. An item named on the command line is recorded before it is read, so an interrupted pull keeps it |
-| download | `runs.jsonl`, latest entry per target | (team_id, target) | target is a file id or image URL; status ∈ pending, failed, forbidden, too_large, deleted, external; attempts; last_error. Downloaded items drop out; the `blob` on the directory line is the record |
+| download | `runs.jsonl`, latest entry per target | (team_id, target) | target is a file id or image URL; status ∈ pending, failed, forbidden, too_large, deleted, external, gave_up, removed; attempts; last_error. Downloaded items drop out; the `blob` on the directory line is the record |
 
 Notes
 

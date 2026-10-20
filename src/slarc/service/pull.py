@@ -632,6 +632,7 @@ class _PullRun:
                 files=held.files,
                 images=held.images,
                 known=held.downloads,
+                retry_skipped=self.options.full,
             )
 
     def _append_thread(
