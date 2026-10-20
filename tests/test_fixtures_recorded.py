@@ -1,9 +1,16 @@
-# ABOUTME: Checks the archive recorded from the test workspace: no secrets, scrubbed emails and
-# ABOUTME: the message shapes later tasks test against.
+# ABOUTME: Checks the archive recorded from the test workspace: no secrets, scrubbed emails, the
+# ABOUTME: message shapes later tasks test against, and the lake the test loader builds from it.
 import re
+from pathlib import Path
 
+import msgspec
+
+from slarc.adapters.lake_store import DuckLakeArchiveStore
+from slarc.domain.tracking import DownloadState, TrackedItem
+from tests.jsonl_loader import load_jsonl
 from tests.recorded_fixtures import (
     RECORDED,
+    RECORDED_TEAM,
     recorded_directory,
     recorded_lines,
     recorded_messages,
@@ -55,3 +62,37 @@ def test_fixture_covers_expected_subtypes():
     jim = recorded_directory("users.jsonl")[JIM]
     assert (jim["real_name"], jim["profile"]["display_name"]) == ("Jim Naleid", "Jim")
     assert [run["meta"]["kind"] for run in recorded_lines("runs.jsonl")] == ["run"]
+
+
+def test_loader_reproduces_the_fixture(tmp_path: Path, ext_dir: Path):
+    load_jsonl(RECORDED, tmp_path, ext_dir)
+
+    counts = {
+        path.parent.name: len(path.read_bytes().splitlines())
+        for path in RECORDED.glob(f"raw/{RECORDED_TEAM}/*/*.jsonl")
+    }
+    run = recorded_lines("runs.jsonl")[-1]["object"]
+    tracked = [msgspec.convert(item, TrackedItem) for item in run["tracked"]]
+    blobbed = {
+        line["meta"]["id"]
+        for line in recorded_lines(f"directory/{RECORDED_TEAM}/*.jsonl")
+        if line["meta"].get("blob")
+    }
+    downloads = [
+        msgspec.convert(state, DownloadState)
+        for state in run["downloads"]
+        if state["target"] not in blobbed
+    ]
+    assert len(counts) == 5
+    assert downloads
+
+    store = DuckLakeArchiveStore(tmp_path, ext_dir)
+    try:
+        channels = store.channels(RECORDED_TEAM)
+        assert {c: len(list(store.message_lines(RECORDED_TEAM, c))) for c in channels} == counts
+        assert {**store.tracked_items(), **store.removed_items()} == {
+            item.key: msgspec.structs.replace(item, revision=1) for item in tracked
+        }
+        assert store.downloads() == {(s.team_id, s.target): s for s in downloads}
+    finally:
+        store.close()

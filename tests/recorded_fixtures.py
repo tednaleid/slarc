@@ -1,5 +1,5 @@
 # ABOUTME: Readers for the archive recorded from the test workspace in tests/fixtures/workspace/.
-# ABOUTME: Returns raw lines, newest directory objects, a DirectoryView, blobs, a copy or a lake.
+# ABOUTME: Returns raw lines, newest directory objects, a DirectoryView, blobs or a lake.
 import atexit
 import json
 import os
@@ -8,10 +8,11 @@ import tempfile
 from functools import cache
 from pathlib import Path
 
-from slarc.adapters.jsonl_import import import_jsonl
 from slarc.adapters.lake import extension_directory
+from slarc.config import ARCHIVE_FILE
 from slarc.domain.directory import DirectoryView
 from tests.fakes import InMemoryBlobStore
+from tests.jsonl_loader import load_jsonl
 
 RECORDED = Path(__file__).parent / "fixtures" / "workspace"
 RECORDED_TEAM = "T0CB5LYPVFA"
@@ -37,25 +38,21 @@ def recorded_directory(name: str) -> dict[str, dict]:
     return {line["meta"]["id"]: line["object"] for line in lines}
 
 
-def copy_recorded(target: Path) -> Path:
-    """A copy of the recorded archive, without its blobs, at target."""
-    shutil.copytree(RECORDED, target, ignore=shutil.ignore_patterns("blobs"))
-    return target
-
-
 def recorded_lake(target: Path) -> Path:
-    """A copy of the recorded archive, without its blobs, imported into a lake at target."""
+    """An archive at target whose lake holds the recorded archive, without its blobs."""
     shutil.copytree(_recorded_lake_template(), target)
     return target
 
 
 @cache
 def _recorded_lake_template() -> Path:
-    """The recorded archive imported once per test session, for recorded_lake to copy."""
+    """The recorded archive loaded into a lake once per test session, for recorded_lake to copy."""
     parent = Path(tempfile.mkdtemp(prefix="slarc-recorded-lake-"))
     atexit.register(shutil.rmtree, parent, ignore_errors=True)
-    root = copy_recorded(parent / "archive")
-    import_jsonl(root, extension_directory(os.environ, Path.home()))
+    root = parent / "archive"
+    root.mkdir()
+    shutil.copyfile(RECORDED / ARCHIVE_FILE, root / ARCHIVE_FILE)
+    load_jsonl(RECORDED, root, extension_directory(os.environ, Path.home()))
     return root
 
 

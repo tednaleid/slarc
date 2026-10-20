@@ -1,4 +1,4 @@
-# ABOUTME: JSONL envelope model (meta plus verbatim Slack object) and its line encoding.
+# ABOUTME: Envelope model (meta plus verbatim Slack object) and its one-line JSON encoding.
 # ABOUTME: Also formats fetched_at, run ids and the month partition of a Slack ts.
 from datetime import UTC, datetime
 from typing import Literal

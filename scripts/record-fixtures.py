@@ -17,16 +17,29 @@ import sys
 import tempfile
 from pathlib import Path
 
+import duckdb
 import msgspec
 
 from slarc import __version__
 from slarc.adapters.desktop_session import DesktopSessionSource
-from slarc.adapters.jsonl_import import export_jsonl
-from slarc.adapters.lake import extension_directory
+from slarc.adapters.lake import connect_lake, extension_directory
+from slarc.adapters.lake_store import (
+    DIRECTORY_COLUMNS,
+    DOWNLOAD_COLUMNS,
+    MESSAGE_COLUMNS,
+    RUN_COLUMNS,
+    TRACKED_COLUMNS,
+    VERSION_ORDER,
+    directory_envelope,
+    download_state,
+    message_envelope,
+    run_line,
+    tracked_item,
+)
 from slarc.adapters.slack_gateway import SessionConnector
 from slarc.bootstrap import SystemClock, archive_stores, http_downloader
 from slarc.config import ARCHIVE_FILE, create_archive
-from slarc.domain.envelope import decode_line, encode_line
+from slarc.domain.envelope import Envelope, decode_line, encode_line, month_of
 from slarc.domain.hashing import content_hash
 from slarc.domain.links import ConversationSel, Selector
 from slarc.ports import Session
@@ -43,6 +56,15 @@ MAX_BLOB_BYTES = 1024 * 1024
 EMAIL = re.compile(r"\b([A-Za-z0-9._%+-]+)@(?!example\.invalid\b)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 SCRUBBED_DOMAIN = "example.invalid"
 SECRET_MARK = b"xox"
+DIRECTORY_FILES = {
+    "user": "users.jsonl",
+    "emoji": "emoji.jsonl",
+    "conversation": "conversations.jsonl",
+    "bot": "bots.jsonl",
+    "usergroup": "usergroups.jsonl",
+    "file": "files.jsonl",
+    "image": "images.jsonl",
+}
 
 
 class TestWorkspaceSessions:
@@ -85,9 +107,54 @@ def record(root: Path) -> None:
     print(f"pulled {report.items_pulled} items, {report.lines_appended} lines")
 
 
+def select(
+    con: duckdb.DuckDBPyConnection, table: str, columns: dict[str, str], order_by: str
+) -> list[dict]:
+    names = ", ".join(f'"{name}"' for name in columns)
+    rows = con.execute(f"SELECT {names} FROM {table} ORDER BY {order_by}").fetchall()
+    return [dict(zip(columns, row, strict=True)) for row in rows]
+
+
+def export_jsonl(root: Path, target: Path) -> None:
+    """Writes the lake at root to target in the JSONL layout, one run line per run row.
+
+    The last run line carries the current tracked items and download states, which the
+    tests' JSONL loader commits.
+    """
+    con = connect_lake(root, extension_directory(os.environ, Path.home()), read_only=True)
+    try:
+        messages = select(
+            con, "message_version", MESSAGE_COLUMNS, f"team, channel, ts, {VERSION_ORDER}"
+        )
+        entries = select(con, "directory_entry", DIRECTORY_COLUMNS, f"team, kind, {VERSION_ORDER}")
+        runs = select(con, "run", RUN_COLUMNS, VERSION_ORDER)
+        items = select(con, "tracked_item", TRACKED_COLUMNS, "team, kind, channel, ts")
+        states = select(con, "download_state", DOWNLOAD_COLUMNS, "team, target")
+    finally:
+        con.close()
+    files: dict[Path, list[Envelope]] = {}
+    for env in map(message_envelope, messages):
+        meta = env.meta
+        month = f"{month_of(meta.ts or '0')}.jsonl"
+        path = target / "raw" / str(meta.team) / str(meta.channel) / month
+        files.setdefault(path, []).append(env)
+    for env in map(directory_envelope, entries):
+        path = target / "directory" / str(env.meta.team) / DIRECTORY_FILES[env.meta.kind]
+        files.setdefault(path, []).append(env)
+    if runs:
+        lines = [run_line(row) for row in runs]
+        last = dict(lines[-1].object or {})
+        last["tracked"] = msgspec.to_builtins([tracked_item(row) for row in items])
+        last["downloads"] = msgspec.to_builtins([download_state(row) for row in states])
+        files[target / "runs.jsonl"] = [*lines[:-1], Envelope(meta=lines[-1].meta, object=last)]
+    for path, envs in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"".join(encode_line(env) for env in envs))
+
+
 def export(root: Path, target: Path) -> None:
     """Writes the lake at root to target as a JSONL archive, with its slarc.toml and blobs."""
-    export_jsonl(root, extension_directory(os.environ, Path.home()), target)
+    export_jsonl(root, target)
     shutil.copyfile(root / ARCHIVE_FILE, target / ARCHIVE_FILE)
     if (root / "blobs").is_dir():
         shutil.copytree(root / "blobs", target / "blobs")

@@ -1,5 +1,5 @@
-# ABOUTME: Tests for the DuckDB query index over a lake imported from the recorded test workspace.
-# ABOUTME: Covers latest-wins views, deleted messages, imported duplicates, and `slarc sql`.
+# ABOUTME: Tests for the DuckDB query index over a lake loaded from the recorded test workspace.
+# ABOUTME: Covers latest-wins views, deleted messages, repeated rows, and `slarc sql`.
 import json
 from collections.abc import Iterator
 from pathlib import Path
@@ -11,14 +11,14 @@ from typer.testing import CliRunner
 from slarc import bootstrap
 from slarc.adapters.credentials import CompositeSource, KeyringSource
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
-from slarc.adapters.jsonl_import import import_jsonl
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.cli import app
 from slarc.domain.envelope import Envelope, Meta
-from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
+from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem, run_from_envelope
 from slarc.ports import Commit, SlarcError
 from tests.fakes import FakeKeyring
-from tests.recorded_fixtures import RECORDED_TEAM, copy_recorded, recorded_lake, recorded_lines
+from tests.jsonl_loader import jsonl_envelopes
+from tests.recorded_fixtures import RECORDED, RECORDED_TEAM, recorded_lake, recorded_lines
 
 ALL_NALEID = "C0CA5396G03"
 FIXTURES = "C0CA7SNHTSP"
@@ -214,30 +214,20 @@ def snapshot(index: DuckDbQueryIndex) -> dict[str, list[tuple]]:
     return {view: index.sql(f"SELECT * FROM {view} ORDER BY ALL")[1] for view in VIEWS}
 
 
-def test_views_identical_after_importing_duplicate_lines(
-    index: DuckDbQueryIndex, tmp_path: Path, ext_dir: Path
+def test_views_other_than_message_version_ignore_repeated_rows(
+    index: DuckDbQueryIndex, archive: Path, ext_dir: Path
 ) -> None:
     before = snapshot(index)
-    doubled = copy_recorded(tmp_path / "doubled")
-    for path in doubled.rglob("*.jsonl"):
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-        with path.open("a", encoding="utf-8") as f:
-            f.writelines(reversed(lines))
-    import_jsonl(doubled, ext_dir)
-    with DuckDbQueryIndex(doubled, ext_dir) as index:
-        assert snapshot(index) == before
+    lines = jsonl_envelopes(RECORDED, "raw/*/*/*.jsonl")
+    lines += jsonl_envelopes(RECORDED, "directory/*/*.jsonl")
+    recorded_run = run_from_envelope(jsonl_envelopes(RECORDED, "runs.jsonl")[0])
+    commit(archive, ext_dir, *reversed(lines), run=recorded_run)
+    with DuckDbQueryIndex(archive, ext_dir) as repeated:
+        after = snapshot(repeated)
+    versions = after.pop("message_version")
+    assert after == {view: rows for view, rows in before.items() if view != "message_version"}
+    assert sorted(versions) == sorted(before["message_version"] * 2)
     assert all(before[view] for view in VIEWS if view not in ("usergroup", "download"))
-
-
-def test_garbage_line_in_month_file_is_not_imported(tmp_path: Path, ext_dir: Path) -> None:
-    root = copy_recorded(tmp_path / "archive")
-    with (root / "raw" / RECORDED_TEAM / ALL_NALEID / "2026-10.jsonl").open("a") as f:
-        f.write('{"meta":{"schema":1,"kind":"mess\n')
-    import_jsonl(root, ext_dir)
-    with DuckDbQueryIndex(root, ext_dir) as index:
-        assert sorted(index.sql("SELECT channel_id, ts FROM message")[1]) == sorted(
-            recorded_message_keys()
-        )
 
 
 def test_views_exist_over_an_empty_lake(tmp_path: Path, ext_dir: Path) -> None:
@@ -457,7 +447,7 @@ def test_tracked_item_and_download_views(tmp_path: Path, ext_dir: Path) -> None:
 
 
 def test_run_view_keeps_tracked_and_downloads_columns(archive: Path, ext_dir: Path) -> None:
-    """Imported runs keep their lists; a new run's state is in the tables, so its are empty."""
+    """Runs record their state in the tables, so their tracked and downloads lists are empty."""
     recorded_run = recorded_lines("runs.jsonl")[0]["object"]
     item = TrackedItem(team_id=RECORDED_TEAM, kind="conversation", channel=ALL_NALEID)
     state = DownloadState(
@@ -471,7 +461,7 @@ def test_run_view_keeps_tracked_and_downloads_columns(archive: Path, ext_dir: Pa
         columns, rows = index.sql("SELECT run, tracked, downloads FROM run ORDER BY run")
         assert columns == ["run", "tracked", "downloads"]
         assert [(run, json.loads(t), json.loads(d)) for run, t, d in rows] == [
-            (recorded_run["run"], recorded_run["tracked"], recorded_run["downloads"]),
+            (recorded_run["run"], [], []),
             (LATER_RUN, [], []),
         ]
         query = "SELECT target, status FROM download WHERE target = 'F0PDF'"
@@ -501,7 +491,8 @@ def run_sql(home: Path, *args: str):
 
 
 def test_cli_sql_prints_rows(archive: Path, tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(archive / "raw")
+    (archive / "sub").mkdir()
+    monkeypatch.chdir(archive / "sub")
     result = run_sql(tmp_path, "SELECT id, display FROM user ORDER BY id")
     assert result.exit_code == 0, result.output
     assert "display" in result.output

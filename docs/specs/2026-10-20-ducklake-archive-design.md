@@ -4,7 +4,7 @@
 
 slarc's archive is append-only JSONL folded into current state. Making that safe under crashes, concurrent commands and removals led to `2026-10-20-commit-log-design.md`: batches, commit lines, tags, a committed-only filter on every read, dangling-line collection, sweeps and a lock. Most of that rebuilds what an open table format already provides. Much of the rest exists to keep the archive mergeable in git, and git is no longer a requirement: blobs make archives too large for a repository, and nobody will use one that way.
 
-This design stores the archive as a DuckLake: Parquet data files plus a SQLite catalog, written and read through the `duckdb` package slarc already uses. A commit is a catalog transaction. Tracked items and download states become rows updated in place. Removal is a DELETE followed by standard maintenance that physically removes the bytes. Two flock locks in the XDG cache directory order writers and keep physical deletion away from running commands. The JSONL archive is imported once and then no longer read.
+This design stores the archive as a DuckLake: Parquet data files plus a SQLite catalog, written and read through the `duckdb` package slarc already uses. A commit is a catalog transaction. Tracked items and download states become rows updated in place. Removal is a DELETE followed by standard maintenance that physically removes the bytes. Two flock locks in the XDG cache directory order writers and keep physical deletion away from running commands. Archives written before the lake are not imported.
 
 It replaces `2026-10-20-commit-log-design.md`, which is not to be built.
 
@@ -31,7 +31,7 @@ Background, all committed:
 - **No time travel.** Edit history lives in `message_version` rows, which are kept. Old snapshots are expired at every maintenance.
 - **No object-storage backend or publish command now.** The documented frozen pattern attaches a DuckDB-format catalog file, and this design's catalog is SQLite, so publishing would likely copy the catalog tables into a DuckDB file beside the Parquet files. That is unverified and left for later.
 - **No change to the blob store** (`blobs/sha256/ab/cd/<hash>`), to downloads, or to export output.
-- **No new commands.** Migration happens on its own and maintenance runs inside existing commands.
+- **No new commands.** Maintenance runs inside existing commands.
 
 ## Anti-goals (a failure even if it works)
 
@@ -81,7 +81,7 @@ Two couplings remain, by design:
   blobs/sha256/...    unchanged
 ```
 
-`raw/`, `directory/` and `runs.jsonl` are read only by migration (below).
+slarc does not read `raw/`, `directory/` or `runs.jsonl` (Archives written before the lake, below).
 
 ### Tables
 
@@ -203,7 +203,7 @@ The exclusive read lock rules out all three, so deletion uses no windows at all.
 An archive is opened by one machine at a time, and slarc enforces it.
 
 - **The record.** The catalog holds the owning host: a stable machine id (the IOPlatformUUID on macOS, `/etc/machine-id` on Linux) plus the hostname for messages. Hostnames change, so the id is what is compared. Reading the id is an adapter's job.
-- **The first open** records the current host, including the open that creates the lake by migration.
+- **The first open** records the current host, including the open that creates the lake.
 - **Every command,** reads included, checks the record when it opens the archive. Even a read creates WAL files that a synced folder carries to other machines. If the record names another host, the command stops with a message naming that host. The message says to wait until the synced folder has finished syncing, then run the command again with `--take-ownership`.
 - **`--take-ownership`** is a global option. It asserts that every change from the previous host has arrived. slarc cannot verify that, so the option is the user's statement. It records the current host, and the run that takes ownership is cautious:
   - it checks that every data file the catalog references exists, and stops with a "the synced folder has not finished syncing" error if any are missing;
@@ -238,36 +238,19 @@ Physically removing a conversation of 16,746 versions took 0.58 s in spike 3. Af
 
 - **Gone:** the `*_line` source views over JSONL, and the dedupe step in `message_line`.
 - **`tracked_item` and `download`** are new views, built to the spec's columns over their tables, with no fold. They don't exist in `duckdb_index.py` today.
-- **`run`** keeps its `tracked` and `downloads` columns. They are filled for imported runs and empty for new ones, because new runs record that state in the tables instead.
+- **`run`** keeps its `tracked` and `downloads` columns. They are empty, because runs record that state in the tables instead.
 - **`message`'s current version** becomes a single `QUALIFY` over `message_version`, ordered by (fetched_at DESC, run DESC, kind). It must keep today's rules: a deleted message keeps its last content with `deleted_at` set; a parent stored before its first reply becomes a thread parent once replies are stored; `first_seen_at` and `last_seen_at`; reply counts. The existing index contract tests define the behavior. Spike 3 measured search at 0.64 s with a single QUALIFY, before those rules were ported.
 - **`messages` and `thread`** filter `message_version` by team and channel, and thread also by `thread_ts`, at the source. This replaces today's per-channel file selection.
 
 The JSONL folds in `archive_state.py` go away. `stored_messages`, `directory_state`, `directory_objects`, `tracked_items`, `removed_items` and `downloads` become queries against the lake.
 
-### Migration
+### Archives written before the lake
 
-On opening an archive that has `raw/`, `directory/` or `runs.jsonl` but no `catalog.sqlite`, slarc imports it before doing anything else:
+slarc does not import an archive written before the lake (`raw/`, `directory/` and `runs.jsonl`), and carries no JSONL code. An archive with no `catalog.sqlite` gets an empty lake, and any JSONL files in it are ignored.
 
-1. It takes both locks exclusively, waiting with a message if another slarc command has the archive open.
-2. It builds the lake under temporary names (`catalog.sqlite.importing`, `data.importing/`), deleting any left by an earlier interrupted import.
-3. It imports:
-   - every message and deleted line into `message_version`, dropping exact duplicates of (team, channel, ts, fetched_at, run, kind, hash);
-   - every directory line into `directory_entry`;
-   - each run line's record into `run`;
-   - the current and removed tracked items from today's `runs.jsonl` fold, each at revision 1;
-   - the outstanding download states only: today's `outstanding_downloads` filter, which drops targets whose directory line already has a blob, and drops `removed` states. The fold's stale `pending` entries for downloaded targets are not imported.
-4. It verifies the import: row counts per table against the lines read, minus the dropped duplicates. The tracked items read back from the lake must equal the JSONL fold, and the download states must equal the JSONL archive's outstanding downloads.
-5. It renames the catalog and data directory into place. The catalog rename comes last, so the lake exists only once it is complete.
-6. It prints how many rows it imported, and that `raw/`, `directory/` and `runs.jsonl` are no longer used and can be deleted once the user has checked the archive.
+The recorded fixture archive (`tests/fixtures/workspace/`) stays JSONL, so it stays reviewable in git and `scripts/record-fixtures.py` keeps its line-by-line scrub. The script exports its temp lake to JSONL with its own export, and a test-only loader (`tests/jsonl_loader.py`) builds a lake from the fixture through `DuckLakeArchiveStore`.
 
-The JSONL files are left untouched. Once `catalog.sqlite` exists they are never read again.
-
-Message files are read with today's `*.jsonl` glob, which includes Dropbox conflicted copies of month files. Today's reads already include them, and later pulls may have skipped messages because they matched lines held only in such a copy, so including them keeps the import equal to what slarc reads today. Conflicted copies of `runs.jsonl` are not read, as today.
-
-Importing 1M lines took 4.5 s in spike 3.
-
-**The import stays.** It is the only reader of JSONL left, kept as a permanent "import a JSONL archive" path:
-- **Test fixtures:** the recorded fixture archive (`tests/fixtures/workspace/`) stays JSONL, so it stays reviewable in git and `scripts/record-fixtures.py` keeps its line-by-line scrub. Tests load it through the import into a lake in a temporary directory.
+The other readers of JSONL change with the store:
 - **`scripts/acceptance.py`** reads and edits `raw/*.jsonl` and `runs.jsonl` directly, so it moves to querying the lake.
 - **The Phase 1 criterion** "pulling the same channel twice changes no file" becomes: "pulling the same channel twice adds only a run row".
 
@@ -299,7 +282,7 @@ Importing 1M lines took 4.5 s in spike 3.
   - physical deletion is skipped while another process holds the read lock;
   - a command on another host is refused, and a takeover with a missing data file stops before writing;
   - a killed writer leaves the last committed state, and its files are deleted at the next idle maintenance;
-  - migration of the fixture archive reproduces today's view results.
+  - the lake loaded from the fixture archive reproduces today's view results.
 - **Docs:**
   - A new ADR supersedes ADR 0001. It records the move from JSONL to DuckLake, why git and direct grepping were given up, and why Iceberg and Delta were not chosen.
   - ADR 0001 is marked superseded.
@@ -315,6 +298,7 @@ Importing 1M lines took 4.5 s in spike 3.
 - Iceberg is not used. DuckLake with a SQLite catalog is chosen, per the research and spike 3, over Delta's catalog-free commits. One machine writes an archive, and others can read a frozen copy published to object storage later.
 - Storage sits behind ports and adapters, so the service code stays agnostic of the format.
 - Archives in synced folders: one owning host is enforced, and the docs recommend local disk (One owning host, above).
+- slarc does not import archives written before the lake and carries no JSONL code. It was never released, and the only JSONL archives were Ted's, which he has deleted. The recorded test fixture stays JSONL (Archives written before the lake, above). This replaces Claude's calls on migration and the permanent import.
 
 ## My calls (Claude), open to Ted's correction
 
@@ -322,8 +306,6 @@ Importing 1M lines took 4.5 s in spike 3.
 - Two locks in the XDG cache directory. The write lock is per transaction, so concurrent pulls and an rm interleave instead of waiting for each other to finish.
 - Physical deletion runs only when the archive is idle, so it needs no time windows. Snapshots are expired at every idle maintenance, which ends time travel.
 - No partitioning. Rows are sorted by conversation, with 16 MB files.
-- Migration is automatic and leaves the JSONL files in place for the user to delete.
-- Conflicted copies of month files are imported, because today's reads include them.
 - Extensions live in the XDG cache, and an offline failure is a clear error.
 - A download state settles by being deleted, as today's states drop out. rm finds states by reference, as today, so no `channel` column is added.
 - The run row is written only at the end, as today. A killed run leaves no row.
@@ -333,10 +315,9 @@ Importing 1M lines took 4.5 s in spike 3.
 - A pull's commit fails if a file or image row it assumed was stored has been deleted by a concurrent rm, and the next pull repairs it.
 - The download drain commits once per result.
 - The directory-refresh guard is "any item not removed".
-- Migration imports only outstanding download states.
-- The `run` view keeps empty `tracked` and `downloads` columns for new runs.
+- The `run` view keeps its `tracked` and `downloads` columns, which are empty.
 - Missing blobs keep today's re-download-on-read behavior.
-- The JSONL import stays as a permanent path, and the test fixtures stay JSONL.
+- The test fixtures stay JSONL.
 
 ## Left to the builder
 
@@ -350,6 +331,5 @@ Importing 1M lines took 4.5 s in spike 3.
   - maintenance;
   - the query views;
   - rm;
-  - migration;
   - removing the JSONL store;
   - docs and ADRs.

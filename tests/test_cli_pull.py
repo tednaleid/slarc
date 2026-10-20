@@ -154,7 +154,6 @@ def test_new_archive_creates_a_lake(f: Fixture):
     result = f.pull("--yes", BASE)
     assert result.exit_code == 0, result.output
     assert (f.work / "catalog.sqlite").is_file()
-    assert "Imported" not in result.output
 
 
 def test_pull_run_id_ends_with_the_run_suffix(f: Fixture):

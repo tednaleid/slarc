@@ -18,7 +18,6 @@ from slarc.adapters.desktop_session import DesktopSessionSource
 from slarc.adapters.downloader import HttpDownloader
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
 from slarc.adapters.export_writer import FsExportWriter
-from slarc.adapters.jsonl_import import ImportReport, has_jsonl, import_jsonl
 from slarc.adapters.lake import CATALOG, connect_lake, extension_directory
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.adapters.slack_gateway import USER_AGENT, SessionConnector, session_gateway
@@ -56,15 +55,10 @@ def _extension_directory() -> Path:
     return extension_directory(os.environ, Path.home())
 
 
-def ensure_lake(root: Path) -> ImportReport | None:
-    """Gives the archive a lake if it has none: imports its JSONL files when it has any, and
-    otherwise creates an empty lake. Returns the import's report when it imported."""
-    if (root / CATALOG).exists():
-        return None
-    if has_jsonl(root):
-        return import_jsonl(root, _extension_directory())
-    connect_lake(root, _extension_directory()).close()
-    return None
+def ensure_lake(root: Path) -> None:
+    """Creates an empty lake in the archive if it has no catalog."""
+    if not (root / CATALOG).exists():
+        connect_lake(root, _extension_directory()).close()
 
 
 @contextmanager

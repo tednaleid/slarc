@@ -55,12 +55,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
    - the pull carries on with its other items.
 
    Test: Task 9 `test_pull_commit_after_rm_of_its_item_rolls_back`.
-3. **The first command on an existing JSONL archive:**
-   - the import runs once, and a second command doesn't run it again;
-   - the JSONL files are untouched;
-   - an import killed partway is redone cleanly by the next command.
-
-   Tests: Task 4 `test_interrupted_import_is_redone`, and Task 5 `test_first_command_imports_once`.
+3. **Retired:** slarc no longer imports JSONL archives (Task 11b), so there is no first-command import to review.
 4. **A first run offline,** with an empty extension directory and no network: the error names the extensions and says how to install them, with no DuckDB traceback. Test: Task 1 `test_missing_extensions_raise_a_clear_error`.
 5. **An archive directory that is moved or renamed** still opens with all its data, because the data path is passed at attach, not taken from the catalog. Test: Task 1 `test_moved_archive_still_opens`.
 
@@ -394,13 +389,44 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
 - [x] **Step 4: Run `just check` and watch it pass.**
 - [x] **Step 5: Commit:** `Commit removals with revision checks, recomputing when a pull got there first`.
 
+### Task 11b: Remove the JSONL import from slarc [done]
+
+Ted decided (2026-10-20) that slarc will not import JSONL archives. slarc has only run on his machine, was never released, and he has deleted his JSONL archives. slarc itself must have no JSONL code before a release. The recorded test fixture stays JSONL, because it is real Slack output from the test workspace that is reviewed in git and scrubbed line by line by `scripts/record-fixtures.py`.
+
+**Files:**
+- Delete: `src/slarc/adapters/jsonl_import.py`, `tests/adapters/test_jsonl_import.py`
+- Modify:
+  - `src/slarc/bootstrap.py`: `ensure_lake` no longer checks for JSONL or imports; it only creates an empty lake when there is no catalog. Rename it if its name no longer fits.
+  - `src/slarc/cli.py`: the import message and its printing go.
+  - `src/slarc/archive_state.py`: `latest_runs`, `LatestRuns`, `REMOVED_DOWNLOAD` and any other run-line fold code go from the product if only the import and the fixture loader use them.
+  - `tests/recorded_fixtures.py`: `recorded_lake(target: Path) -> Path` keeps its signature and its once-per-session template copy, but builds the template with a test-only loader instead of `import_jsonl`.
+  - `tests/contract/test_duckdb_index.py`: the two direct `import_jsonl` calls (about lines 226 and 236) use the test loader or are rewritten to build their data through `DuckLakeArchiveStore`.
+  - `scripts/record-fixtures.py`: keeps a lake-to-JSONL export of its own (the code from `export_jsonl`, trimmed to what the script needs), so it can still pull into a temp lake, export to JSONL and run its scrub. It does not run in `just check` and makes live Slack calls; do not run it.
+  - Docs: `docs/architecture.md` (lines about the JSONL import and export, and line 56 on archives written before the lake); `docs/specs/2026-10-20-ducklake-archive-design.md` (replace the Migration section with a short note that archives written before the lake are not imported, and fix the sentences in Intent, Goals, Archive layout, Queries and "Decided by Ted" that mention the import, recording the decision under "Decided by Ted"); `docs/plans/2026-10-20-ducklake-archive.md` (Review Focus item 3 is retired with a one-line note; Task 12 drops the import-lock bullet and the `jsonl_import.py` file entry; Task 15 drops the README "one-time import" item; add this task as "Task 11b" after Task 11, marked `[done]`).
+
+**The test-only loader** (in `tests/recorded_fixtures.py` or a small sibling module under `tests/`):
+- reads `raw/*/*/*.jsonl`, `directory/*/*` and `runs.jsonl` of a JSONL archive;
+- appends every message, deleted and directory line through `DuckLakeArchiveStore.append`;
+- commits the tracked and removed items from the last state the run lines describe, and the outstanding download states, through the store's `commit`;
+- writes each run line as a run row (the store's `append_run`, or the row helper it uses), keeping the fixture's run ids and their `tracked`/`downloads` lists in the run objects only if a test reads them;
+- needs no temporary names, no verification against a fold, and no duplicate counting. Keep it short; it is test code. If the run-line fold it needs is small, it lives in the test module, not in `archive_state.py`.
+
+**Tests:** every test that used `recorded_lake` or `import_jsonl` passes with the loader. Add one test that the loader reproduces the fixture: the lake built from it has the fixture's message count per channel, its tracked items, and its outstanding download states (compare with simple counts and keys read straight from the fixture files).
+
+- [x] **Step 1:** Write the loader test and watch it fail (the loader does not exist).
+- [x] **Step 2:** Write the loader; switch `recorded_lake` and the two `import_jsonl` call sites to it.
+- [x] **Step 3:** Delete `jsonl_import.py` and its tests; remove the import from `bootstrap.py` and `cli.py`; move the export into `scripts/record-fixtures.py`; prune `archive_state.py`.
+- [x] **Step 4:** Update the docs listed above.
+- [x] **Step 5:** `grep -rn -i jsonl src/` finds nothing. `just check` passes.
+- [x] **Step 6:** Commit: `Remove the JSONL import; build test lakes from the JSONL fixture in the tests`.
+
 ## Phase 3: locks and maintenance
 
 ### Task 12: Locks
 
 **Files:**
 - Create: `src/slarc/adapters/locks.py`
-- Modify: `src/slarc/ports.py` (`ArchiveLock` protocol), `src/slarc/adapters/lake_store.py`, `src/slarc/adapters/duckdb_index.py`, `src/slarc/adapters/jsonl_import.py` (call site), `src/slarc/bootstrap.py`, `tests/fakes.py`
+- Modify: `src/slarc/ports.py` (`ArchiveLock` protocol), `src/slarc/adapters/lake_store.py`, `src/slarc/adapters/duckdb_index.py`, `src/slarc/bootstrap.py`, `tests/fakes.py`
 - Test: `tests/adapters/test_locks.py`
 
 **Interfaces:**
@@ -416,7 +442,6 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
     - `DuckLakeArchiveStore` and `DuckDbQueryIndex` take a `lock: ArchiveLock`;
     - each holds the shared read lock from open to close;
     - `commit`, `append_run` and the staged drops run inside `lock.write()`;
-    - the import holds `try_exclusive` plus `write`, waiting with `Waiting for another slarc command to finish before importing this archive.`;
     - lock order is read lock before write lock.
 
 - [ ] **Step 1: Write the failing tests,** using `subprocess` with the repo venv's python for the cross-process cases:
@@ -512,8 +537,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
   - the archive layout;
   - keeping an archive on local disk;
   - marking a Dropbox archive folder available offline;
-  - the `--take-ownership` hand-off;
-  - the one-time import.
+  - the `--take-ownership` hand-off.
 - [ ] **Step 6: Run `just check` and watch it pass.**
 - [ ] **Step 7: Commit:** `Document the DuckLake archive: ADR 0004, spec, architecture, README`.
 

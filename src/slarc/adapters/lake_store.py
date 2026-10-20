@@ -8,7 +8,7 @@ import duckdb
 import msgspec
 
 from slarc import archive_state
-from slarc.adapters.lake import CATALOG, DATA_DIR, connect_lake
+from slarc.adapters.lake import connect_lake
 from slarc.archive_state import LatestMessages
 from slarc.domain.envelope import Envelope, Kind, Meta
 from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem, run_envelope
@@ -100,10 +100,8 @@ _decode = msgspec.json.Decoder()
 
 
 class DuckLakeArchiveStore:
-    def __init__(
-        self, root: Path, ext_dir: Path, *, catalog: str = CATALOG, data_dir: str = DATA_DIR
-    ) -> None:
-        self._con = connect_lake(root, ext_dir, catalog=catalog, data_dir=data_dir)
+    def __init__(self, root: Path, ext_dir: Path) -> None:
+        self._con = connect_lake(root, ext_dir)
         self._batch: list[Envelope] = []
         self._drops: list[tuple[str, str, list]] = []  # (table, condition, params) per DELETE
 
