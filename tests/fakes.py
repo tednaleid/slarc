@@ -332,7 +332,7 @@ class RecordingReporter:
     def __init__(self) -> None:
         self.infos: list[str] = []
         self.warnings: list[str] = []
-        self.progress_updates: list[tuple[str, int, int | None]] = []
+        self.progress_updates: list[tuple[str, int, int, int | None]] = []
 
     def info(self, msg: str) -> None:
         self.infos.append(msg)
@@ -340,8 +340,8 @@ class RecordingReporter:
     def warn(self, msg: str) -> None:
         self.warnings.append(msg)
 
-    def progress(self, label: str, done: int, total: int | None) -> None:
-        self.progress_updates.append((label, done, total))
+    def progress(self, label: str, done: int, new: int, total: int | None) -> None:
+        self.progress_updates.append((label, done, new, total))
 
 
 class FakeAssetResolver:

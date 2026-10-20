@@ -580,6 +580,7 @@ class _PullRun:
                 )
                 append_line(uow, Envelope(meta=meta, object=message))
                 held.record(ts, StoredMessage(digest, message.get("thread_ts"), fetched_now(uow)))
+                self._count_new()
             queue_downloads(
                 message,
                 team_id,
@@ -606,6 +607,12 @@ class _PullRun:
             meta = stamped_meta(uow, "deleted", team=held.team_id, channel=held.channel, ts=ts)
             append_line(uow, Envelope(meta=meta))
             held.record(ts, StoredMessage(None, held.stored[ts].thread_ts, fetched_now(uow)))
+            self._count_new()
+
+    def _count_new(self) -> None:
+        """Counts a message or deleted line appended for the item in progress."""
+        if self.progress is not None:
+            self.progress.new += 1
 
     def skip_workspace(self, team_id: str, error: SlarcError) -> None:
         """Leaves the workspace's tracked items as they were and records why in the run line."""
@@ -649,21 +656,23 @@ class _PullRun:
 
 
 class _ItemProgress:
-    """Reports how many messages have been read for one item, ending with the item's total."""
+    """Reports how many messages have been read for one item and how many lines were new for it,
+    ending with the item's total."""
 
     def __init__(self, reporter: Reporter, label: str, *, report_start: bool = True) -> None:
         self.reporter = reporter
         self.label = label
         self.seen = 0
+        self.new = 0
         if report_start:
-            reporter.progress(label, 0, None)
+            reporter.progress(label, 0, 0, None)
 
     def add(self, count: int) -> None:
         self.seen += count
-        self.reporter.progress(self.label, self.seen, None)
+        self.reporter.progress(self.label, self.seen, self.new, None)
 
     def end(self) -> None:
-        self.reporter.progress(self.label, self.seen, self.seen)
+        self.reporter.progress(self.label, self.seen, self.new, self.seen)
 
 
 def _within(item: TrackedItem, stamps: set[str]) -> set[str]:

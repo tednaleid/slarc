@@ -146,7 +146,7 @@ class RichReporter:
         self._progress = Progress(
             TextColumn("{task.description}", markup=False),
             BarColumn(),
-            TextColumn("{task.completed} messages"),
+            TextColumn("{task.completed} read, {task.fields[new]} new"),
             console=console,
         )
         self._tasks: dict[str, TaskID] = {}
@@ -169,12 +169,12 @@ class RichReporter:
     def warn(self, msg: str) -> None:
         self._progress.console.print(f"Warning: {msg}", style="yellow", markup=False)
 
-    def progress(self, label: str, done: int, total: int | None) -> None:
+    def progress(self, label: str, done: int, new: int, total: int | None) -> None:
         if label not in self._tasks:
             if not self._tasks:
                 self._progress.start()
-            self._tasks[label] = self._progress.add_task(label, total=total)
-        self._progress.update(self._tasks[label], completed=done, total=total)
+            self._tasks[label] = self._progress.add_task(label, total=total, new=new)
+        self._progress.update(self._tasks[label], completed=done, total=total, new=new)
 
 
 def _check_date(flag: str, value: str | None) -> None:

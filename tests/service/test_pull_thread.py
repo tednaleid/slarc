@@ -463,8 +463,8 @@ def test_progress_and_item_count_reported_per_thread(h: Harness):
     report = h.pull(THREAD_LINK, LONE_LINK)
 
     assert h.reporter.progress_updates == [
-        (f"#all-naleid thread {PARENT_TS}", 4, 4),
-        (f"#all-naleid message {LONE_TS}", 1, 1),
+        (f"#all-naleid thread {PARENT_TS}", 4, 4, 4),
+        (f"#all-naleid message {LONE_TS}", 1, 1, 1),
     ]
     assert report.items_pulled == 2
 

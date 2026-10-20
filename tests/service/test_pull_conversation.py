@@ -76,13 +76,25 @@ def test_progress_reported_per_page_and_item(h: Harness):
     report = h.pull(BASE)
 
     assert h.reporter.progress_updates == [
-        ("#all-naleid", 0, None),
-        ("#all-naleid", 3, None),
-        ("#all-naleid", 6, None),
-        ("#all-naleid", 7, None),
-        ("#all-naleid", 7, 7),
+        ("#all-naleid", 0, 0, None),
+        ("#all-naleid", 3, 3, None),
+        ("#all-naleid", 6, 6, None),
+        ("#all-naleid", 7, 7, None),
+        ("#all-naleid", 7, 7, 7),
     ]
     assert report.items_pulled == 1
+
+
+def test_progress_counts_only_changed_messages_as_new(h: Harness):
+    stamps = [ts_on(18, hour) for hour in range(3)]
+    h.serve(stamps)
+    h.pull(BASE)
+    h.change_message(stamps[1], text="edited")
+    h.reporter.progress_updates.clear()
+
+    h.pull(options=PullOptions(full=True))
+
+    assert h.reporter.progress_updates[-1] == ("#all-naleid", 3, 1, 3)
 
 
 def test_since_until_bound_history(h: Harness):
