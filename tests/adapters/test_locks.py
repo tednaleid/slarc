@@ -162,3 +162,25 @@ def test_a_read_command_on_an_existing_archive_takes_no_write_lock(
         held = opened.wait(timeout=10)
     reader.join()
     assert held
+
+
+def test_hold_shared_refuses_while_this_process_holds_exclusive(tmp_path: Path) -> None:
+    root, cache = tmp_path / "archive", tmp_path / "cache"
+    lock = FlockArchiveLock(root, cache)
+    assert lock.try_exclusive()
+    with pytest.raises(RuntimeError):
+        lock.hold_shared()
+    lock.release_exclusive()
+    other = FlockArchiveLock(root, cache)
+    assert other.try_exclusive()
+    other.release_exclusive()
+
+
+def test_nested_write_raises_instead_of_waiting_for_itself(tmp_path: Path) -> None:
+    root, cache = tmp_path / "archive", tmp_path / "cache"
+    lock = FlockArchiveLock(root, cache)
+    with lock.write(), pytest.raises(RuntimeError), lock.write():
+        pass
+    other = FlockArchiveLock(root, cache)
+    with other.write():
+        pass

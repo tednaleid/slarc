@@ -23,8 +23,12 @@ class FlockArchiveLock:
         self._write_path = directory / f"{name}.write"
         self._shared = 0
         self._read_fd: int | None = None
+        self._writing = False
 
     def hold_shared(self) -> None:
+        # A second descriptor would wait on this process's own exclusive lock for ever.
+        if self._shared == 0 and self._read_fd is not None:
+            raise RuntimeError("Release the exclusive read lock before holding it shared")
         if self._shared == 0:
             self._read_fd = _locked(self._read_path, fcntl.LOCK_SH)
         self._shared += 1
@@ -53,10 +57,15 @@ class FlockArchiveLock:
 
     @contextmanager
     def write(self) -> Generator[None]:
+        # A nested hold would wait on this process's own lock for ever.
+        if self._writing:
+            raise RuntimeError("The write lock is already held by this process")
         fd = _locked(self._write_path, fcntl.LOCK_EX)
+        self._writing = True
         try:
             yield
         finally:
+            self._writing = False
             os.close(fd)
 
     def _close_read(self) -> None:

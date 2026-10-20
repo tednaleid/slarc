@@ -1,5 +1,5 @@
 # ABOUTME: Tests for the removal use case: pull spike fixtures into an in-memory archive, then rm.
-# ABOUTME: Each sweep is checked to delete exactly the lines, files, images and blobs planned.
+# ABOUTME: Each removal is checked to delete exactly the lines, files, images and blobs planned.
 from dataclasses import dataclass
 
 import pytest
@@ -8,7 +8,7 @@ from slarc import __version__
 from slarc.domain.links import parse_selector
 from slarc.domain.tracking import TrackedItem
 from slarc.ports import Commit, CommitConflict, Committed, SearchHit, SlarcError
-from slarc.service.remove import Removal, apply_removal, plan_removal, sweep
+from slarc.service.remove import Removal, apply_removal, plan_removal
 from slarc.unit_of_work import UnitOfWork
 from tests.service.pull_harness import (
     BASE,
@@ -132,11 +132,10 @@ def counts(removal: Removal) -> tuple[int, int, int, int]:
 
 
 def rm(h: Harness, *texts: str, channel_mode: bool = False) -> Removal:
-    """Plans, applies and sweeps, checking that exactly what the committed plan names is
-    deleted; returns the committed plan."""
+    """Plans and applies, with the run's maintenance, checking that exactly what the committed
+    plan names is deleted; returns the committed plan."""
     before = inventory(h)
     committed = apply(h, plan(h, *texts, channel_mode=channel_mode), *texts)
-    sweep(h.archive, h.blobs)
     assert deleted(before, inventory(h)) == counts(committed)
     return committed
 
@@ -282,11 +281,13 @@ def test_pull_after_rm_does_not_requeue_removed_downloads(h: Harness):
     assert avatar(ME) in requeued
 
 
-def test_rm_rerun_after_interrupted_sweep_finishes_it(h: Harness):
+def test_rm_rerun_after_deferred_deletion_finishes_it(h: Harness):
     pull_and_download(h, BASE, SECOND_LINK)
+    h.archive.idle = False
     first = apply(h, plan(h, BASE), BASE)
     assert stored(h, TEAM, CHANNEL) == set()
     assert first.blobs > 0
+    h.archive.idle = True
     before = inventory(h)
 
     again = plan(h, BASE)
@@ -296,7 +297,6 @@ def test_rm_rerun_after_interrupted_sweep_finishes_it(h: Harness):
     assert not again.nothing_to_do
     assert counts(again) == (0, 0, 0, first.blobs)
     committed = apply(h, again, BASE)
-    sweep(h.archive, h.blobs)
     assert deleted(before, inventory(h)) == counts(committed) == counts(again)
     assert plan(h, BASE).nothing_to_do
 

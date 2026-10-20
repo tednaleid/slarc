@@ -25,7 +25,7 @@ from slarc.domain.tracking import (
     run_from_envelope,
 )
 from slarc.ports import ArchiveStore, Commit, CommitConflict, DirectoryState, StoredMessage
-from tests.fakes import FakeArchiveLock, InMemoryArchiveStore
+from tests.fakes import FakeArchiveLock, InMemoryArchiveStore, InMemoryBlobStore
 
 TEAM = "T0CB5LYPVFA"
 CHANNEL = "C0CA5396G03"
@@ -243,6 +243,28 @@ def test_same_second_blob_line_wins_in_store_and_index(
     if isinstance(store, DuckLakeArchiveStore):
         with DuckDbQueryIndex(tmp_path, ext_dir, FakeArchiveLock()) as index:
             assert index.sql("SELECT blob FROM file WHERE id = 'F1'")[1] == [("cd" * 32,)]
+
+
+def test_same_version_ties_still_go_to_the_later_line_after_maintenance(store_and_reopen):
+    """Compaction rewrites and merges files; of two lines with the same (fetched_at, run),
+    the one appended later stays current."""
+    store, reopen = store_and_reopen
+    track(store, TEAM)
+    filler = [message(f"{1792410000 + i}.000100", "filler", T1, R1) for i in range(20)]
+    for env in [*filler, message(TS, "first", T1, R1), file_line("F1", T1, R1, None)]:
+        store.append(env)
+    store.commit(Commit())
+    last = message(TS, "last", T1, R1)
+    for env in [*filler, last, file_line("F1", T1, R1, "cd" * 32)]:
+        store.append(env)
+    store.commit(Commit())
+    store.drop_messages(TEAM, CHANNEL, {filler[0].meta.ts or ""})
+    store.commit(Commit())
+    store.maintain(InMemoryBlobStore())
+
+    for current in (store, reopen()):
+        assert current.stored_messages(TEAM, CHANNEL)[TS].hash == last.meta.hash
+        assert current.directory_state(TEAM, "file")["F1"].blob == "cd" * 32
 
 
 def test_tracked_items_last_commit_wins(store_and_reopen):

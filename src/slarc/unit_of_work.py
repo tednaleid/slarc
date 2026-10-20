@@ -1,5 +1,5 @@
 # ABOUTME: Unit of work scoping one run over the archive and blob stores. Commits the open batch
-# ABOUTME: with the run's download changes, and appends the run line however the run ends.
+# ABOUTME: with the run's download changes; appends the run line however it ends, then maintains.
 from collections.abc import Collection, Sequence
 from types import TracebackType
 
@@ -19,7 +19,11 @@ from slarc.ports import (
 
 
 class UnitOfWork:
+    """maintained is None until the run's maintenance returns, then whether it deleted what
+    nothing uses or left that for a later run because another command had the archive open."""
+
     run: RunRecord
+    maintained: bool | None
 
     def __init__(
         self,
@@ -42,6 +46,7 @@ class UnitOfWork:
         self._committed_downloads: list[DownloadState] = []
         self._settled: set[DownloadKey] = set()
         self._requires: set[DirectoryRef] = set()
+        self.maintained = None
 
     def __enter__(self) -> UnitOfWork:
         now = self.clock.now()
@@ -130,6 +135,12 @@ class UnitOfWork:
             self.discard()
             self.run.finished = fetched_at(self.clock.now())
             self.archive.append_run(self.run, self.slarc_version)
+        try:
+            self.maintained = self.archive.maintain(self.blobs)
+        except Exception:
+            # The run's own error is the one to report.
+            if exc is None:
+                raise
 
     def _current(self, item: TrackedItem) -> TrackedItem:
         revision = self._revisions.get(item.key)

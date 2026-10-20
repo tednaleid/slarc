@@ -86,6 +86,14 @@ class CommitConflict(SlarcError):
         super().__init__("Another slarc command changed the archive at the same time.")
 
 
+class MaintenanceFailed(SlarcError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(
+            f"The run is saved, but maintaining the archive failed ({reason}); "
+            "the next pull or rm tries again."
+        )
+
+
 class CredentialReadError(SlarcError):
     def __init__(self, source: str, step: str) -> None:
         self.source = source
@@ -249,6 +257,13 @@ class ArchiveStore(Protocol):
     def drop_workspace(self, team: str) -> None: ...
     def drop_downloads(self, team: str, targets: set[str]) -> None: ...
     def blob_references(self) -> list[tuple[str, Kind, str, str]]: ...  # (team, kind, id, blob)
+    def maintain(self, blobs: BlobStore) -> bool:
+        """Compacts the archive, then, only if no other command has it open, deletes what no
+        current row uses: old and orphaned data and every blob no directory row references.
+
+        Returns whether the deletion ran. Raises ValueError if the open batch is not empty.
+        """
+        ...
 
 
 class ArchiveLock(Protocol):
@@ -257,6 +272,8 @@ class ArchiveLock(Protocol):
     The read lock is held shared while the archive is open, counted per process, or tried
     exclusively without blocking, which needs this process not to hold it shared. write()
     holds the write lock exclusively around each transaction, blocking until it is free.
+    Holding the read lock shared while this process holds it exclusively, or the write lock
+    while this process already holds it, raises RuntimeError instead of waiting for ever.
     """
 
     def hold_shared(self) -> None: ...

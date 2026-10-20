@@ -453,7 +453,7 @@ Ted decided (2026-10-20) that slarc will not import JSONL archives. slarc has on
 - [x] **Step 4: Run `just check` and watch it pass.**
 - [x] **Step 5: Commit:** `Add read and write locks in the XDG cache directory`.
 
-### Task 13: Maintenance
+### Task 13: Maintenance [done]
 
 **Files:**
 - Modify: `src/slarc/ports.py` (`ArchiveStore.maintain`), `src/slarc/adapters/lake_store.py`, `tests/fakes.py`, `src/slarc/unit_of_work.py`, `src/slarc/service/remove.py` (delete `sweep`), `src/slarc/cli.py` (rm result message, help text)
@@ -475,15 +475,15 @@ Ted decided (2026-10-20) that slarc will not import JSONL archives. slarc has on
   - The rm help text loses `Do not run while a pull is running on the same archive.`
   - `sweep` and `RUN_RM_AGAIN`'s sweep path are deleted.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `test_rm_physically_removes_a_conversation_when_idle`: after rm, scan every Parquet file under `data/` with `read_parquet` and every catalog table. None holds the channel, and the blob is gone.
   - `test_deletion_waits_while_another_process_holds_the_archive`: a subprocess holds the shared lock. rm prints the deferred message, the bytes remain, and a later pull deletes them.
   - `test_killed_writer_leaves_last_commit_and_orphans_are_removed`: kill a subprocess writer with SIGKILL mid-insert. The state equals the last commit, and the next idle maintenance removes the leftover files.
   - `test_catalog_and_file_count_stay_bounded`: 200 small commits with maintenance after each keep the file count under 50.
-- [ ] **Step 2: Run them and watch them fail.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run `just check` and watch it pass.**
-- [ ] **Step 5: Commit:** `Compact after every run and delete bytes only when the archive is idle`.
+- [x] **Step 2: Run them and watch them fail.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run `just check` and watch it pass.**
+- [x] **Step 5: Commit:** `Compact after every run and delete bytes only when the archive is idle`.
 
 ## Phase 4: one owning host
 

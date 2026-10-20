@@ -1,5 +1,5 @@
 # ABOUTME: Removal use case behind slarc rm: resolves selectors to tracked items from the archive.
-# ABOUTME: Plans the removal, commits it with revision checks, then sweeps unreferenced blobs.
+# ABOUTME: Plans the removal and commits it with revision checks; maintenance frees the bytes.
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -28,10 +28,11 @@ KEPT_CHANGING = "Other slarc commands kept changing these items; run rm again."
 
 @dataclass(frozen=True)
 class Removal:
-    """What rm stops tracking and what its commit and sweep delete.
+    """What rm stops tracking and what its commit deletes.
 
     lines counts message and deleted lines, every version; files and images count targets;
-    blobs counts the blobs no directory line references once the removal commits.
+    blobs counts the blobs no directory line references once the removal commits, which the
+    run's maintenance deletes if the archive is idle.
     kept_messages counts stored messages the named items cover that other tracked items still
     cover. downloads are the targets whose download states the removal deletes, so a later pull
     does not fetch them and a running pull drops their results.
@@ -61,9 +62,10 @@ def plan_removal(
     blobs: BlobStore,
     index: QueryIndex,
 ) -> Removal:
-    """Resolves each (text as typed, selector) pair to tracked or removed items and plans the sweep.
+    """Resolves each (text as typed, selector) pair to tracked or removed items and plans what
+    removing them deletes.
 
-    A selector naming only removed items is accepted, so running rm again finishes its sweep.
+    A selector naming only removed items is accepted, so running rm again deletes what is left.
     """
     tracked = archive.tracked_items()
     removed = archive.removed_items()
@@ -117,16 +119,6 @@ def apply_removal(removal: Removal, uow: UnitOfWork, blobs: BlobStore) -> Remova
     raise SlarcError(KEPT_CHANGING)
 
 
-def sweep(archive: ArchiveStore, blobs: BlobStore) -> None:
-    """Deletes every blob no directory line references.
-
-    Running it again after an interrupt finishes it.
-    """
-    referenced = {blob for _, _, _, blob in archive.blob_references()}
-    for blob in sorted(set(blobs.ids()) - referenced):
-        blobs.delete(blob)
-
-
 def _plan(
     named: list[TrackedItem],
     teams: list[str],
@@ -173,7 +165,7 @@ def _stage(deletion: _Deletion, archive: ArchiveStore) -> None:
 
 @dataclass(frozen=True)
 class _TeamDeletion:
-    """One workspace's share of a sweep; a wiped workspace has nothing left tracked."""
+    """One workspace's share of a removal; a wiped workspace has nothing left tracked."""
 
     team: str
     wiped: bool
@@ -196,7 +188,7 @@ def _deletion(
     archive: ArchiveStore,
     blobs: BlobStore,
 ) -> _Deletion:
-    """What a sweep of the teams deletes when tracked holds the items still tracked."""
+    """What a removal in the teams deletes when tracked holds the items still tracked."""
     known = archive.downloads()
     deletions = [
         _team_deletion(team, [i for i in tracked.values() if i.team_id == team], known, archive)

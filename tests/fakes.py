@@ -42,9 +42,11 @@ class InMemoryArchiveStore:
     """Committed lines, run lines included, with tracked item and download state tables.
 
     Appends and drops wait in an open batch that commit applies with the lake store's checks.
+    maintain deletes unreferenced blobs while idle is true, as if no other command were open.
     """
 
     def __init__(self) -> None:
+        self.idle = True
         self.lines: list[Envelope] = []
         self.tracked: dict[ItemKey, TrackedItem] = {}
         self.download_states: dict[DownloadKey, DownloadState] = {}
@@ -144,6 +146,16 @@ class InMemoryArchiveStore:
         ]
         return list(dict.fromkeys(references))
 
+    def maintain(self, blobs: BlobStore) -> bool:
+        if self._batch or self._line_drops or self._download_drops:
+            raise ValueError("Commit or discard the open batch before maintaining the archive")
+        if not self.idle:
+            return False
+        referenced = {blob for _, _, _, blob in self.blob_references()}
+        for blob in sorted(set(blobs.ids()) - referenced):
+            blobs.delete(blob)
+        return True
+
     def _commit(self, change: Commit) -> Committed:
         stored = self._stored_revisions()
         revisions = archive_state.item_revisions(change, stored)
@@ -201,31 +213,50 @@ class InMemoryArchiveStore:
 
 class FakeArchiveLock:
     """Records each lock call in events, a write as "write" and "end write"; try_exclusive
-    succeeds while exclusive_free is true."""
+    succeeds while exclusive_free is true. Raises RuntimeError where FlockArchiveLock does."""
 
     def __init__(self) -> None:
         self.events: list[str] = []
         self.exclusive_free = True
+        self.shared = 0
+        self.exclusive = False
+        self.writing = False
 
     def hold_shared(self) -> None:
+        if self.exclusive:
+            raise RuntimeError("Release the exclusive read lock before holding it shared")
         self.events.append("hold_shared")
+        self.shared += 1
 
     def release_shared(self) -> None:
+        if not self.shared:
+            raise RuntimeError("The read lock is not held shared")
         self.events.append("release_shared")
+        self.shared -= 1
 
     def try_exclusive(self) -> bool:
+        if self.shared or self.exclusive:
+            raise RuntimeError("Release the read lock before trying it exclusively")
         self.events.append("try_exclusive")
-        return self.exclusive_free
+        self.exclusive = self.exclusive_free
+        return self.exclusive
 
     def release_exclusive(self) -> None:
+        if not self.exclusive:
+            raise RuntimeError("The read lock is not held exclusively")
         self.events.append("release_exclusive")
+        self.exclusive = False
 
     @contextmanager
     def write(self) -> Generator[None]:
+        if self.writing:
+            raise RuntimeError("The write lock is already held by this process")
         self.events.append("write")
+        self.writing = True
         try:
             yield
         finally:
+            self.writing = False
             self.events.append("end write")
 
 

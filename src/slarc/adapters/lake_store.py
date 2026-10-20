@@ -1,5 +1,6 @@
 # ABOUTME: ArchiveStore over the archive's DuckLake. Appends and drops wait in an open batch that
 # ABOUTME: commit writes in one transaction, under the write lock, after checking item revisions.
+import sqlite3
 from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -8,18 +9,20 @@ import duckdb
 import msgspec
 
 from slarc import archive_state
-from slarc.adapters.lake import connect_lake
+from slarc.adapters.lake import CATALOG, connect_lake
 from slarc.archive_state import LatestMessages
 from slarc.domain.envelope import Envelope, Kind, Meta
 from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem, run_envelope
 from slarc.ports import (
     ArchiveLock,
+    BlobStore,
     Commit,
     CommitConflict,
     Committed,
     DirectoryRef,
     DirectoryState,
     DownloadKey,
+    MaintenanceFailed,
     StoredMessage,
 )
 
@@ -97,6 +100,13 @@ DIRECTORY_REF = ("team", "kind", "id")
 # expect: of two lines with the same version, the later one wins.
 VERSION_ORDER = "coalesce(fetched_at, ''), coalesce(run, ''), rowid"
 
+# Each writes new files and schedules the old ones for deletion, deleting nothing.
+COMPACTION = (
+    "ducklake_flush_inlined_data",
+    "ducklake_merge_adjacent_files",
+    "ducklake_rewrite_data_files",
+)
+
 _decode = msgspec.json.Decoder()
 
 
@@ -104,6 +114,7 @@ class DuckLakeArchiveStore:
     """Holds the archive's read lock from open to close, and the write lock for each write."""
 
     def __init__(self, root: Path, ext_dir: Path, lock: ArchiveLock) -> None:
+        self._catalog = root / CATALOG
         self._lock = lock
         lock.hold_shared()
         try:
@@ -198,6 +209,40 @@ class DuckLakeArchiveStore:
                 self._con, "run", RUN_COLUMNS, [run_row(run_envelope(recorded, slarc_version))]
             )
 
+    def maintain(self, blobs: BlobStore) -> bool:
+        """Compacts the lake under the write lock. Then, if the read lock can be taken
+        exclusively, deletes under the write lock what nothing uses, and holds the read lock
+        shared again.
+
+        Holding the read lock exclusively proves no other process reads an older snapshot,
+        has data files in flight or has written a blob it has not committed, so the deletion
+        uses no time windows: it expires every snapshot but the newest, deletes every old and
+        orphaned data file and every blob no directory row references, and vacuums the
+        catalog once over a quarter of its pages are free. Returns whether the deletion ran.
+        Raises ValueError if the open batch is not empty, and MaintenanceFailed when the lake,
+        the catalog or the blob store fails.
+        """
+        if self._batch or self._drops:
+            raise ValueError("Commit or discard the open batch before maintaining the archive")
+        try:
+            with self._lock.write():
+                for function in COMPACTION:
+                    self._con.execute(f"SELECT count(*) FROM {function}('lake')").fetchall()
+            self._lock.release_shared()
+            try:
+                if not self._lock.try_exclusive():
+                    return False
+                try:
+                    with self._lock.write():
+                        self._delete_unused(blobs)
+                finally:
+                    self._lock.release_exclusive()
+                return True
+            finally:
+                self._lock.hold_shared()
+        except (duckdb.Error, sqlite3.Error, OSError) as error:
+            raise MaintenanceFailed(str(error).splitlines()[0].rstrip(".")) from None
+
     def channels(self, team: str) -> list[str]:
         rows = self._con.execute(
             "SELECT DISTINCT channel FROM message_version WHERE team = ?", [team]
@@ -258,6 +303,38 @@ class DuckLakeArchiveStore:
             if meta.kind not in MESSAGE_KINDS and meta.id and meta.blob:
                 references.append((meta.team or "", meta.kind, meta.id, meta.blob))
         return list(dict.fromkeys(references))
+
+    def _delete_unused(self, blobs: BlobStore) -> None:
+        snapshots = self._con.execute(
+            "SELECT snapshot_id FROM ducklake_snapshots('lake') ORDER BY snapshot_id"
+        ).fetchall()
+        if len(snapshots) > 1:
+            # Counting keeps the result's TIMESTAMPTZ columns, which need pytz, out of Python.
+            self._con.execute(
+                "SELECT count(*) FROM ducklake_expire_snapshots('lake', versions => ?)",
+                [[snapshot for (snapshot,) in snapshots[:-1]]],
+            ).fetchall()
+        for function in ("ducklake_cleanup_old_files", "ducklake_delete_orphaned_files"):
+            self._con.execute(
+                f"SELECT count(*) FROM {function}('lake', cleanup_all => true)"
+            ).fetchall()
+        rows = self._con.execute(
+            "SELECT DISTINCT blob FROM directory_entry WHERE blob IS NOT NULL"
+        ).fetchall()
+        for blob in sorted(set(blobs.ids()) - {blob for (blob,) in rows}):
+            blobs.delete(blob)
+        self._vacuum_catalog()
+
+    def _vacuum_catalog(self) -> None:
+        """Rewrites the SQLite catalog without its free pages once they are over a quarter."""
+        con = sqlite3.connect(self._catalog)
+        try:
+            free = con.execute("PRAGMA freelist_count").fetchall()[0][0]
+            pages = con.execute("PRAGMA page_count").fetchall()[0][0]
+            if free * 4 > pages:
+                con.execute("VACUUM")
+        finally:
+            con.close()
 
     def _directory_lines(self, team: str, kind: Kind, *, with_object: bool) -> list[Envelope]:
         rows = self._con.execute(

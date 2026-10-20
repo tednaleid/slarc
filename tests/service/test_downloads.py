@@ -561,7 +561,13 @@ def test_drain_commits_each_result(h: Harness, monkeypatch: pytest.MonkeyPatch):
     ]
 
 
-def test_result_for_a_removed_target_is_dropped(h: Harness, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize("idle", [True, False])
+def test_result_for_a_removed_target_is_dropped(
+    h: Harness, monkeypatch: pytest.MonkeyPatch, idle: bool
+):
+    """The dropped result's blob is unreferenced, so the run's maintenance deletes it if no
+    other command has the archive open."""
+    h.archive.idle = idle
     h.downloader.serve(SNIPPET_URL, snippet_bytes())
     fetch = h.downloader.fetch
 
@@ -583,7 +589,7 @@ def test_result_for_a_removed_target_is_dropped(h: Harness, monkeypatch: pytest.
     assert (TEAM, SNIPPET) not in h.archive.downloads()
     assert run_states(h, "file") == []
     assert report.files_saved == 0
-    assert h.blobs.exists(sha256(snippet_bytes()))
+    assert h.blobs.exists(sha256(snippet_bytes())) is not idle
 
 
 def drop_download(h: Harness, target: str) -> None:

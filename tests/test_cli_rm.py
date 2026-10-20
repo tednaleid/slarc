@@ -3,18 +3,23 @@
 import dataclasses
 import re
 import shutil
+import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 
+import duckdb
 import pytest
 from typer.testing import CliRunner
 
 from slarc import bootstrap, cli
-from slarc.adapters.lake import CATALOG
+from slarc.adapters.lake import CATALOG, DATA_DIR
 from slarc.adapters.lake_store import VERSION_ORDER, DuckLakeArchiveStore
 from slarc.cli import app
 from slarc.domain.tracking import RunRecord
-from slarc.ports import ArchiveStore, ArchiveWriteFailed, Commit, CommitConflict
+from slarc.ports import ArchiveStore, Commit, CommitConflict, MaintenanceFailed
 from slarc.service.remove import Removal
+from tests.adapters.test_locks import HOLDER
 from tests.contract.test_duckdb_index import envelope
 from tests.fakes import FakeArchiveLock
 from tests.recorded_fixtures import RECORDED, RECORDED_TEAM, recorded_lake, recorded_lines
@@ -164,7 +169,7 @@ def test_rm_again_cleans_up_nothing_to_do(archive: Path, tmp_path: Path, ext_dir
     assert snapshot(archive, ext_dir) == before
 
 
-def test_rm_cleanup_only_prompts_and_sweeps(archive: Path, tmp_path: Path, ext_dir: Path) -> None:
+def test_rm_cleanup_only_prompts_and_deletes(archive: Path, tmp_path: Path, ext_dir: Path) -> None:
     invoke(tmp_path, "rm", "#all-naleid", "--yes", "--root", str(archive))
     store = DuckLakeArchiveStore(archive, ext_dir, FakeArchiveLock())
     for line in recorded_lines(f"raw/{RECORDED_TEAM}/{ALL_NALEID}/*.jsonl"):
@@ -183,32 +188,125 @@ def test_rm_cleanup_only_prompts_and_sweeps(archive: Path, tmp_path: Path, ext_d
     assert channel_messages(archive, ext_dir, ALL_NALEID) == 0
 
 
-def test_rm_interrupted_sweep_says_to_run_it_again(
-    archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_rm_reports_a_maintenance_failure_after_committing(
+    archive: Path, tmp_path: Path, ext_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def interrupt(*args: object) -> None:
-        raise KeyboardInterrupt
+    def disk_full(*args: object) -> bool:
+        raise MaintenanceFailed("No space left on device")
 
-    monkeypatch.setattr(cli, "sweep", interrupt)
-    result = invoke(tmp_path, "rm", "#all-naleid", "--yes", "--root", str(archive))
-    assert result.exit_code == 130
-    output = " ".join(result.output.split())
-    assert "Interrupted; progress so far is saved. Run the same slarc rm again to finish it." in (
-        output
-    )
-
-
-def test_rm_failed_sweep_says_to_run_it_again(
-    archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def disk_full(*args: object) -> None:
-        raise ArchiveWriteFailed(archive / CATALOG, "No space left on device")
-
-    monkeypatch.setattr(cli, "sweep", disk_full)
+    monkeypatch.setattr(DuckLakeArchiveStore, "maintain", disk_full)
     result = invoke(tmp_path, "rm", "#all-naleid", "--yes", "--root", str(archive))
     assert result.exit_code == 1
     output = " ".join(result.output.split())
-    assert "No space left on device. Run the same slarc rm again to finish it." in output
+    assert output == (
+        "The run is saved, but maintaining the archive failed (No space left on device); "
+        "the next pull or rm tries again."
+    )
+    assert channel_messages(archive, ext_dir, ALL_NALEID) == 0
+
+
+def test_rm_help_no_longer_warns_about_a_running_pull(tmp_path: Path) -> None:
+    result = invoke(tmp_path, "rm", "--help")
+    assert result.exit_code == 0
+    assert "pull is running" not in " ".join(result.output.split())
+
+
+def message_rows_on_disk(root: Path, channel: str) -> int:
+    """The channel's message rows in every Parquet file under data/, referenced or not."""
+    con = duckdb.connect()
+    try:
+        count = 0
+        for path in (root / DATA_DIR).rglob("*.parquet"):
+            columns = {
+                row[0]
+                for row in con.execute("DESCRIBE FROM read_parquet(?)", [str(path)]).fetchall()
+            }
+            if {"channel", "kind"} <= columns:
+                count += con.execute(
+                    "SELECT count(*) FROM read_parquet(?) "
+                    "WHERE channel = ? AND kind IN ('message', 'deleted')",
+                    [str(path), channel],
+                ).fetchall()[0][0]
+        return count
+    finally:
+        con.close()
+
+
+def catalog_tables_mentioning(root: Path, text: str) -> set[str]:
+    con = sqlite3.connect(root / CATALOG)
+    try:
+        names = [
+            row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        ]
+        return {
+            name
+            for name in names
+            if any(text in str(row) for row in con.execute(f'SELECT * FROM "{name}"'))
+        }
+    finally:
+        con.close()
+
+
+def blob_ids(root: Path) -> set[str]:
+    return {path.name for path in (root / "blobs").rglob("*") if path.is_file()}
+
+
+def referenced_blobs(root: Path, ext_dir: Path) -> set[str]:
+    query = "SELECT DISTINCT blob FROM directory_entry WHERE blob IS NOT NULL"
+    return {blob for (blob,) in lake_rows(root, ext_dir, query)}
+
+
+def test_rm_physically_removes_a_conversation_when_idle(
+    archive: Path, tmp_path: Path, ext_dir: Path
+) -> None:
+    before = blob_ids(archive)
+    assert message_rows_on_disk(archive, ALL_NALEID) > 0
+    result = invoke(tmp_path, "rm", "#all-naleid", "--yes", "--root", str(archive))
+    assert result.exit_code == 0, result.output
+    assert result.output.strip().startswith("Stopped tracking 1 item; deleted ")
+
+    assert message_rows_on_disk(archive, ALL_NALEID) == 0
+    # The removed tracked item and the run's args keep the id, so their columns' minimum and
+    # maximum can name it; no other catalog row, inlined rows included, does.
+    assert catalog_tables_mentioning(archive, ALL_NALEID) <= {
+        "ducklake_file_column_stats",
+        "ducklake_table_column_stats",
+    }
+    after = blob_ids(archive)
+    assert after < before
+    assert after == referenced_blobs(archive, ext_dir)
+
+
+def test_deletion_waits_while_another_process_holds_the_archive(
+    archive: Path, tmp_path: Path, ext_dir: Path
+) -> None:
+    before = blob_ids(archive)
+    holder = subprocess.Popen(
+        [sys.executable, "-c", HOLDER, archive, bootstrap._cache_home()],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert holder.stdout is not None and holder.stdin is not None
+    assert holder.stdout.readline() == "held\n"
+    try:
+        result = invoke(tmp_path, "rm", "#all-naleid", "--yes", "--root", str(archive))
+    finally:
+        holder.stdin.close()
+        holder.wait(timeout=30)
+    assert result.exit_code == 0, result.output
+    assert " ".join(result.output.split()) == (
+        "Stopped tracking 1 item. Their 14 messages, 4 files and 6 images are no longer in the "
+        "archive; the space is freed when the running slarc command finishes."
+    )
+    assert channel_messages(archive, ext_dir, ALL_NALEID) == 0
+    assert message_rows_on_disk(archive, ALL_NALEID) > 0
+    assert blob_ids(archive) == before
+
+    # Without a session the pull reaches no workspace, and its run still maintains the archive.
+    invoke(tmp_path, "pull", "--root", str(archive))
+    assert message_rows_on_disk(archive, ALL_NALEID) == 0
+    assert blob_ids(archive) == referenced_blobs(archive, ext_dir) < before
 
 
 def test_rm_thread_in_tracked_conversation_reports_kept(f: Fixture) -> None:  # noqa: F811
@@ -278,3 +376,23 @@ def test_rm_that_keeps_conflicting_fails_and_removes_nothing(
         assert isinstance(state["tables"], dict)
         del state["tables"]["run"]
     assert after == before
+
+
+def test_cleanup_result_says_when_the_space_is_freed() -> None:
+    removal = Removal(
+        items=[],
+        already_removed=[],
+        teams=[RECORDED_TEAM],
+        wiped_teams=[],
+        lines=2,
+        files=0,
+        images=1,
+        blobs=0,
+        kept_messages=0,
+        downloads=[],
+    )
+    assert cli._removal_result(removal, True) == "Cleaned up 2 lines and 1 image."
+    assert cli._removal_result(removal, False) == (
+        "Cleaned up 2 lines and 1 image; "
+        "the space is freed when the running slarc command finishes."
+    )

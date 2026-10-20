@@ -7,8 +7,8 @@ from typing import Literal
 import pytest
 
 from slarc.domain.envelope import Envelope, Meta
-from slarc.domain.tracking import DownloadState, TrackedItem
-from slarc.ports import Commit, CommitConflict, Committed
+from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
+from slarc.ports import BlobStore, Commit, CommitConflict, Committed, SlarcError
 from slarc.unit_of_work import UnitOfWork
 from tests.fakes import FakeClock, InMemoryArchiveStore, InMemoryBlobStore
 
@@ -258,3 +258,57 @@ def test_exit_records_a_conflict_in_the_run_errors():
     assert line.object["errors"] == [
         {"error": "Another slarc command changed the archive at the same time."}
     ]
+
+
+class MaintainedArchiveStore(InMemoryArchiveStore):
+    """Records append_run and maintain calls in order, and raises error from maintain."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        super().__init__()
+        self.calls: list[str] = []
+        self.error = error
+
+    def append_run(self, run: RunRecord, slarc_version: str) -> None:
+        self.calls.append("append_run")
+        super().append_run(run, slarc_version)
+
+    def maintain(self, blobs: BlobStore) -> bool:
+        self.calls.append("maintain")
+        if self.error is not None:
+            raise self.error
+        return super().maintain(blobs)
+
+
+@pytest.mark.parametrize("idle", [True, False])
+def test_exit_maintains_the_archive_after_the_run_row(idle: bool):
+    archive = MaintainedArchiveStore()
+    archive.idle = idle
+    blobs = InMemoryBlobStore()
+    unreferenced, _ = blobs.write([b"left by a removal"])
+    uow = UnitOfWork(archive, blobs, FakeClock(START), "rm", [], "0.1.0")
+    with uow:
+        assert uow.maintained is None
+
+    assert archive.calls == ["append_run", "maintain"]
+    assert uow.maintained is idle
+    assert blobs.exists(unreferenced) is not idle
+
+
+def test_a_maintenance_failure_after_a_clean_run_is_raised():
+    archive = MaintainedArchiveStore(SlarcError("maintenance failed"))
+    uow = UnitOfWork(archive, InMemoryBlobStore(), FakeClock(START), "pull", [], "0.1.0")
+    with pytest.raises(SlarcError, match="maintenance failed"), uow:
+        pass
+
+    assert len(run_lines(archive)) == 1
+    assert uow.maintained is None
+
+
+def test_a_maintenance_failure_does_not_mask_the_runs_own_error():
+    archive = MaintainedArchiveStore(SlarcError("maintenance failed"))
+    uow = UnitOfWork(archive, InMemoryBlobStore(), FakeClock(START), "pull", [], "0.1.0")
+    with pytest.raises(RuntimeError, match="boom"), uow:
+        raise RuntimeError("boom")
+
+    assert archive.calls == ["append_run", "maintain"]
+    assert len(run_lines(archive)) == 1

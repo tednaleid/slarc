@@ -28,7 +28,7 @@ from slarc.service.auth import AuthStatus, auth_status, store_pasted
 from slarc.service.export import export
 from slarc.service.listing import ArchiveListing, RemoteRow, list_archive, list_remote
 from slarc.service.pull import PullOptions, PullReport, pull
-from slarc.service.remove import Removal, apply_removal, plan_removal, sweep
+from slarc.service.remove import Removal, apply_removal, plan_removal
 from slarc.service.search import search
 from slarc.unit_of_work import UnitOfWork
 
@@ -61,7 +61,7 @@ NOTHING_TO_REMOVE = "Nothing to remove."
 NOTHING_REMOVED = "Nothing removed."
 CANNOT_PULL_AGAIN = "Messages deleted from Slack since they were pulled cannot be pulled again."
 LEFTOVERS = "what is left of removed items"
-RUN_RM_AGAIN = "Run the same slarc rm again to finish it."
+SPACE_FREED_LATER = "the space is freed when the running slarc command finishes"
 
 
 def _print_version(value: bool) -> None:
@@ -639,12 +639,15 @@ def export_command(
     out.print(f"Exported to {written.absolute()}.", markup=False)
 
 
-def _deleted_parts(removal: Removal) -> str:
-    """The lines, files and images a removal deletes, such as "2 lines and 1 file"; may be empty."""
+def _deleted_parts(removal: Removal, line: str = "line") -> str:
+    """The lines, files and images a removal deletes, such as "2 lines and 1 file"; may be empty.
+
+    line names what a removed line is called.
+    """
     parts = [
         _plural(count, noun)
         for count, noun in (
-            (removal.lines, "line"),
+            (removal.lines, line),
             (removal.files, "file"),
             (removal.images, "image"),
         )
@@ -666,12 +669,20 @@ def _removal_question(removal: Removal) -> str:
     return f"{question}\n{CANNOT_PULL_AGAIN}"
 
 
-def _removal_result(removal: Removal) -> str:
+def _removal_result(removal: Removal, maintained: bool | None) -> str:
+    """What the removal did. When maintenance found the archive in use, the bytes are still on
+    disk, so the message says they are out of the archive and freed later."""
     deleted = _deleted_parts(removal)
     if not removal.items:
-        return f"Cleaned up {deleted or LEFTOVERS}."
+        if maintained:
+            return f"Cleaned up {deleted or LEFTOVERS}."
+        return f"Cleaned up {deleted or LEFTOVERS}; {SPACE_FREED_LATER}."
     result = f"Stopped tracking {_plural(len(removal.items), 'item')}"
-    result += f"; deleted {deleted}." if deleted else "."
+    if deleted and not maintained:
+        gone = _deleted_parts(removal, "message")
+        result += f". Their {gone} are no longer in the archive; {SPACE_FREED_LATER}."
+    else:
+        result += f"; deleted {deleted}." if deleted else "."
     if removal.kept_messages:
         kept = _plural(removal.kept_messages, "message")
         result += f" Kept {kept} that other tracked items cover."
@@ -684,7 +695,7 @@ def rm_command(
         list[str],
         typer.Argument(
             help="Slack links, conversation ids, #channel-name, @user or a workspace name "
-            "to stop tracking. Do not run while a pull is running on the same archive.",
+            "to stop tracking.",
             show_default=False,
         ),
     ],
@@ -718,20 +729,15 @@ def rm_command(
                 declined = True
             if declined:
                 _fail(NOTHING_REMOVED)
+            # The index is closed by now: maintenance needs the store's hold to be this
+            # process's only hold on the read lock.
             with UnitOfWork(
                 archive, blobs, services.clock, "rm", args, __version__, services.run_suffix
             ) as uow:
                 removal = apply_removal(removal, uow, blobs)
-            try:
-                sweep(archive, blobs)
-            except SlarcError as error:
-                _fail(f"{error} {RUN_RM_AGAIN}")
-            except KeyboardInterrupt:
-                err.print(f"{INTERRUPTED} {RUN_RM_AGAIN}", markup=False)
-                raise typer.Exit(INTERRUPTED_EXIT) from None
     except SlarcError as error:
         _fail(str(error))
     except KeyboardInterrupt:
         err.print(INTERRUPTED, markup=False)
         raise typer.Exit(INTERRUPTED_EXIT) from None
-    out.print(_removal_result(removal), markup=False)
+    out.print(_removal_result(removal, uow.maintained), markup=False)
