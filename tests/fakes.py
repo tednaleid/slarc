@@ -55,13 +55,13 @@ class InMemoryArchiveStore:
         return archive_state.directory_objects(self._directory_lines(team, kind))
 
     def tracked_items(self) -> dict[tuple[str, str, str, str], TrackedItem]:
-        return archive_state.tracked_items(self.lines)
+        return archive_state.latest_runs(self.lines).tracked_items()
 
     def removed_items(self) -> dict[tuple[str, str, str, str], TrackedItem]:
-        return archive_state.removed_items(self.lines)
+        return archive_state.latest_runs(self.lines).removed_items()
 
     def downloads(self) -> dict[tuple[str, str], DownloadState]:
-        return archive_state.downloads(self.lines)
+        return archive_state.latest_runs(self.lines).downloads()
 
     def append_run(self, run: RunRecord, slarc_version: str) -> None:
         self.append(run_envelope(run, slarc_version))

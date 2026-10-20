@@ -10,7 +10,7 @@ from typing import BinaryIO
 import msgspec
 
 from slarc import archive_state
-from slarc.archive_state import LatestMessages
+from slarc.archive_state import LatestMessages, LatestRuns
 from slarc.domain.envelope import Envelope, Kind, Meta, decode_line, encode_line, month_of
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem, run_envelope
 from slarc.ports import ArchiveWriteFailed, DirectoryState, StoredMessage
@@ -31,6 +31,7 @@ class JsonlArchiveStore:
         self._root = root
         self._handles: dict[Path, BinaryIO] = {}
         self._messages: dict[tuple[str, str], LatestMessages] = {}
+        self._runs: LatestRuns | None = None
 
     def append(self, env: Envelope) -> None:
         meta = env.meta
@@ -39,6 +40,8 @@ class JsonlArchiveStore:
             cached = self._messages.get((meta.team or "", meta.channel or ""))
             if cached is not None:
                 cached.add(env)
+        elif meta.kind == "run" and self._runs is not None:
+            self._runs.add(env)
 
     def flush(self) -> None:
         for handle in self._handles.values():
@@ -66,13 +69,13 @@ class JsonlArchiveStore:
         return archive_state.directory_objects(self._read([self._directory_path(team, kind)]))
 
     def tracked_items(self) -> dict[tuple[str, str, str, str], TrackedItem]:
-        return archive_state.tracked_items(self._read([self._runs_path()]))
+        return self._latest_runs().tracked_items()
 
     def removed_items(self) -> dict[tuple[str, str, str, str], TrackedItem]:
-        return archive_state.removed_items(self._read([self._runs_path()]))
+        return self._latest_runs().removed_items()
 
     def downloads(self) -> dict[tuple[str, str], DownloadState]:
-        return archive_state.downloads(self._read([self._runs_path()]))
+        return self._latest_runs().downloads()
 
     def append_run(self, run: RunRecord, slarc_version: str) -> None:
         """Appends the run line and syncs it to disk, after syncing every line appended before it.
@@ -131,6 +134,12 @@ class JsonlArchiveStore:
                     if env.meta.kind == kind and env.meta.id and env.meta.blob:
                         references.append((team_dir.name, kind, env.meta.id, env.meta.blob))
         return list(dict.fromkeys(references))
+
+    def _latest_runs(self) -> LatestRuns:
+        """The folded run lines, read from runs.jsonl once and then kept current by append."""
+        if self._runs is None:
+            self._runs = archive_state.latest_runs(self._read([self._runs_path()]))
+        return self._runs
 
     def _path_of(self, meta: Meta) -> Path:
         if meta.kind == "run":

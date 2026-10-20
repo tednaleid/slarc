@@ -315,6 +315,54 @@ def test_downloads_latest_entry_across_runs(store_and_reopen):
         assert len(states) == 2
 
 
+def test_run_lines_appended_after_a_read_fold_in_version_order(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.append_run(run_record(R1, T1, tracked=[tracked("100.000000")]), VERSION)
+    store.downloads()
+    store.append_run(
+        run_record(
+            R3, T3, tracked=[tracked("300.000000")], downloads=[download("F1", "failed", 1)]
+        ),
+        VERSION,
+    )
+    store.append_run(
+        run_record(
+            R2, T2, tracked=[tracked("200.000000")], downloads=[download("F1", "pending", 0)]
+        ),
+        VERSION,
+    )
+
+    for current in (store, reopen()):
+        assert (
+            current.tracked_items()[(TEAM, "conversation", CHANNEL, "")].newest_ts == "300.000000"
+        )
+        assert current.downloads()[(TEAM, "F1")] == download("F1", "failed", 1)
+
+
+def test_jsonl_store_reads_runs_jsonl_once(
+    jsonl_store: JsonlArchiveStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    runs = tmp_path / "runs.jsonl"
+    jsonl_store.append_run(run_record(R1, T1, tracked=[tracked("100.000000")]), VERSION)
+    reads: list[Path] = []
+    real_read = JsonlArchiveStore._read
+
+    def counting_read(self, paths):
+        paths = list(paths)
+        reads.extend(paths)
+        return real_read(self, paths)
+
+    monkeypatch.setattr(JsonlArchiveStore, "_read", counting_read)
+    jsonl_store.tracked_items()
+    jsonl_store.removed_items()
+    jsonl_store.downloads()
+    jsonl_store.append_run(run_record(R2, T2, tracked=[tracked("200.000000")]), VERSION)
+    items = jsonl_store.tracked_items()
+
+    assert reads.count(runs) == 1
+    assert items[(TEAM, "conversation", CHANNEL, "")].newest_ts == "200.000000"
+
+
 def test_truncated_trailing_line_skipped_and_next_append_starts_new_line(tmp_path: Path):
     month = tmp_path / "raw" / TEAM / CHANNEL / "2026-10.jsonl"
     month.parent.mkdir(parents=True)

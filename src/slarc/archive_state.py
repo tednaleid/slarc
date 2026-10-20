@@ -6,7 +6,7 @@ from dataclasses import replace
 import msgspec
 
 from slarc.domain.envelope import Envelope, Meta
-from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem, run_from_envelope
+from slarc.domain.tracking import DownloadState, ItemKey, TrackedItem, run_from_envelope
 from slarc.ports import DirectoryState, StoredMessage
 
 
@@ -68,31 +68,46 @@ def directory_objects(lines: Iterable[Envelope]) -> dict[str, dict]:
     return {id_: env.object or {} for id_, env in latest_by_id(lines).items()}
 
 
-def _run_records(lines: Iterable[Envelope]) -> list[RunRecord]:
-    """Run records oldest first; a run line whose object does not convert is skipped."""
-    runs = sorted(
-        (env for env in lines if env.meta.kind == "run"), key=lambda e: version_key(e.meta)
-    )
-    records = []
-    for env in runs:
+class LatestRuns:
+    """The latest tracked item per key and download state per target, fed run lines in any order.
+
+    A run line whose object does not convert is skipped.
+    """
+
+    def __init__(self) -> None:
+        self._tracked: dict[ItemKey, tuple[tuple[str, str], TrackedItem]] = {}
+        self._downloads: dict[tuple[str, str], tuple[tuple[str, str], DownloadState]] = {}
+
+    def add(self, env: Envelope) -> None:
+        if env.meta.kind != "run":
+            return
         try:
-            records.append(run_from_envelope(env))
+            run = run_from_envelope(env)
         except msgspec.ValidationError:
-            continue
-    return records
+            return
+        key = version_key(env.meta)
+        for item in run.tracked:
+            held = self._tracked.get(item.key)
+            if held is None or key >= held[0]:
+                self._tracked[item.key] = (key, item)
+        for state in run.downloads:
+            target = (state.team_id, state.target)
+            held_state = self._downloads.get(target)
+            if held_state is None or key >= held_state[0]:
+                self._downloads[target] = (key, state)
+
+    def tracked_items(self) -> dict[ItemKey, TrackedItem]:
+        return {k: item for k, (_, item) in self._tracked.items() if item.status != "removed"}
+
+    def removed_items(self) -> dict[ItemKey, TrackedItem]:
+        return {k: item for k, (_, item) in self._tracked.items() if item.status == "removed"}
+
+    def downloads(self) -> dict[tuple[str, str], DownloadState]:
+        return {target: state for target, (_, state) in self._downloads.items()}
 
 
-def _latest_tracked(lines: Iterable[Envelope]) -> dict[tuple[str, str, str, str], TrackedItem]:
-    return {item.key: item for run in _run_records(lines) for item in run.tracked}
-
-
-def tracked_items(lines: Iterable[Envelope]) -> dict[tuple[str, str, str, str], TrackedItem]:
-    return {key: item for key, item in _latest_tracked(lines).items() if item.status != "removed"}
-
-
-def removed_items(lines: Iterable[Envelope]) -> dict[tuple[str, str, str, str], TrackedItem]:
-    return {key: item for key, item in _latest_tracked(lines).items() if item.status == "removed"}
-
-
-def downloads(lines: Iterable[Envelope]) -> dict[tuple[str, str], DownloadState]:
-    return {(d.team_id, d.target): d for run in _run_records(lines) for d in run.downloads}
+def latest_runs(lines: Iterable[Envelope]) -> LatestRuns:
+    latest = LatestRuns()
+    for env in lines:
+        latest.add(env)
+    return latest
