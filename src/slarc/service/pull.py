@@ -18,7 +18,7 @@ from slarc.domain.links import (
     message_link,
 )
 from slarc.domain.plain import plain_text
-from slarc.domain.tracking import TrackedItem, item_label
+from slarc.domain.tracking import ItemKey, TrackedItem, item_label
 from slarc.ports import (
     ArchiveWriteFailed,
     AuthFailed,
@@ -55,7 +55,6 @@ RATE_LIMIT_WAIT = "rate_limit_wait_s"
 API_CALLS = "api_calls"
 THREADS_READ = "threads_read"
 
-type ItemKey = tuple[str, str, str, str]
 # Why a thread was read: a thread or message link, a parent in history, a search hit, an active
 # thread, a --full re-read, or a retry of a read that failed in an earlier pull.
 type ThreadReason = Literal["link", "history", "search", "active", "full", "retry"]

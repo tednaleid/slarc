@@ -8,14 +8,12 @@ import msgspec
 from slarc.domain.directory import directory_image_url
 from slarc.domain.envelope import Envelope
 from slarc.domain.links import ConversationSel, Selector, WorkspaceSel
-from slarc.domain.tracking import DownloadState, TrackedItem
+from slarc.domain.tracking import DownloadState, ItemKey, TrackedItem
 from slarc.ports import ArchiveStore, BlobStore, QueryIndex, SlarcError
 from slarc.service.downloads import image_urls
 from slarc.service.listing import workspace_domains
 from slarc.service.selectors import archived_conversation, only_workspace
 from slarc.unit_of_work import UnitOfWork
-
-type ItemKey = tuple[str, str, str, str]
 
 
 @dataclass(frozen=True)
@@ -56,11 +54,11 @@ def plan_removal(
     A selector naming only removed items is accepted, so running rm again finishes its sweep.
     """
     tracked = archive.tracked_items()
-    candidates = {**archive.removed_items(), **tracked}
+    removed = archive.removed_items()
     domains = {domain: team for team, domain in workspace_domains(index).items()}
     named: dict[ItemKey, TrackedItem] = {}
     for text, selector in selectors:
-        found = _named(selector, channel_mode, candidates, domains, archive)
+        found = _named(selector, channel_mode, tracked, removed, domains, archive)
         if not found:
             raise SlarcError(f"Nothing tracked matches {text}.")
         for item in found:
@@ -86,6 +84,7 @@ def plan_removal(
 def apply_removal(removal: Removal, uow: UnitOfWork) -> None:
     """Records the removal in the run; the unit of work appends the run line on exit."""
     run = uow.run
+    run.teams = list(removal.teams)
     run.tracked.extend(msgspec.structs.replace(item, status="removed") for item in removal.items)
     run.downloads.extend(removal.downloads)
     run.counts["lines_deleted"] = removal.lines
@@ -223,17 +222,16 @@ def _versions(lines: Iterable[Envelope]) -> dict[str, list[Envelope]]:
 def _covered(versions: dict[str, list[Envelope]], items: list[TrackedItem]) -> set[str]:
     """The stored messages of one channel that its tracked items cover.
 
-    A conversation covers all of them, a thread its parent and every message whose thread_ts
-    in any version is the parent's ts, and a message itself.
+    A conversation covers all of them. A thread or message covers the message at its ts and
+    every message whose thread_ts in any version is that ts, since pull stores its replies.
     """
     if any(item.kind == "conversation" for item in items):
         return set(versions)
-    threads = {item.ts for item in items if item.kind == "thread"}
-    singles = {item.ts for item in items if item.kind == "message"} | threads
+    parents = {item.ts for item in items}
     return {
         ts
         for ts, lines in versions.items()
-        if ts in singles or any((env.object or {}).get("thread_ts") in threads for env in lines)
+        if ts in parents or any((env.object or {}).get("thread_ts") in parents for env in lines)
     }
 
 
@@ -254,14 +252,23 @@ def _kept_messages(
 def _named(
     selector: Selector,
     channel_mode: bool,
-    candidates: dict[ItemKey, TrackedItem],
+    tracked: dict[ItemKey, TrackedItem],
+    removed: dict[ItemKey, TrackedItem],
     domains: dict[str, str],
     archive: ArchiveStore,
 ) -> list[TrackedItem]:
-    """The tracked or removed items a selector names, resolved without Slack."""
+    """The tracked or removed items a selector names, resolved without Slack.
+
+    A selector without a link names the only workspace with tracked items, or with removed
+    items when nothing is tracked.
+    """
+    candidates = {**removed, **tracked}
     if not candidates:
         return []
-    team = only_workspace(candidates) if selector.domain is None else domains.get(selector.domain)
+    if selector.domain is None:
+        team = only_workspace(tracked or removed)
+    else:
+        team = domains.get(selector.domain)
     if team is None:
         return []
     in_team = [item for item in candidates.values() if item.team_id == team]
@@ -278,5 +285,14 @@ def _named(
     elif selector.thread_ts is not None:
         wanted = {("thread", selector.channel, str(selector.thread_ts))}
     else:
-        wanted = {(kind, selector.channel, str(selector.ts)) for kind in ("thread", "message")}
+        ts = str(selector.ts)
+        wanted = {(kind, selector.channel, ts) for kind in ("thread", "message")}
+        if not any(item.key[1:] in wanted for item in in_team):
+            wanted = {("thread", selector.channel, _thread_of(team, selector.channel, ts, archive))}
     return [item for item in in_team if item.key[1:] in wanted]
+
+
+def _thread_of(team: str, channel: str, ts: str, archive: ArchiveStore) -> str:
+    """The thread a stored message belongs to, as pull resolves a link to a reply."""
+    stored = archive.stored_messages(team, channel).get(ts)
+    return (stored.thread_ts if stored is not None else None) or ts

@@ -34,6 +34,7 @@ from tests.service.pull_harness import (
 THREAD_LINK = f"{BASE}/p1792410693663869"
 REPLY_LINK = f"{BASE}/p{REPLY_TS.replace('.', '')}?thread_ts={PARENT_TS}&cid={CHANNEL}"
 SNIPPET_LINK = f"{BASE}/p1792422552941749"
+REPLY_MESSAGE_LINK = f"{BASE}/p{REPLY_TS.replace('.', '')}"
 SECOND_CHANNEL = "C0SECOND01"
 SECOND_LINK = f"https://naleidworkspace.slack.com/archives/{SECOND_CHANNEL}"
 THREAD_FILE = "F0CB7HWPUTA"
@@ -178,7 +179,7 @@ def test_rm_conversation_deletes_its_lines_and_unreferenced_files(h: Harness):
     assert avatar(ME) in image_ids(h)
     assert removal.blobs > 0
     run = h.last_run()
-    assert run.command == "rm"
+    assert (run.command, run.teams) == ("rm", [TEAM])
     assert [(i.key, i.status) for i in run.tracked] == [(item("conversation"), "removed")]
     removed = {d.target for d in run.downloads if d.status == "removed"}
     assert {*SPIKE_FILES, TOMBSTONE_FILE} <= removed
@@ -320,6 +321,39 @@ def test_rm_reply_link_removes_its_thread_item(h: Harness):
     removal = plan(h, REPLY_LINK)
 
     assert keys(removal.items) == [item("thread", ts=PARENT_TS)]
+
+
+def test_rm_message_link_to_a_reply_names_its_thread(h: Harness):
+    h.pull(BASE, THREAD_LINK)
+
+    removal = plan(h, REPLY_MESSAGE_LINK)
+
+    assert keys(removal.items) == [item("thread", ts=PARENT_TS)]
+
+
+def test_rm_keeps_replies_stored_under_a_tracked_message_item(h: Harness):
+    parent, reply_ts = ts_on(18, 9), ts_on(18, 10)
+    h.pull(BASE, f"{SECOND_LINK}/p{parent.replace('.', '')}")
+    assert item("message", SECOND_CHANNEL, parent) in keys(h.tracked())
+    thread_file = spike(f"files.info.{THREAD_FILE}")["file"]
+    reply = message(reply_ts, thread_ts=parent, files=[thread_file])
+    h.gateway.conversations[SECOND_CHANNEL].append(reply)
+    pull_and_download(h)
+    assert reply_ts in stored(h, TEAM, SECOND_CHANNEL)
+
+    rm(h, BASE)
+
+    assert stored(h, TEAM, SECOND_CHANNEL) == {parent, reply_ts}
+    assert file_ids(h) == {THREAD_FILE}
+
+
+def test_link_less_selector_names_the_only_tracked_workspace(h: Harness):
+    h.pull(BASE, OTHER_LINK)
+    rm(h, "other")
+
+    removal = plan(h, "#all-naleid")
+
+    assert keys(removal.items) == [item("conversation")]
 
 
 def test_rm_message_link_names_its_thread_and_message_items(h: Harness):

@@ -7,6 +7,8 @@ import msgspec
 from slarc.domain.directory import DirectoryView
 from slarc.domain.envelope import Envelope, Meta
 
+type ItemKey = tuple[str, str, str, str]
+
 
 class TrackedItem(msgspec.Struct, kw_only=True):
     team_id: str
@@ -26,7 +28,7 @@ class TrackedItem(msgspec.Struct, kw_only=True):
     retry_threads: list[str] = []
 
     @property
-    def key(self) -> tuple[str, str, str, str]:
+    def key(self) -> ItemKey:
         return (self.team_id, self.kind, self.channel, self.ts or "")
 
 
