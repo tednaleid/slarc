@@ -8,9 +8,13 @@ from slarc.domain.directory import ConversationKind, DirectoryView, conversation
 from slarc.domain.tracking import TrackedItem, item_label
 from slarc.ports import ArchiveStore, QueryIndex, SlackConnector
 from slarc.service.auth import domain_of
-from slarc.service.downloads import QUEUED_STATUSES, image_urls, outstanding_downloads
+from slarc.service.downloads import (
+    QUEUED_STATUSES,
+    SKIPPED_STATUSES,
+    image_urls,
+    outstanding_downloads,
+)
 
-SKIPPED_STATUSES = ("too_large", "forbidden")
 WORKSPACE_DOMAINS = "SELECT team_id, domain FROM workspace"
 KIND_ORDER: tuple[ConversationKind, ...] = ("channel", "group_dm", "dm")
 

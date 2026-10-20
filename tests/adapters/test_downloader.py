@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 
 from slarc.adapters.blob_store import FsBlobStore
-from slarc.adapters.downloader import HttpDownloader
+from slarc.adapters.downloader import OUTSIDE_TIMEOUT_S, HttpDownloader
 from slarc.ports import BlobStore, DownloadJob, Session
 from tests.fakes import InMemoryBlobStore
 
@@ -230,3 +230,22 @@ def test_closing_fetch_stops_an_in_flight_download(tmp_path: Path):
 
     assert time.monotonic() - started < 1.0
     assert list(tmp_path.rglob(".tmp-*")) == []
+
+
+def test_outside_sites_get_a_shorter_timeout_than_slack_files():
+    timeouts: dict[str, dict] = {}
+    lock = threading.Lock()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        with lock:
+            timeouts[str(request.url)] = request.extensions["timeout"]
+        return httpx.Response(200, content=b"bytes")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), timeout=60.0)
+    fetcher = HttpDownloader(InMemoryBlobStore(), {TEAM: SESSION}, client)
+
+    list(fetcher.fetch([job(FILE_URL, slack_auth=True), job(GITHUB_URL)], 2))
+
+    assert set(timeouts[FILE_URL].values()) == {60.0}
+    assert set(timeouts[GITHUB_URL].values()) == {OUTSIDE_TIMEOUT_S}
+    assert OUTSIDE_TIMEOUT_S == 15.0

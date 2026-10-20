@@ -10,8 +10,9 @@ from slarc.ports import ArchiveStore, DirectoryState, StoredMessage
 class HeldConversation:
     """What the archive holds for one conversation, read once and kept current as lines append.
 
-    listed holds the ts of each message history returned in this run, read_threads the
-    thread_ts of each thread read in this run, and failed_threads those whose read failed.
+    listed holds the ts of each message history returned in this run, counted the ts of each
+    message counted as seen in this run, read_threads the thread_ts of each thread read in this
+    run, and failed_threads those whose read failed.
     """
 
     def __init__(self, archive: ArchiveStore, team_id: str, channel: str) -> None:
@@ -20,6 +21,7 @@ class HeldConversation:
         self._archive = archive
         self.stored = archive.stored_messages(team_id, channel)
         self.listed: set[str] = set()
+        self.counted: set[str] = set()
         self.read_threads: set[str] = set()
         self.failed_threads: set[str] = set()
         self._replies: dict[str, set[str]] = {}

@@ -53,6 +53,8 @@ NO_TRACKED_ITEMS = "No tracked items yet. Pull a Slack link to start tracking it
 NO_MATCHES = "No messages match."
 LOCAL_TIME = "%Y-%m-%d %H:%M"
 FETCHED_AT = "%Y-%m-%dT%H:%M:%SZ"
+DOWNLOADS_ROW = "Downloads"
+DIRECTORY_KINDS = "(users, emoji, files)"
 
 
 def _print_version(value: bool) -> None:
@@ -137,16 +139,17 @@ def auth(
 
 
 class RichReporter:
-    """Shows a progress bar per item on stderr, with warnings printed above the bars.
+    """Shows a progress bar per item and one for downloads on stderr, with warnings above them.
 
-    The bars start with the first item, so a run that fails before then prints only its error.
+    The bars start with the first one shown, so a run that fails before then prints only its
+    error. Rich shares columns across rows, so each row carries its own detail text.
     """
 
     def __init__(self, console: Console) -> None:
         self._progress = Progress(
             TextColumn("{task.description}", markup=False),
             BarColumn(),
-            TextColumn("{task.completed} read, {task.fields[new]} new"),
+            TextColumn("{task.fields[detail]}", markup=False),
             console=console,
         )
         self._tasks: dict[str, TaskID] = {}
@@ -170,11 +173,17 @@ class RichReporter:
         self._progress.console.print(f"Warning: {msg}", style="yellow", markup=False)
 
     def progress(self, label: str, done: int, new: int, total: int | None) -> None:
+        self._show(label, done, total, f"{done} read, {new} new")
+
+    def downloads(self, done: int, failed: int, total: int) -> None:
+        self._show(DOWNLOADS_ROW, done, total, f"{done}/{total}, {failed} failed")
+
+    def _show(self, label: str, done: int, total: int | None, detail: str) -> None:
         if label not in self._tasks:
             if not self._tasks:
                 self._progress.start()
-            self._tasks[label] = self._progress.add_task(label, total=total, new=new)
-        self._progress.update(self._tasks[label], completed=done, total=total, new=new)
+            self._tasks[label] = self._progress.add_task(label, total=total, detail=detail)
+        self._progress.update(self._tasks[label], completed=done, total=total, detail=detail)
 
 
 def _check_date(flag: str, value: str | None) -> None:
@@ -191,11 +200,27 @@ def _plural(count: int, noun: str) -> str:
 
 
 def _summary(report: PullReport) -> str:
-    return (
+    """The items pulled and lines appended, then this run's downloads when there were any."""
+    directory = report.lines_appended - report.messages_new
+    pulled = (
         f"Pulled {_plural(report.items_pulled, 'item')}: "
-        f"{_plural(report.lines_appended, 'new line')}, "
-        f"{_plural(report.downloads_pending, 'download')} pending."
+        f"{_plural(report.messages_new, 'new message')}, "
+        f"{_plural(directory, 'new directory line')}"
     )
+    lines = [f"{pulled} {DIRECTORY_KINDS}." if directory else f"{pulled}."]
+    saved = [
+        _plural(count, noun)
+        for count, noun in ((report.files_saved, "file"), (report.images_saved, "image"))
+        if count
+    ]
+    parts = [f"{' and '.join(saved)} saved"] if saved else []
+    if report.downloads_pending:
+        parts.append(f"{report.downloads_pending} pending for the next pull")
+    if report.downloads_skipped:
+        parts.append(f"{report.downloads_skipped} skipped")
+    if parts:
+        lines.append(f"Downloads: {', '.join(parts)}.")
+    return "\n".join(lines)
 
 
 def _archive_for_pull(

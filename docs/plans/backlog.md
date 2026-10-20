@@ -49,8 +49,7 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 - The "Slack returns no message" warning link leaves out `thread_ts` for a reply (`service/pull.py` `_missing_message`).
 - Bots are fetched only when not yet stored, so a bot rename is never recorded, and `bots.info` errors other than `AuthFailed` are dropped without a warning (`service/directory_refresh.py` `unknown_bots`).
 - A tracked `message` item keeps kind `message` after it gains replies, so `slarc list` shows "message" for a thread (`service/pull.py`).
-- `messages_seen` counts a thread parent twice, once from history and once from its replies (`service/pull.py`).
-- `_append_read` mutates the frozen `DirectoryView`'s `bots` dict (`service/pull.py`).
+- `_append_bots` mutates the frozen `DirectoryView`'s `bots` dict (`service/pull.py`).
 - Each workspace gets two `auth.test` calls per run, in `SessionConnector.connect` and `Workspaces._open`.
 - A tracked DM may fail `search.messages` (DM search syntax is unverified) and warn on every pull; check `in:<#D...>` read-only and skip search for DMs if it fails (`service/pull.py` `_search_replies`).
 - `--max-file-size 0` is left out of the run line's args because `0 == False` (`cli.py` `_run_args`).

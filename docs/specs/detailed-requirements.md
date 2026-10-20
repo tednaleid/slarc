@@ -202,6 +202,12 @@ Items marked (spike) were confirmed against the test workspace; the rest come fr
 - Images: every image a message references is downloaded under the same limit: `image` blocks (giphy), attachment `image_url` and `thumb_url`, `service_icon`, `bot_profile` icons, custom emoji images and user avatars (`profile.image_512`). External URLs rot, so the archive keeps its own copy.
 - Downloads run in parallel (`--downloads N`, default 4). API calls run one at a time through the rate limiter; concurrent API calls are added only if measurement shows the need.
 - A failed download stays queued and is retried on the next pull. `forbidden`, `deleted` and `external` are terminal.
+- A request to Slack's file host times out after 60 seconds; a request to any other site after 15.
+
+**Progress and summary**
+
+- Each item gets a progress bar showing messages read, each counted once per run, and how many were new. The bar moves after each history page and each thread read. Downloads get one more bar, `Downloads`, showing done, total and failed.
+- A pull ends with `Pulled N items: M new messages, D new directory lines (users, emoji, files).`, then, when there were any, `Downloads:` with the files and images saved, those pending for the next pull and those skipped (too large or forbidden).
 
 ## Storage
 

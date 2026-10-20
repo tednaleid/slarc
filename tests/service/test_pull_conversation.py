@@ -69,6 +69,30 @@ def test_first_pull_pages_whole_range(h: Harness):
     assert item.last_read == {ME: spike("conversations.info")["channel"]["last_read"]}
 
 
+def test_thread_parent_read_in_history_and_replies_counts_once(h: Harness):
+    report = h.pull(BASE)
+
+    unique = {m["ts"] for m in channel_messages()}
+    assert report.messages_seen == len(unique)
+    assert h.last_run().counts["messages_seen"] == len(unique)
+    label, read, _, total = h.reporter.progress_updates[-1]
+    assert (label, read, total) == ("#all-naleid", len(unique), len(unique))
+
+
+def test_report_counts_message_and_deleted_lines_as_new_messages(h: Harness):
+    stamps = [ts_on(18, hour) for hour in range(3)]
+    h.serve(stamps)
+    first = h.pull(BASE)
+    h.change_message(stamps[1], text="edited")
+    h.remove_messages(stamps[2])
+
+    second = h.pull(options=PullOptions(full=True))
+
+    assert first.messages_new == 3
+    assert second.messages_new == 2
+    assert first.lines_appended > first.messages_new
+
+
 def test_progress_reported_per_page_and_item(h: Harness):
     stamps = [ts_on(18, hour) for hour in range(7)]
     h.serve(stamps, page_size=3)
@@ -83,6 +107,26 @@ def test_progress_reported_per_page_and_item(h: Harness):
         ("#all-naleid", 7, 7, 7),
     ]
     assert report.items_pulled == 1
+
+
+def test_progress_reported_after_each_thread_under_a_page(h: Harness):
+    first, second = ts_on(18, 1), ts_on(18, 3)
+    h.gateway.conversations[CHANNEL] = [
+        message(first, thread_ts=first, reply_count=1),
+        message(ts_on(18, 2), thread_ts=first),
+        message(second, thread_ts=second, reply_count=1),
+        message(ts_on(18, 4), thread_ts=second),
+    ]
+
+    h.pull(BASE)
+
+    assert h.reporter.progress_updates == [
+        ("#all-naleid", 0, 0, None),
+        ("#all-naleid", 2, 2, None),
+        ("#all-naleid", 3, 3, None),
+        ("#all-naleid", 4, 4, None),
+        ("#all-naleid", 4, 4, 4),
+    ]
 
 
 def test_progress_counts_only_changed_messages_as_new(h: Harness):
@@ -555,3 +599,35 @@ def test_workspace_selector_keeps_an_item_an_earlier_selector_widened(h: Harness
     [widened] = h.tracked()
     assert narrow.since is not None
     assert widened.since == date_to_ts("2026-10-01", end_of_day=False)
+
+
+def test_interrupted_thread_read_keeps_lines_appended_before_it(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+):
+    first, second = ts_on(18, 1), ts_on(18, 3)
+    stamps = [first, ts_on(18, 2), second, ts_on(18, 4)]
+    h.gateway.conversations[CHANNEL] = [
+        message(first, thread_ts=first, reply_count=1),
+        message(stamps[1], thread_ts=first),
+        message(second, thread_ts=second, reply_count=1),
+        message(stamps[3], thread_ts=second),
+    ]
+    served = h.gateway.replies
+
+    def interrupted_on_first(channel: str, ts: str) -> list[dict]:
+        if ts == first:
+            raise KeyboardInterrupt
+        return served(channel, ts)
+
+    monkeypatch.setattr(h.gateway, "replies", interrupted_on_first)
+    with pytest.raises(KeyboardInterrupt):
+        h.pull(BASE)
+
+    assert sorted(message_ts_since(h, 0)) == [first, second, stamps[3]]
+    [item] = h.last_run().tracked
+    assert (item.oldest_ts, item.backfill_complete) == (None, False)
+
+    monkeypatch.undo()
+    h.pull()
+
+    assert sorted(message_ts_since(h, 0)) == stamps

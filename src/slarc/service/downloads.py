@@ -1,5 +1,6 @@
 # ABOUTME: Queues downloads of the files and images messages reference, then drains the queue.
 # ABOUTME: A download lands as a directory line with meta.blob; other outcomes as download states.
+from dataclasses import dataclass
 from typing import Literal
 
 import msgspec
@@ -28,12 +29,23 @@ from slarc.unit_of_work import UnitOfWork
 
 TERMINAL_STATUSES = ("forbidden", "deleted", "external")
 QUEUED_STATUSES = ("pending", "failed")
+SKIPPED_STATUSES = ("too_large", "forbidden")
 DOWNLOAD_API = "download"
 FILES_INFO_API = "files.info"
 DIRECTORY_LIST_APIS: dict[Kind, str] = {"user": "users.list", "emoji": "emoji.list"}
 
 type DownloadKey = tuple[str, str]
 type SettledStatus = Literal["failed", "forbidden", "too_large", "deleted"]
+
+
+@dataclass(frozen=True)
+class DrainedDownloads:
+    """This run's files and images saved, and its downloads left queued or skipped."""
+
+    files_saved: int
+    images_saved: int
+    pending: int
+    skipped: int
 
 
 def image_urls(message: dict) -> list[str]:
@@ -104,22 +116,34 @@ def drain_downloads(
     max_bytes: int,
     connector: SlackConnector,
     reporter: Reporter,
-) -> int:
+) -> DrainedDownloads:
     """Downloads this run's pending targets and earlier runs' queue, recording each result.
 
-    Returns how many downloads are left queued, pending or failed.
+    The reporter hears how many jobs are done and failed before the first and after each result.
     """
     _requeue_earlier(uow, max_bytes)
     jobs = [_job(state, max_bytes) for state in uow.run.downloads if state.status == "pending"]
     jobs = _with_credentials(jobs, connector, reporter)
+    recorder = _Recorder(uow, connector)
     if jobs:
-        recorder = _Recorder(uow, connector)
+        done = failed = 0
+        reporter.downloads(done, failed, len(jobs))
         try:
             for result in downloader.fetch(jobs, parallelism):
                 recorder.record(result)
+                done += 1
+                if result.status != "ok":
+                    failed += 1
+                reporter.downloads(done, failed, len(jobs))
         finally:
             recorder.finish()
-    return sum(1 for state in uow.run.downloads if state.status in QUEUED_STATUSES)
+    states = uow.run.downloads
+    return DrainedDownloads(
+        files_saved=recorder.saved["file"],
+        images_saved=recorder.saved["image"],
+        pending=sum(1 for state in states if state.status in QUEUED_STATUSES),
+        skipped=sum(1 for state in states if state.status in SKIPPED_STATUSES),
+    )
 
 
 def _with_credentials(
@@ -270,13 +294,15 @@ class _Recorder:
     """Records each download result in the archive and the run's download states.
 
     A downloaded file is recorded with its files.info object. Users and emoji whose image
-    was downloaded get their new lines in finish, which reads their directory once.
+    was downloaded get their new lines in finish, which reads their directory once. saved
+    counts the files and images recorded with their blob.
     """
 
     def __init__(self, uow: UnitOfWork, connector: SlackConnector) -> None:
         self.uow = uow
         self.connector = connector
         self.images: dict[str, set[str]] = {}
+        self.saved: dict[Kind, int] = {"file": 0, "image": 0}
 
     def record(self, result: DownloadResult) -> None:
         job = result.job
@@ -329,6 +355,7 @@ class _Recorder:
             uow, kind, team=job.team_id, id=job.target, api=api, hash=digest, blob=blob
         )
         append_line(uow, Envelope(meta=meta, object=obj))
+        self.saved[kind] += 1
         self._replace(job, None)
 
     def _settle(self, job: DownloadJob, status: SettledStatus, error: str | None) -> None:

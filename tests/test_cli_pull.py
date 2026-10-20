@@ -1,20 +1,23 @@
 # ABOUTME: Tests for the `slarc pull` command through the CLI with a real archive on disk.
 # ABOUTME: Slack, credentials, the clock and the downloader are fakes swapped in through bootstrap.
+import io
 from collections.abc import Iterator
 from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 from typer.testing import CliRunner
 
 from slarc import bootstrap
 from slarc.adapters.credentials import CompositeSource, KeyringSource
-from slarc.cli import app
+from slarc.cli import RichReporter, _summary, app
 from slarc.config import create_archive
 from slarc.domain.envelope import decode_line
 from slarc.domain.tracking import RunRecord, run_from_envelope
 from slarc.ports import AuthFailed, BlobStore, CredentialReadError, Session
 from slarc.service.downloads import QUEUED_STATUSES
+from slarc.service.pull import PullReport
 from tests.fakes import (
     FakeClock,
     FakeCredentialSource,
@@ -222,8 +225,97 @@ def test_pull_reports_summary(f: Fixture):
     downloads = f.runs()[-1].downloads
     pending = sum(1 for state in downloads if state.status in QUEUED_STATUSES)
     assert pending > 0
-    expected = f"Pulled 1 item: {f.archive_lines()} new lines, {pending} downloads pending."
-    assert expected in result.stdout
+    messages = sum(len(path.read_bytes().splitlines()) for path in f.work.glob("raw/**/*.jsonl"))
+    directory = f.archive_lines() - messages
+    assert result.stdout.splitlines() == [
+        f"Pulled 1 item: {messages} new messages, {directory} new directory lines "
+        "(users, emoji, files).",
+        f"Downloads: {pending} pending for the next pull.",
+    ]
+
+
+def report(**counts: int) -> PullReport:
+    fields = {
+        "items_pulled": 1,
+        "lines_appended": 0,
+        "messages_new": 0,
+        "files_saved": 0,
+        "images_saved": 0,
+        "downloads_pending": 0,
+        "downloads_skipped": 0,
+    }
+    fields.update(counts)
+    return PullReport(
+        items_selected=1,
+        messages_seen=0,
+        skipped=[],
+        unreachable=[],
+        workspaces_pulled=1,
+        **fields,
+    )
+
+
+@pytest.mark.parametrize(
+    ("counts", "expected"),
+    [
+        (
+            {"lines_appended": 3, "messages_new": 3},
+            ["Pulled 1 item: 3 new messages, 0 new directory lines."],
+        ),
+        (
+            {"items_pulled": 2, "lines_appended": 2, "messages_new": 1},
+            ["Pulled 2 items: 1 new message, 1 new directory line (users, emoji, files)."],
+        ),
+        (
+            {
+                "lines_appended": 2470,
+                "messages_new": 608,
+                "files_saved": 85,
+                "images_saved": 74,
+                "downloads_pending": 7,
+                "downloads_skipped": 8,
+            },
+            [
+                "Pulled 1 item: 608 new messages, 1862 new directory lines (users, emoji, files).",
+                "Downloads: 85 files and 74 images saved, 7 pending for the next pull, 8 skipped.",
+            ],
+        ),
+        (
+            {"files_saved": 1, "downloads_skipped": 1},
+            [
+                "Pulled 1 item: 0 new messages, 0 new directory lines.",
+                "Downloads: 1 file saved, 1 skipped.",
+            ],
+        ),
+        (
+            {"images_saved": 1},
+            [
+                "Pulled 1 item: 0 new messages, 0 new directory lines.",
+                "Downloads: 1 image saved.",
+            ],
+        ),
+    ],
+)
+def test_summary_names_messages_directory_lines_and_downloads(
+    counts: dict[str, int], expected: list[str]
+):
+    assert _summary(report(**counts)).splitlines() == expected
+
+
+def test_reporter_shows_item_and_download_rows():
+    buffer = io.StringIO()
+    console = Console(file=buffer, width=120)
+
+    with RichReporter(console) as reporter:
+        reporter.downloads(0, 0, 7)
+        reporter.progress("#all-naleid", 3, 2, 3)
+        reporter.downloads(5, 1, 7)
+
+    output = buffer.getvalue()
+    assert "#all-naleid" in output
+    assert "3 read, 2 new" in output
+    assert "Downloads" in output
+    assert "5/7, 1 failed" in output
 
 
 def test_slarc_error_exits_1_without_traceback(f: Fixture):

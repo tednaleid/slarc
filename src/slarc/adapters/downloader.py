@@ -12,6 +12,7 @@ from slarc.ports import BlobStore, DownloadJob, DownloadResult, Session
 
 FORBIDDEN_STATUSES = (403, 404)
 MAX_REDIRECTS = 5
+OUTSIDE_TIMEOUT_S = 15.0
 SESSION_HINT = "The Slack session may have expired; sign in again and pull to retry."
 
 type FailedStatus = Literal["failed", "forbidden", "too_large"]
@@ -59,11 +60,16 @@ class HttpDownloader:
             return _result(job, "failed", f"Download failed: {type(error).__name__}.")
 
     def _download(self, job: DownloadJob, cancel: threading.Event) -> DownloadResult:
-        """Follows redirects itself, so each hop gets credentials only if it is a Slack file."""
+        """Follows redirects itself, so each hop gets credentials only if it is a Slack file.
+
+        A job outside Slack's file host gets a shorter timeout than the client's default.
+        """
         url = job.url
+        timeout = httpx.USE_CLIENT_DEFAULT if job.slack_auth else OUTSIDE_TIMEOUT_S
         for _ in range(MAX_REDIRECTS + 1):
             _raise_if_set(cancel)
-            with self._client.stream("GET", url, headers=self._headers(job, url)) as response:
+            headers = self._headers(job, url)
+            with self._client.stream("GET", url, headers=headers, timeout=timeout) as response:
                 if response.is_redirect and "location" in response.headers:
                     url = str(response.url.join(response.headers["location"]))
                     continue

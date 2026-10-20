@@ -1,6 +1,7 @@
 # ABOUTME: Tests for queueing, draining and recording downloads of files and images during a pull.
 # ABOUTME: A fake downloader serves bytes per URL into an in-memory blob store.
 import hashlib
+from itertools import accumulate
 
 import pytest
 
@@ -263,11 +264,11 @@ def test_drain_retries_earlier_runs_queue(h: Harness):
     h.downloader.jobs.clear()
 
     with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
-        left = drain_downloads(
+        drained = drain_downloads(
             uow, h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter
         )
 
-    assert left == 0
+    assert drained.pending == 0
     assert {job.target for job in h.downloader.jobs} == {SNIPPET, avatar(ME)}
     assert h.lines("file")[-1].meta.blob == sha256(snippet_bytes())
     assert outstanding_downloads(h.archive) == {}
@@ -418,3 +419,48 @@ def test_malformed_image_url_does_not_fail_the_pull(h: Harness):
     [job] = [job for job in h.downloader.jobs if job.target == bad]
     assert job.slack_auth is False
     assert report.downloads_pending >= 1
+
+
+def test_drain_reports_progress_before_and_after_each_result(h: Harness):
+    h.downloader.serve(SNIPPET_URL, snippet_bytes())
+    h.downloader.fail(avatar(ME), error="HTTP 500")
+
+    h.pull(SNIPPET_LINK)
+
+    total = len(h.downloader.jobs)
+    answered = [job.url for job in h.downloader.jobs if job.url in (SNIPPET_URL, avatar(ME))]
+    failed = accumulate(int(url == avatar(ME)) for url in answered)
+    expected = [(0, 0, total)] + [(done, f, total) for done, f in enumerate(failed, start=1)]
+    assert len(expected) == 3
+    assert h.reporter.download_updates == expected
+
+
+def test_drain_reports_no_progress_without_jobs(h: Harness):
+    with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
+        drain_downloads(uow, h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter)
+
+    assert h.reporter.download_updates == []
+
+
+def test_report_counts_this_runs_saved_and_skipped_downloads(h: Harness):
+    h.downloader.serve(SNIPPET_URL, snippet_bytes())
+    h.downloader.fail(avatar(ME), status="forbidden", error="HTTP 403")
+
+    first = h.pull(SNIPPET_LINK)
+
+    assert (first.files_saved, first.images_saved) == (1, 0)
+    assert (first.downloads_pending, first.downloads_skipped) == (0, 1)
+
+    second = h.pull()
+
+    assert (second.files_saved, second.images_saved) == (0, 0)
+    assert (second.downloads_pending, second.downloads_skipped) == (0, 0)
+
+
+def test_report_counts_too_large_as_skipped_and_images_saved(h: Harness):
+    h.downloader.serve(avatar(ME), b"avatar", "image/png")
+
+    report = h.pull(SNIPPET_LINK, options=PullOptions(max_file_bytes=100_000))
+
+    assert (report.files_saved, report.images_saved) == (0, 1)
+    assert (report.downloads_pending, report.downloads_skipped) == (0, 1)

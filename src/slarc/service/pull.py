@@ -74,14 +74,22 @@ class PullOptions:
 
 @dataclass
 class PullReport:
-    """unreachable holds why each workspace that could not connect was skipped."""
+    """unreachable holds why each workspace that could not connect was skipped.
+
+    messages_new counts the message and deleted lines appended; files_saved and images_saved
+    count this run's downloads, and downloads_skipped those too large or forbidden.
+    """
 
     items_selected: int
     items_pulled: int
     lines_appended: int
+    messages_new: int
     messages_seen: int
     skipped: list[str]
+    files_saved: int
+    images_saved: int
     downloads_pending: int
+    downloads_skipped: int
     unreachable: list[SlarcError]
     workspaces_pulled: int
 
@@ -119,7 +127,7 @@ def pull(
             except (NoSession, AuthFailed) as error:
                 run.skip_workspace(team_id, error)
                 unreachable.append(error)
-        pending = drain_downloads(
+        drained = drain_downloads(
             uow, downloader, options.downloads, options.max_file_bytes, run.workspaces, reporter
         )
     finally:
@@ -130,9 +138,13 @@ def pull(
         items_selected=len(items),
         items_pulled=run.pulled,
         lines_appended=counted(uow, LINES_APPENDED),
+        messages_new=run.messages_new,
         messages_seen=counted(uow, MESSAGES_SEEN),
         skipped=run.skipped,
-        downloads_pending=pending,
+        files_saved=drained.files_saved,
+        images_saved=drained.images_saved,
+        downloads_pending=drained.pending,
+        downloads_skipped=drained.skipped,
         unreachable=unreachable,
         workspaces_pulled=len(teams) - len(unreachable),
     )
@@ -170,6 +182,7 @@ class _PullRun:
         self.progress: _ItemProgress | None = None
         self.threads_read: dict[str, int] = {}
         self.pulled = 0
+        self.messages_new = 0
         self._threads_counted: set[tuple[str, str, str]] = set()
 
     def resolve(self, selectors: list[Selector]) -> list[TrackedItem]:
@@ -274,7 +287,6 @@ class _PullRun:
             held = HeldConversation(self.uow.archive, team_id, item.channel)
             self.progress = _ItemProgress(self.reporter, item_label(item, view), report_start=False)
             self._append_thread(held, item.ts or "", reads[item.key], view)
-            self.progress.seen += len(reads[item.key])
             self._finish(connection, held, item, view)
         for item in conversations:
             self._pull_conversation(connection, item, view)
@@ -513,18 +525,22 @@ class _PullRun:
         view: DirectoryView,
         reason: ThreadReason,
     ) -> None:
-        """Appends a page of history and the thread under each of parents, then flushes.
+        """Appends a page of history, then reads and appends the thread under each of parents.
 
-        A thread whose read fails with NotVisible or a plain SlarcError is kept in
-        held.failed_threads; NotVisible then propagates, and a plain SlarcError skips the thread
-        with a warning. AuthFailed and ArchiveWriteFailed propagate.
+        The page and each thread are flushed and reported as they are appended. A thread whose
+        read fails with NotVisible or a plain SlarcError is kept in held.failed_threads;
+        NotVisible then propagates, and a plain SlarcError skips the thread with a warning.
+        AuthFailed and ArchiveWriteFailed propagate.
         """
-        uow, gateway, team_id, channel = self.uow, connection.gateway, held.team_id, held.channel
-        threads: dict[str, list[dict]] = {}
+        if page:
+            self._append_bots(connection, page, view)
+            self._append_messages(held, page, HISTORY_API, view)
+            self._flush_and_report()
+        gateway, channel = connection.gateway, held.channel
         for ts in parents:
             held.read_threads.add(ts)
             try:
-                threads[ts] = gateway.replies(channel, ts)
+                messages = gateway.replies(channel, ts)
             except ThreadNotFound:
                 self._warn(_missing_message(connection.domain, channel, ts))
                 continue
@@ -541,18 +557,25 @@ class _PullRun:
                 )
                 held.failed_threads.add(ts)
                 continue
-            self._count_thread_read(team_id, channel, ts, reason)
-        read = [*page, *(m for messages in threads.values() for m in messages)]
-        bot_ids = {m["bot_id"] for m in read if m.get("bot_id")} - view.bots.keys()
-        bots = unknown_bots(gateway, team_id, bot_ids, uow.archive)
-        append_directory(uow, team_id, "bot", bots, BOTS_API)
+            self._count_thread_read(held.team_id, channel, ts, reason)
+            self._append_bots(connection, messages, view)
+            self._append_thread(held, ts, messages, view)
+            self._flush_and_report()
+
+    def _append_bots(
+        self, connection: Connection, messages: list[dict], view: DirectoryView
+    ) -> None:
+        """Appends the bots the messages name that the view does not know yet."""
+        team_id = connection.team_id
+        bot_ids = {m["bot_id"] for m in messages if m.get("bot_id")} - view.bots.keys()
+        bots = unknown_bots(connection.gateway, team_id, bot_ids, self.uow.archive)
+        append_directory(self.uow, team_id, "bot", bots, BOTS_API)
         view.bots.update(bots)
-        self._append_messages(held, page, HISTORY_API, view)
-        for thread_ts, messages in threads.items():
-            self._append_thread(held, thread_ts, messages, view)
-        uow.archive.flush()
+
+    def _flush_and_report(self) -> None:
+        self.uow.archive.flush()
         if self.progress is not None:
-            self.progress.add(len(read))
+            self.progress.report()
 
     def _append_messages(
         self, held: HeldConversation, messages: list[dict], api: str, view: DirectoryView
@@ -562,8 +585,8 @@ class _PullRun:
         appended = append_directory(uow, team_id, "file", files, api, keep_blob=True)
         held.files.update(appended)
         for message in messages:
-            count(uow, MESSAGES_SEEN)
             ts = message["ts"]
+            self._count_seen(held, ts)
             digest = content_hash("message", message)
             stored = held.stored.get(ts)
             if stored is None or stored.hash != digest:
@@ -609,8 +632,19 @@ class _PullRun:
             held.record(ts, StoredMessage(None, held.stored[ts].thread_ts, fetched_now(uow)))
             self._count_new()
 
+    def _count_seen(self, held: HeldConversation, ts: str) -> None:
+        """Counts a message read, for the run and the item in progress, the first time this run
+        reads it in the conversation."""
+        if ts in held.counted:
+            return
+        held.counted.add(ts)
+        count(self.uow, MESSAGES_SEEN)
+        if self.progress is not None:
+            self.progress.seen += 1
+
     def _count_new(self) -> None:
-        """Counts a message or deleted line appended for the item in progress."""
+        """Counts a message or deleted line appended, for the run and the item in progress."""
+        self.messages_new += 1
         if self.progress is not None:
             self.progress.new += 1
 
@@ -667,8 +701,7 @@ class _ItemProgress:
         if report_start:
             reporter.progress(label, 0, 0, None)
 
-    def add(self, count: int) -> None:
-        self.seen += count
+    def report(self) -> None:
         self.reporter.progress(self.label, self.seen, self.new, None)
 
     def end(self) -> None:
