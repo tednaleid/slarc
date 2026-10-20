@@ -9,6 +9,7 @@ from slarc.adapters.duckdb_index import DuckDbQueryIndex
 from slarc.ports import SearchHit, SlarcError
 from slarc.service.search import search
 from tests.contract.test_duckdb_index import commit, deleted
+from tests.fakes import FakeArchiveLock
 from tests.recorded_fixtures import recorded_lake
 
 ALL_NALEID = "C0CA5396G03"
@@ -26,7 +27,7 @@ def archive(tmp_path: Path) -> Path:
 def index(tmp_path_factory: pytest.TempPathFactory, ext_dir: Path) -> Iterator[DuckDbQueryIndex]:
     """An index over one recorded lake that the module's read-only tests share."""
     root = recorded_lake(tmp_path_factory.mktemp("recorded") / "archive")
-    with DuckDbQueryIndex(root, ext_dir) as idx:
+    with DuckDbQueryIndex(root, ext_dir, FakeArchiveLock()) as idx:
         yield idx
 
 
@@ -58,7 +59,7 @@ def test_search_treats_wildcards_literally(index: DuckDbQueryIndex) -> None:
 
 def test_search_skips_deleted_messages(archive: Path, ext_dir: Path) -> None:
     commit(archive, ext_dir, deleted(ARCHIVED, "1792437061.341469", "2026-10-20T00:00:00Z"))
-    with DuckDbQueryIndex(archive, ext_dir) as index:
+    with DuckDbQueryIndex(archive, ext_dir, FakeArchiveLock()) as index:
         hits = search(index, "seed: archived channel", None, None)
     assert [hit.ts for hit in hits] == ["1792437061.072929", "1792437060.771479"]
 

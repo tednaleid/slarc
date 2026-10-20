@@ -422,7 +422,7 @@ Ted decided (2026-10-20) that slarc will not import JSONL archives. slarc has on
 
 ## Phase 3: locks and maintenance
 
-### Task 12: Locks
+### Task 12: Locks [done]
 
 **Files:**
 - Create: `src/slarc/adapters/locks.py`
@@ -444,14 +444,14 @@ Ted decided (2026-10-20) that slarc will not import JSONL archives. slarc has on
     - `commit`, `append_run` and the staged drops run inside `lock.write()`;
     - lock order is read lock before write lock.
 
-- [ ] **Step 1: Write the failing tests,** using `subprocess` with the repo venv's python for the cross-process cases:
+- [x] **Step 1: Write the failing tests,** using `subprocess` with the repo venv's python for the cross-process cases:
   - `test_two_processes_commit_concurrently_without_errors`: two processes make 50 commits each, and every commit lands.
   - `test_try_exclusive_fails_while_another_process_holds_shared`.
   - `test_one_lock_object_per_archive_per_process`.
-- [ ] **Step 2: Run them and watch them fail.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run `just check` and watch it pass.**
-- [ ] **Step 5: Commit:** `Add read and write locks in the XDG cache directory`.
+- [x] **Step 2: Run them and watch them fail.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run `just check` and watch it pass.**
+- [x] **Step 5: Commit:** `Add read and write locks in the XDG cache directory`.
 
 ### Task 13: Maintenance
 

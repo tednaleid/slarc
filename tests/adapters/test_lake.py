@@ -12,6 +12,7 @@ from slarc.adapters.lake import (
     connect_lake,
     extension_directory,
 )
+from slarc.ports import ArchiveReadFailed
 
 TABLES = {"message_version", "directory_entry", "run", "tracked_item", "download_state"}
 
@@ -71,3 +72,14 @@ def test_read_only_connect_cannot_write(tmp_path: Path, ext_dir: Path) -> None:
     with pytest.raises(duckdb.Error):
         con.execute("INSERT INTO run (run, command) VALUES ('r1', 'pull')")
     con.close()
+
+
+def test_read_only_connect_to_a_corrupt_catalog_raises_a_clear_error(
+    tmp_path: Path, ext_dir: Path
+) -> None:
+    (tmp_path / CATALOG).write_bytes(b"not a catalog " * 512)
+    with pytest.raises(ArchiveReadFailed) as error:
+        connect_lake(tmp_path, ext_dir, read_only=True)
+    message = str(error.value)
+    assert message.startswith(f"Could not read {tmp_path / CATALOG}: ")
+    assert "\n" not in message

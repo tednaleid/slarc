@@ -7,6 +7,7 @@ import msgspec
 
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.domain.tracking import DownloadState, TrackedItem
+from tests.fakes import FakeArchiveLock
 from tests.jsonl_loader import load_jsonl
 from tests.recorded_fixtures import (
     RECORDED,
@@ -86,7 +87,7 @@ def test_loader_reproduces_the_fixture(tmp_path: Path, ext_dir: Path):
     assert len(counts) == 5
     assert downloads
 
-    store = DuckLakeArchiveStore(tmp_path, ext_dir)
+    store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
     try:
         channels = store.channels(RECORDED_TEAM)
         assert {c: len(list(store.message_lines(RECORDED_TEAM, c))) for c in channels} == counts

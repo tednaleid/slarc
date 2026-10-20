@@ -1,4 +1,4 @@
-# ABOUTME: In-memory doubles for slarc's ports: archive, blobs, export files, Slack and credentials.
+# ABOUTME: In-memory doubles for slarc's ports: archive, lock, blobs, exports, Slack, credentials.
 # ABOUTME: The archive fake commits like the lake store; the Slack fake pages and fails like Slack.
 import hashlib
 from collections import Counter
@@ -197,6 +197,36 @@ class InMemoryArchiveStore:
             for env in self._visible()
             if env.meta.kind in MESSAGE_KINDS and env.meta.team == team
         ]
+
+
+class FakeArchiveLock:
+    """Records each lock call in events, a write as "write" and "end write"; try_exclusive
+    succeeds while exclusive_free is true."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+        self.exclusive_free = True
+
+    def hold_shared(self) -> None:
+        self.events.append("hold_shared")
+
+    def release_shared(self) -> None:
+        self.events.append("release_shared")
+
+    def try_exclusive(self) -> bool:
+        self.events.append("try_exclusive")
+        return self.exclusive_free
+
+    def release_exclusive(self) -> None:
+        self.events.append("release_exclusive")
+
+    @contextmanager
+    def write(self) -> Generator[None]:
+        self.events.append("write")
+        try:
+            yield
+        finally:
+            self.events.append("end write")
 
 
 class InMemoryBlobStore:

@@ -8,6 +8,7 @@ from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.domain.envelope import Envelope
 from slarc.domain.tracking import DownloadState, ItemKey, TrackedItem, run_from_envelope
 from slarc.ports import Commit, DownloadKey
+from tests.fakes import FakeArchiveLock
 
 _decoder = msgspec.json.Decoder(Envelope)
 
@@ -37,7 +38,7 @@ def load_jsonl(source: Path, root: Path, ext_dir: Path) -> None:
         tracked.update((item.key, item) for item in run.tracked)
         downloads.update(((state.team_id, state.target), state) for state in run.downloads)
     blobbed = {(env.meta.team, env.meta.id) for env in directory if env.meta.blob}
-    store = DuckLakeArchiveStore(root, ext_dir)
+    store = DuckLakeArchiveStore(root, ext_dir, FakeArchiveLock())
     try:
         for env in [*messages, *directory]:
             store.append(env)

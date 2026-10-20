@@ -5,7 +5,7 @@ from pathlib import Path
 
 import duckdb
 
-from slarc.ports import ArchiveWriteFailed, SlarcError
+from slarc.ports import ArchiveReadFailed, ArchiveWriteFailed, SlarcError
 
 CATALOG = "catalog.sqlite"
 DATA_DIR = "data"
@@ -44,9 +44,13 @@ class ExtensionsMissing(SlarcError):
         )
 
 
+def cache_home(env: Mapping[str, str], home: Path) -> Path:
+    """$XDG_CACHE_HOME, or ~/.cache when it is unset or empty."""
+    return Path(env["XDG_CACHE_HOME"]) if env.get("XDG_CACHE_HOME") else home / ".cache"
+
+
 def extension_directory(env: Mapping[str, str], home: Path) -> Path:
-    cache_home = Path(env["XDG_CACHE_HOME"]) if env.get("XDG_CACHE_HOME") else home / ".cache"
-    return cache_home / "slarc" / "duckdb"
+    return cache_home(env, home) / "slarc" / "duckdb"
 
 
 def _load_extensions(con: duckdb.DuckDBPyConnection, ext_dir: Path, *, autoinstall: bool) -> None:
@@ -81,9 +85,10 @@ def connect_lake(
 ) -> duckdb.DuckDBPyConnection:
     """Attach the archive's lake as `lake` and make it the default catalog.
 
-    A writable connection creates the catalog, tables and options when they are missing, and
-    raises ArchiveWriteFailed when it cannot open the catalog. `autoinstall=False` skips the
-    download and exists for tests.
+    A writable connection creates the catalog, tables and options when they are missing, so the
+    caller holds the archive's write lock. It raises ArchiveWriteFailed, and a read-only one
+    ArchiveReadFailed, when it cannot open the catalog. `autoinstall=False` skips the download
+    and exists for tests.
     """
     con = duckdb.connect(":memory:")
     try:
@@ -102,11 +107,10 @@ def connect_lake(
                 f"ATTACH 'ducklake:sqlite:{root / CATALOG}' AS lake ({', '.join(attach_options)})"
             )
         except duckdb.Error as error:
-            if read_only:
-                raise
             # DuckDB's message ends with the cause, after the catalog path it already names.
             reason = str(error).splitlines()[0].rsplit(": ", 1)[-1]
-            raise ArchiveWriteFailed(root / CATALOG, reason) from None
+            failure = ArchiveReadFailed if read_only else ArchiveWriteFailed
+            raise failure(root / CATALOG, reason) from None
         con.execute("USE lake")
         if not read_only:
             _create_missing(con)

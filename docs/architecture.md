@@ -26,6 +26,7 @@ Dependencies point inward: `cli.py` and `bootstrap.py` know everything, adapters
 | `SlackConnector` | `SessionConnector` (`adapters/slack_gateway.py`) | `FakeConnector` |
 | `CredentialSource` | `EnvSource`, `KeyringSource` (`adapters/credentials.py`), `DesktopSessionSource` (`adapters/desktop_session.py`), in that priority order under `CompositeSource` | `FakeCredentialSource`; `KeyringSource` runs over `FakeKeyring` |
 | `ArchiveStore` | `DuckLakeArchiveStore` (`adapters/lake_store.py`) | `InMemoryArchiveStore` |
+| `ArchiveLock` | `FlockArchiveLock` (`adapters/locks.py`) | `FakeArchiveLock` |
 | `BlobStore` | `FsBlobStore` (`adapters/blob_store.py`) | `InMemoryBlobStore` |
 | `Downloader` | `HttpDownloader` (`adapters/downloader.py`) | `FakeDownloader` |
 | `ExportWriter` | `FsExportWriter` (`adapters/export_writer.py`) | `InMemoryExportWriter` |
@@ -42,6 +43,8 @@ Dependencies point inward: `cli.py` and `bootstrap.py` know everything, adapters
 Every archive write appends rows, except these: `commit` replaces the `tracked_item` and `download_state` rows it updates, `commit` deletes settled download states, and the drops (`drop_messages`, `drop_directory_lines`, `drop_workspace` and `drop_downloads`) delete rows when they commit, as `FsBlobStore.delete` deletes blobs.
 
 `DuckDbQueryIndex` attaches the lake read-only and defines the spec's views in DuckDB's in-memory database, so a view and the lake table it reads (`message_version`, `run`, `tracked_item`) can share a name; `slarc sql` queries the views by default and the tables as `lake.<table>`. The current message is one `QUALIFY` over `message_version`, newest by `(fetched_at, run)`, with the newest message row's content kept for a deleted message. `messages()` and `thread()` read only the conversation's rows, and `thread()` only the rows of messages in the thread.
+
+`FlockArchiveLock` takes `fcntl.flock` locks on two files under `$XDG_CACHE_HOME/slarc/locks/` (falling back to `~/.cache`), named by the sha256 of the archive's real path: `<hash>.read` and `<hash>.write`. `DuckLakeArchiveStore` and `DuckDbQueryIndex` each hold the read lock shared from open to close. The shared hold is counted per process, and flock locks belong to an open file description, so `bootstrap.archive_lock` gives every store and index of one archive the same lock object. The store opens its connection, which creates any missing tables and options, inside `write()`, and runs each `commit` and `append_run` there too, so revision checks and staged drops happen in the same exclusive hold as the writes. `write()` blocks until no other process holds the write lock. `bootstrap.ensure_lake` creates an empty lake under the same locks. A process always takes the read lock before the write lock.
 
 ## Unit of work and the run row
 

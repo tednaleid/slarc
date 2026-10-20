@@ -1,5 +1,5 @@
 # ABOUTME: ArchiveStore over the archive's DuckLake. Appends and drops wait in an open batch that
-# ABOUTME: commit writes in one transaction after checking item revisions; append_run adds the run.
+# ABOUTME: commit writes in one transaction, under the write lock, after checking item revisions.
 from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -13,6 +13,7 @@ from slarc.archive_state import LatestMessages
 from slarc.domain.envelope import Envelope, Kind, Meta
 from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem, run_envelope
 from slarc.ports import (
+    ArchiveLock,
     Commit,
     CommitConflict,
     Committed,
@@ -100,8 +101,17 @@ _decode = msgspec.json.Decoder()
 
 
 class DuckLakeArchiveStore:
-    def __init__(self, root: Path, ext_dir: Path) -> None:
-        self._con = connect_lake(root, ext_dir)
+    """Holds the archive's read lock from open to close, and the write lock for each write."""
+
+    def __init__(self, root: Path, ext_dir: Path, lock: ArchiveLock) -> None:
+        self._lock = lock
+        lock.hold_shared()
+        try:
+            with lock.write():
+                self._con = connect_lake(root, ext_dir)
+        except BaseException:
+            lock.release_shared()
+            raise
         self._batch: list[Envelope] = []
         self._drops: list[tuple[str, str, list]] = []  # (table, condition, params) per DELETE
 
@@ -122,7 +132,7 @@ class DuckLakeArchiveStore:
         nothing is written and the batch is kept.
         """
         try:
-            with self._transaction():
+            with self._lock.write(), self._transaction():
                 committed = self._commit(change)
         except CommitConflict:
             self.discard()
@@ -135,7 +145,10 @@ class DuckLakeArchiveStore:
         self._drops.clear()
 
     def close(self) -> None:
-        self._con.close()
+        try:
+            self._con.close()
+        finally:
+            self._lock.release_shared()
 
     def stored_messages(self, team: str, channel: str) -> dict[str, StoredMessage]:
         latest = LatestMessages()
@@ -180,7 +193,7 @@ class DuckLakeArchiveStore:
         if self._batch or self._drops:
             raise ValueError("Commit or discard the open batch before appending the run")
         recorded = msgspec.structs.replace(run, tracked=[], downloads=[])
-        with self._transaction():
+        with self._lock.write(), self._transaction():
             insert_rows(
                 self._con, "run", RUN_COLUMNS, [run_row(run_envelope(recorded, slarc_version))]
             )

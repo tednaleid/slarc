@@ -18,8 +18,9 @@ from slarc.adapters.desktop_session import DesktopSessionSource
 from slarc.adapters.downloader import HttpDownloader
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
 from slarc.adapters.export_writer import FsExportWriter
-from slarc.adapters.lake import CATALOG, connect_lake, extension_directory
+from slarc.adapters.lake import CATALOG, cache_home, connect_lake, extension_directory
 from slarc.adapters.lake_store import DuckLakeArchiveStore
+from slarc.adapters.locks import FlockArchiveLock
 from slarc.adapters.slack_gateway import USER_AGENT, SessionConnector, session_gateway
 from slarc.ports import (
     BlobStore,
@@ -55,17 +56,41 @@ def _extension_directory() -> Path:
     return extension_directory(os.environ, Path.home())
 
 
+def _cache_home() -> Path:
+    return cache_home(os.environ, Path.home())
+
+
+_locks: dict[Path, FlockArchiveLock] = {}
+
+
+def archive_lock(root: Path) -> FlockArchiveLock:
+    """The archive's lock, one object per archive per process so its flocks do not collide."""
+    key = root.resolve()
+    if key not in _locks:
+        _locks[key] = FlockArchiveLock(key, _cache_home())
+    return _locks[key]
+
+
 def ensure_lake(root: Path) -> None:
-    """Creates an empty lake in the archive if it has no catalog."""
-    if not (root / CATALOG).exists():
-        connect_lake(root, _extension_directory()).close()
+    """Creates an empty lake in the archive if it has no catalog, under the archive's locks.
+
+    The check runs under the write lock because a catalog file exists before its tables do.
+    """
+    lock = archive_lock(root)
+    lock.hold_shared()
+    try:
+        with lock.write():
+            if not (root / CATALOG).exists():
+                connect_lake(root, _extension_directory()).close()
+    finally:
+        lock.release_shared()
 
 
 @contextmanager
 def archive_stores(root: Path) -> Generator[tuple[DuckLakeArchiveStore, FsBlobStore]]:
     """The archive's lake and blob stores, with ensure_lake run first; closed on exit."""
     ensure_lake(root)
-    archive = DuckLakeArchiveStore(root, _extension_directory())
+    archive = DuckLakeArchiveStore(root, _extension_directory(), archive_lock(root))
     try:
         yield archive, FsBlobStore(root)
     finally:
@@ -76,7 +101,7 @@ def archive_stores(root: Path) -> Generator[tuple[DuckLakeArchiveStore, FsBlobSt
 def query_index(root: Path) -> Generator[QueryIndex]:
     """Views over the archive's lake, with ensure_lake run first; closed on exit."""
     ensure_lake(root)
-    with DuckDbQueryIndex(root, _extension_directory()) as index:
+    with DuckDbQueryIndex(root, _extension_directory(), archive_lock(root)) as index:
         yield index
 
 

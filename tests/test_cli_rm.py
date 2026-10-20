@@ -16,6 +16,7 @@ from slarc.domain.tracking import RunRecord
 from slarc.ports import ArchiveStore, ArchiveWriteFailed, Commit, CommitConflict
 from slarc.service.remove import Removal
 from tests.contract.test_duckdb_index import envelope
+from tests.fakes import FakeArchiveLock
 from tests.recorded_fixtures import RECORDED, RECORDED_TEAM, recorded_lake, recorded_lines
 from tests.test_cli_list_search import services
 from tests.test_cli_pull import (  # noqa: F401
@@ -165,7 +166,7 @@ def test_rm_again_cleans_up_nothing_to_do(archive: Path, tmp_path: Path, ext_dir
 
 def test_rm_cleanup_only_prompts_and_sweeps(archive: Path, tmp_path: Path, ext_dir: Path) -> None:
     invoke(tmp_path, "rm", "#all-naleid", "--yes", "--root", str(archive))
-    store = DuckLakeArchiveStore(archive, ext_dir)
+    store = DuckLakeArchiveStore(archive, ext_dir, FakeArchiveLock())
     for line in recorded_lines(f"raw/{RECORDED_TEAM}/{ALL_NALEID}/*.jsonl"):
         store.append(envelope(line))
     later = "2026-10-20T00:00:00Z"

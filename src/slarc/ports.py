@@ -1,6 +1,7 @@
 # ABOUTME: Ports between slarc's service layer and its adapters, and the value types they pass.
 # ABOUTME: Also defines SlarcError and its subclasses, whose str() is the message shown to the user.
 from collections.abc import Collection, Iterable, Iterator, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -66,6 +67,12 @@ class ArchiveWriteFailed(SlarcError):
     def __init__(self, path: Path, reason: str | None) -> None:
         self.path = path
         super().__init__(f"Could not write to {path}: {reason}.")
+
+
+class ArchiveReadFailed(SlarcError):
+    def __init__(self, path: Path, reason: str | None) -> None:
+        self.path = path
+        super().__init__(f"Could not read {path}: {reason}.")
 
 
 class FileDeleted(SlarcError):
@@ -242,6 +249,21 @@ class ArchiveStore(Protocol):
     def drop_workspace(self, team: str) -> None: ...
     def drop_downloads(self, team: str, targets: set[str]) -> None: ...
     def blob_references(self) -> list[tuple[str, Kind, str, str]]: ...  # (team, kind, id, blob)
+
+
+class ArchiveLock(Protocol):
+    """The archive's read and write locks, which every process takes in that order.
+
+    The read lock is held shared while the archive is open, counted per process, or tried
+    exclusively without blocking, which needs this process not to hold it shared. write()
+    holds the write lock exclusively around each transaction, blocking until it is free.
+    """
+
+    def hold_shared(self) -> None: ...
+    def release_shared(self) -> None: ...
+    def try_exclusive(self) -> bool: ...
+    def release_exclusive(self) -> None: ...
+    def write(self) -> AbstractContextManager[None]: ...
 
 
 @dataclass(frozen=True)

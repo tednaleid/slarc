@@ -23,15 +23,30 @@ from tests.contract.test_archive_store import (
     run_record,
     tracked,
 )
+from tests.fakes import FakeArchiveLock
+
+
+def test_store_holds_the_read_lock_and_writes_under_the_write_lock(
+    tmp_path: Path, ext_dir: Path
+) -> None:
+    lock = FakeArchiveLock()
+    store = DuckLakeArchiveStore(tmp_path, ext_dir, lock)
+    assert lock.events == ["hold_shared", "write", "end write"]
+    store.append(message(TS, "Hello", T1, R1))
+    store.drop_messages(TEAM, CHANNEL, {TS})
+    store.commit(Commit())
+    store.append_run(run_record(R1, T1), VERSION)
+    store.close()
+    assert lock.events[3:] == ["write", "end write", "write", "end write", "release_shared"]
 
 
 def test_lines_without_a_run_line_are_not_kept(tmp_path: Path, ext_dir: Path) -> None:
-    store = DuckLakeArchiveStore(tmp_path, ext_dir)
+    store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
     store.append(message(TS, "uncommitted", T1, R1))
     store.append(file_line("F1", T1, R1, None))
     store.close()
 
-    reopened = DuckLakeArchiveStore(tmp_path, ext_dir)
+    reopened = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
     assert reopened.stored_messages(TEAM, CHANNEL) == {}
     assert reopened.directory_state(TEAM, "file") == {}
     assert reopened.channels(TEAM) == []
@@ -39,7 +54,7 @@ def test_lines_without_a_run_line_are_not_kept(tmp_path: Path, ext_dir: Path) ->
 
 
 def test_reads_see_the_open_batch(tmp_path: Path, ext_dir: Path) -> None:
-    store = DuckLakeArchiveStore(tmp_path, ext_dir)
+    store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
     committed = message(TS, "Hello", T1, R1)
     store.append(committed)
     store.commit(Commit())
@@ -47,7 +62,7 @@ def test_reads_see_the_open_batch(tmp_path: Path, ext_dir: Path) -> None:
     downloaded = file_line("F1", T2, R2, "ab" * 32)
     store.append(edited)
     store.append(downloaded)
-    other = DuckLakeArchiveStore(tmp_path, ext_dir)
+    other = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
 
     assert store.stored_messages(TEAM, CHANNEL)[TS].hash == edited.meta.hash
     assert [env.meta.hash for env in store.message_lines(TEAM, CHANNEL)] == [
@@ -74,7 +89,7 @@ def run_count(root: Path, ext_dir: Path) -> int:
 def test_failed_append_run_writes_no_run_row(
     tmp_path: Path, ext_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store = DuckLakeArchiveStore(tmp_path, ext_dir)
+    store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
     run = run_record(R1, T1)
 
     def fail(*args: object) -> None:
@@ -100,11 +115,11 @@ def test_tracked_items_round_trip_every_field(tmp_path: Path, ext_dir: Path) -> 
     thread.archived = True
     thread.backfill_complete = True
     conversation = tracked("200.000000")
-    store = DuckLakeArchiveStore(tmp_path, ext_dir)
+    store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
     store.commit(Commit(items=[thread, conversation]))
     store.close()
 
-    reopened = DuckLakeArchiveStore(tmp_path, ext_dir)
+    reopened = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
     assert reopened.tracked_items() == {
         thread.key: msgspec.structs.replace(thread, revision=1),
         conversation.key: msgspec.structs.replace(conversation, revision=1),

@@ -10,7 +10,7 @@ import duckdb
 from slarc.adapters.lake import connect_lake
 from slarc.domain.links import message_link
 from slarc.domain.plain import snippet
-from slarc.ports import SearchHit, SlarcError
+from slarc.ports import ArchiveLock, SearchHit, SlarcError
 
 # Slack ts strings ordered as numbers.
 TS_ORDER = "TRY_CAST({} AS DECIMAL(18, 6))"
@@ -350,17 +350,24 @@ class DuckDbQueryIndex:
     """Views over the archive's lake, which is attached read-only as `lake`.
 
     The views live in the in-memory database, which queries use by default, so a view and the
-    lake table it reads can share a name. The lake's catalog must exist.
+    lake table it reads can share a name. The lake's catalog must exist. The index holds the
+    archive's read lock from open to close.
     """
 
-    def __init__(self, root: Path, ext_dir: Path) -> None:
-        self._db = connect_lake(root, ext_dir, read_only=True)
+    def __init__(self, root: Path, ext_dir: Path, lock: ArchiveLock) -> None:
+        self._lock = lock
+        lock.hold_shared()
+        try:
+            self._db = connect_lake(root, ext_dir, read_only=True)
+        except BaseException:
+            lock.release_shared()
+            raise
         try:
             self._db.execute("USE memory")
             for name, query in ENTITY_VIEWS.items():
                 self._db.execute(f'CREATE VIEW "{name}" AS {query}')
         except BaseException:
-            self._db.close()
+            self.close()
             raise
 
     def __enter__(self) -> DuckDbQueryIndex:
@@ -375,7 +382,10 @@ class DuckDbQueryIndex:
         self.close()
 
     def close(self) -> None:
-        self._db.close()
+        try:
+            self._db.close()
+        finally:
+            self._lock.release_shared()
 
     def sql(self, query: str) -> tuple[list[str], list[tuple]]:
         try:

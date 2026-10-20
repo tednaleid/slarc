@@ -13,7 +13,7 @@ from slarc.config import load_settings, read_global_config
 from slarc.domain.tracking import DownloadState, TrackedItem
 from slarc.ports import Commit
 from slarc.service.listing import ArchiveListing, ListRow, list_archive, list_remote
-from tests.fakes import FakeConnector, FakeSlackGateway
+from tests.fakes import FakeArchiveLock, FakeConnector, FakeSlackGateway
 from tests.recorded_fixtures import RECORDED_TEAM, recorded_lake
 from tests.service.pull_harness import NALEID, spike
 
@@ -39,14 +39,14 @@ def archive(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def store(archive: Path, ext_dir: Path) -> Iterator[DuckLakeArchiveStore]:
-    store = DuckLakeArchiveStore(archive, ext_dir)
+    store = DuckLakeArchiveStore(archive, ext_dir, FakeArchiveLock())
     yield store
     store.close()
 
 
 def listing_of(archive: Path, ext_dir: Path, store: DuckLakeArchiveStore) -> ArchiveListing:
     settings = load_settings(archive, {}, {}, {})
-    with DuckDbQueryIndex(archive, ext_dir) as index:
+    with DuckDbQueryIndex(archive, ext_dir, FakeArchiveLock()) as index:
         return list_archive(settings, store, index)
 
 
@@ -88,7 +88,7 @@ def test_list_shows_archive_path_and_config_sources(
     config.parent.mkdir(parents=True)
     config.write_text("[pull]\ndownloads = 2\n", encoding="utf-8")
     settings = load_settings(archive, read_global_config({}, tmp_path / "home"), {}, {})
-    with DuckDbQueryIndex(archive, ext_dir) as index:
+    with DuckDbQueryIndex(archive, ext_dir, FakeArchiveLock()) as index:
         listing = list_archive(settings, store, index)
     assert listing.archive == archive
     assert listing.config_files == [archive / "slarc.toml", config]

@@ -25,7 +25,7 @@ from slarc.domain.tracking import (
     run_from_envelope,
 )
 from slarc.ports import ArchiveStore, Commit, CommitConflict, DirectoryState, StoredMessage
-from tests.fakes import InMemoryArchiveStore
+from tests.fakes import FakeArchiveLock, InMemoryArchiveStore
 
 TEAM = "T0CB5LYPVFA"
 CHANNEL = "C0CA5396G03"
@@ -145,13 +145,13 @@ def store_and_reopen(
 
         yield memory, reopen_memory
         return
-    opened = [DuckLakeArchiveStore(tmp_path, ext_dir)]
+    opened = [DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())]
 
     def reopen() -> ArchiveStore:
         for store in opened:
             store.commit(Commit())
             store.append_run(run_record(R_REOPEN, T1), VERSION)
-        opened.append(DuckLakeArchiveStore(tmp_path, ext_dir))
+        opened.append(DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock()))
         return opened[-1]
 
     yield opened[0], reopen
@@ -241,7 +241,7 @@ def test_same_second_blob_line_wins_in_store_and_index(
     for current in (store, reopen()):
         assert current.directory_state(TEAM, "file")["F1"] == expected
     if isinstance(store, DuckLakeArchiveStore):
-        with DuckDbQueryIndex(tmp_path, ext_dir) as index:
+        with DuckDbQueryIndex(tmp_path, ext_dir, FakeArchiveLock()) as index:
             assert index.sql("SELECT blob FROM file WHERE id = 'F1'")[1] == [("cd" * 32,)]
 
 

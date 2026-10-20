@@ -16,7 +16,7 @@ from slarc.domain.links import parse_selector
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
 from slarc.ports import Commit, SlarcError
 from slarc.service.export import export
-from tests.fakes import InMemoryBlobStore, InMemoryExportWriter
+from tests.fakes import FakeArchiveLock, InMemoryBlobStore, InMemoryExportWriter
 from tests.recorded_fixtures import RECORDED_TEAM, recorded_blobs, recorded_lake
 
 OUT = Path("exported")
@@ -67,7 +67,7 @@ def archive(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def store(archive: Path, ext_dir: Path) -> Iterator[DuckLakeArchiveStore]:
-    store = DuckLakeArchiveStore(archive, ext_dir)
+    store = DuckLakeArchiveStore(archive, ext_dir, FakeArchiveLock())
     yield store
     store.close()
 
@@ -89,7 +89,8 @@ def run_export(
 ) -> tuple[Path, InMemoryExportWriter]:
     writer = InMemoryExportWriter()
     parsed = [parse_selector(text) for text in selectors]
-    with DuckDbQueryIndex(archive, extension_directory(os.environ, Path.home())) as index:
+    ext_dir = extension_directory(os.environ, Path.home())
+    with DuckDbQueryIndex(archive, ext_dir, FakeArchiveLock()) as index:
         written = export(parsed, out, single_file, include_deleted, tz, index, blobs, store, writer)
     return written, writer
 

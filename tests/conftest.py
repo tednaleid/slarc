@@ -1,10 +1,11 @@
 # ABOUTME: Shared pytest configuration and fixtures for slarc's tests.
-# ABOUTME: Adds --update-golden and the DuckDB extension directory the lake tests share.
+# ABOUTME: Adds --update-golden, the shared DuckDB extension directory and a temporary lock cache.
 import os
 from pathlib import Path
 
 import pytest
 
+from slarc import bootstrap
 from slarc.adapters.lake import extension_directory
 
 
@@ -26,3 +27,10 @@ def update_golden(request: pytest.FixtureRequest) -> bool:
 def ext_dir() -> Path:
     """The real extension cache, so connecting downloads the DuckDB extensions at most once."""
     return extension_directory(os.environ, Path.home())
+
+
+@pytest.fixture(autouse=True)
+def lock_cache(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keeps the archive locks bootstrap takes out of the real cache directory."""
+    cache = tmp_path_factory.getbasetemp() / "lock-cache"
+    monkeypatch.setattr(bootstrap, "_cache_home", lambda: cache)
