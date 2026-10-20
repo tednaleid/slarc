@@ -256,6 +256,8 @@ def test_same_second_blob_line_wins_in_store_and_index(store_and_reopen, tmp_pat
 
 def test_tracked_items_latest_entry_across_runs(store_and_reopen):
     store, reopen = store_and_reopen
+    if isinstance(store, DuckLakeArchiveStore):
+        pytest.skip("lake commits are serialized, so the last committed run wins")
     other = "C0OTHER0001"
     store.append_run(run_record(R2, T2, tracked=[tracked("200.000000")]), VERSION)
     store.append_run(
@@ -331,6 +333,8 @@ def test_downloads_latest_entry_across_runs(store_and_reopen):
 
 def test_run_lines_appended_after_a_read_fold_in_version_order(store_and_reopen):
     store, reopen = store_and_reopen
+    if isinstance(store, DuckLakeArchiveStore):
+        pytest.skip("lake commits are serialized, so the last committed run wins")
     store.append_run(run_record(R1, T1, tracked=[tracked("100.000000")]), VERSION)
     store.downloads()
     store.append_run(

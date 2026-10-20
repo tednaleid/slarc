@@ -168,8 +168,7 @@ class DuckLakeArchiveStore:
     def append_run(self, run: RunRecord, slarc_version: str) -> None:
         """Commits the open batch, the run, and its tracked items and download states together.
 
-        A run committed after a newer one leaves alone the items and targets the newer run
-        wrote, so the newest run by (fetched_at, run) wins as it does in a fold of run lines.
+        Commits are serialized, so the last commit's tracked items and download states win.
         On failure nothing is written and the open batch is kept.
         """
         env = run_envelope(run, slarc_version)
@@ -190,11 +189,8 @@ class DuckLakeArchiveStore:
                     }
                 ],
             )
-            newer_items, newer_targets = self._written_by_newer_runs(env.meta)
-            self._upsert_tracked([i for i in run.tracked if i.key not in newer_items])
-            self._upsert_downloads(
-                [d for d in run.downloads if (d.team_id, d.target) not in newer_targets]
-            )
+            self._upsert_tracked(run.tracked)
+            self._upsert_downloads(run.downloads)
         self._batch.clear()
 
     def channels(self, team: str) -> list[str]:
@@ -280,21 +276,6 @@ class DuckLakeArchiveStore:
             item = _tracked_item(dict(zip(TRACKED_COLUMNS, row, strict=True)))
             items[item.key] = item
         return items
-
-    def _written_by_newer_runs(self, meta: Meta) -> tuple[set[ItemKey], set[tuple[str, str]]]:
-        """The tracked items and download targets that committed runs newer than meta wrote."""
-        rows = self._con.execute(
-            "SELECT object FROM run WHERE coalesce(fetched_at, '') > ? "
-            "OR (coalesce(fetched_at, '') = ? AND coalesce(run, '') > ?)",
-            [meta.fetched_at or "", meta.fetched_at or "", meta.run or ""],
-        ).fetchall()
-        items: set[ItemKey] = set()
-        targets: set[tuple[str, str]] = set()
-        for (obj,) in rows:
-            newer = msgspec.json.decode(obj, type=RunRecord)
-            items.update(item.key for item in newer.tracked)
-            targets.update((state.team_id, state.target) for state in newer.downloads)
-        return items, targets
 
     def _insert_batch(self) -> None:
         messages = [env for env in self._batch if env.meta.kind in MESSAGE_KINDS]
