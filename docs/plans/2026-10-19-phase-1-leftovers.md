@@ -417,7 +417,7 @@ git commit -m "Stop in-flight downloads within one chunk on Ctrl-C"
 
 ---
 
-### Task 6: Split `service/pull.py`
+### Task 6 [done]: Split `service/pull.py`
 
 Backlog line: "`pull.py` is over 800 lines; split it at the `_PullRun` / `_HeldConversation` seam, merge the near-duplicate `_page_older` and `_page_newer` loops, and rename `_Workspaces.connect` / `connection`".
 
@@ -437,20 +437,20 @@ This is a refactor with no behavior change: the existing test suite is the check
   - With `newest_each_page=False` (newer history and `--full`), it records `oldest_ts` after every page and moves `newest_ts` only when paging ends, so an interrupted pull pages the same range again.
   - Keep the docstring sentences that explain both.
 
-- [ ] **Step 1: Move the three groups of code into their modules, fixing imports**
+- [x] **Step 1: Move the three groups of code into their modules, fixing imports**
 
 Run `just check` after each move.
 
-- [ ] **Step 2: Merge the two paging loops and rename `connection` to `connection_to`**
+- [x] **Step 2: Merge the two paging loops and rename `connection` to `connection_to`**
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `just check` and `wc -l src/slarc/service/*.py`
 Expected: all tests pass unchanged; `pull.py` is under 650 lines.
 
-- [ ] **Step 4: Update `docs/architecture.md`**
+- [x] **Step 4: Update `docs/architecture.md`**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -m "Split service/pull.py into workspaces, held_conversation and directory_refresh modules"

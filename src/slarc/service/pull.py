@@ -1,32 +1,25 @@
 # ABOUTME: The pull use case: refreshes the workspace directory and the tracked items it is given.
 # ABOUTME: Appends a line only for a new version, records deletes and downloads files and images.
-from collections import Counter
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from functools import cached_property
 from typing import Literal
 
 import msgspec
 
 from slarc.domain.directory import DirectoryView
-from slarc.domain.envelope import Envelope, Kind
+from slarc.domain.envelope import Envelope
 from slarc.domain.hashing import content_hash
 from slarc.domain.links import ConversationSel, MessageSel, MessageTs, Selector, message_link
 from slarc.domain.plain import plain_text
-from slarc.domain.tracking import DownloadState, TrackedItem, item_label
+from slarc.domain.tracking import TrackedItem, item_label
 from slarc.ports import (
-    ArchiveStore,
     ArchiveWriteFailed,
     AuthFailed,
-    DirectoryState,
     Downloader,
     NoSession,
     NotVisible,
     Reporter,
-    Session,
     SlackConnector,
-    SlackGateway,
     SlarcError,
     StoredMessage,
     ThreadNotFound,
@@ -40,15 +33,16 @@ from slarc.service.appends import (
     fetched_now,
     stamped_meta,
 )
-from slarc.service.auth import domain_of
+from slarc.service.directory_refresh import BOTS_API, refresh_directory, unknown_bots
 from slarc.service.downloads import drain_downloads, queue_downloads
+from slarc.service.held_conversation import HeldConversation
 from slarc.service.selectors import only_workspace, resolve_conversation
 from slarc.service.threads import active_threads, discover_reply_threads, infer_deletes
+from slarc.service.workspaces import Connection, Workspaces
 from slarc.unit_of_work import UnitOfWork
 
 HISTORY_API = "conversations.history"
 REPLIES_API = "conversations.replies"
-BOTS_API = "bots.info"
 MESSAGES_SEEN = "messages_seen"
 RATE_LIMIT_WAIT = "rate_limit_wait_s"
 API_CALLS = "api_calls"
@@ -106,7 +100,7 @@ def pull(
     A workspace that cannot connect is skipped with a warning and the others are pulled. A read
     that fails for another reason skips one thread or item with a warning.
     """
-    run = _PullRun(options, uow, reporter, _Workspaces(connector, uow))
+    run = _PullRun(options, uow, reporter, Workspaces(connector, uow))
     counts = uow.run.counts
     unreachable: list[SlarcError] = []
     try:
@@ -137,51 +131,6 @@ def pull(
     )
 
 
-def refresh_directory(
-    gateway: SlackGateway,
-    team_id: str,
-    channels: set[str],
-    uow: UnitOfWork,
-    bot_ids: Iterable[str] = (),
-) -> DirectoryView:
-    """Appends changed directory lines and returns the directory with the objects just read.
-
-    Bots are fetched only for the given ids that the archive does not hold yet.
-    """
-    archive = uow.archive
-    users = {user["id"]: user for user in gateway.users()}
-    emoji = {name: {"name": name, "url": url} for name, url in gateway.emoji().items()}
-    usergroups = {group["id"]: group for group in gateway.usergroups()}
-    bots = _unknown_bots(gateway, team_id, bot_ids, archive)
-    conversations = {}
-    for channel in sorted(channels):
-        try:
-            conversations[channel] = gateway.conversation_info(channel)
-        except NotVisible:
-            continue
-
-    fresh: list[tuple[Kind, str, dict[str, dict]]] = [
-        ("user", "users.list", users),
-        ("emoji", "emoji.list", emoji),
-        ("usergroup", "usergroups.list", usergroups),
-        ("bot", BOTS_API, bots),
-        ("conversation", "conversations.info", conversations),
-    ]
-    for kind, api, objects in fresh:
-        append_directory(uow, team_id, kind, objects, api)
-
-    def current(kind: Kind, objects: dict[str, dict]) -> dict[str, dict]:
-        return archive.directory_objects(team_id, kind) | objects
-
-    return DirectoryView(
-        users=current("user", users),
-        conversations=current("conversation", conversations),
-        usergroups=current("usergroup", usergroups),
-        emoji={name: obj.get("url", "") for name, obj in current("emoji", emoji).items()},
-        bots=current("bot", bots),
-    )
-
-
 def date_to_ts(date: str, end_of_day: bool) -> str:
     """The ts at the start of a YYYY-MM-DD day in UTC, or with end_of_day the start of the next.
 
@@ -191,106 +140,6 @@ def date_to_ts(date: str, end_of_day: bool) -> str:
     if end_of_day:
         start += timedelta(days=1)
     return f"{int(start.timestamp())}.000000"
-
-
-def _unknown_bots(
-    gateway: SlackGateway, team_id: str, bot_ids: Iterable[str], archive: ArchiveStore
-) -> dict[str, dict]:
-    """The bots.info object of each given bot the archive does not hold yet."""
-    wanted = set(bot_ids)
-    if not wanted:
-        return {}
-    bots = {}
-    for bot_id in sorted(wanted - archive.directory_state(team_id, "bot").keys()):
-        try:
-            bots[bot_id] = gateway.bot_info(bot_id)
-        except AuthFailed:
-            raise
-        except SlarcError:
-            # A bot Slack no longer knows still renders from the message's bot_profile.
-            continue
-    return bots
-
-
-@dataclass(frozen=True)
-class _Connection:
-    team_id: str
-    user_id: str
-    domain: str
-    gateway: SlackGateway
-
-
-class _Workspaces:
-    """Connects once per workspace in a run, since each connection has its own rate limiter.
-
-    Each connection is recorded in the run's teams and auth entries. As a SlackConnector it
-    hands the run's connections to the download drain.
-    """
-
-    def __init__(self, connector: SlackConnector, uow: UnitOfWork) -> None:
-        self._connector = connector
-        self._uow = uow
-        self._team_of: dict[str, str] = {}
-        self._connections: dict[str, _Connection] = {}
-
-    def sessions(self) -> list[Session]:
-        return self._connector.sessions()
-
-    def connect(self, workspace: str) -> SlackGateway:
-        return self.connection(workspace).gateway
-
-    def rate_limit_wait_s(self) -> float:
-        return sum(c.gateway.rate_limit_wait_s for c in self._connections.values())
-
-    def api_calls(self) -> dict[str, int]:
-        total: Counter[str] = Counter()
-        for connection in self._connections.values():
-            total.update(connection.gateway.api_calls)
-        return dict(sorted(total.items()))
-
-    def connection(self, workspace: str) -> _Connection:
-        """Takes a domain or team id."""
-        team_id = self._team_of.get(workspace, workspace)
-        if team_id not in self._connections:
-            connection = self._open(workspace)
-            team_id = connection.team_id
-            self._connections[team_id] = connection
-        self._team_of[workspace] = team_id
-        return self._connections[team_id]
-
-    def _open(self, workspace: str) -> _Connection:
-        gateway = self._connector.connect(workspace)
-        info = gateway.auth_test()
-        session = next((s for s in self._connector.sessions() if s.matches(workspace)), None)
-        if session is not None and session.serves_any_workspace:
-            _require_workspace(workspace, session, info)
-        domain = (session.domain if session is not None else "") or domain_of(info)
-        run = self._uow.run
-        run.teams.append(info["team_id"])
-        run.auth.append(
-            {
-                "team_id": info["team_id"],
-                "user_id": info["user_id"],
-                "domain": domain,
-                "name": info.get("team", ""),
-                "credential_source": session.source if session is not None else "",
-                "auth_test_at": fetched_now(self._uow),
-            }
-        )
-        return _Connection(info["team_id"], info["user_id"], domain, gateway)
-
-
-def _require_workspace(workspace: str, session: Session, info: dict) -> None:
-    """Refuses a session that serves any workspace when auth.test names a different one."""
-    domain, team_id = domain_of(info), info["team_id"]
-    if workspace not in (domain, team_id):
-        actual = domain or team_id
-        raise NoSession(
-            workspace,
-            f"The {session.source} credentials are for workspace {actual}, not {workspace}. "
-            f"Unset them to use another session, or set SLARC_DOMAIN to {actual} so they "
-            "apply only there.",
-        )
 
 
 def _missing_message(domain: str, channel: str, ts: str) -> str:
@@ -303,7 +152,7 @@ class _PullRun:
         options: PullOptions,
         uow: UnitOfWork,
         reporter: Reporter,
-        workspaces: _Workspaces,
+        workspaces: Workspaces,
     ) -> None:
         self.options = options
         self.uow = uow
@@ -323,7 +172,7 @@ class _PullRun:
             return list(tracked.values())
         items: dict[ItemKey, TrackedItem] = {}
         for selector in selectors:
-            connection = self.workspaces.connection(selector.domain or only_workspace(tracked))
+            connection = self.workspaces.connection_to(selector.domain or only_workspace(tracked))
             if isinstance(selector, ConversationSel):
                 channel = resolve_conversation(
                     selector, connection.team_id, connection.gateway, self.uow.archive
@@ -356,7 +205,7 @@ class _PullRun:
         return known
 
     def _message_item(
-        self, selector: MessageSel, connection: _Connection, tracked: dict[ItemKey, TrackedItem]
+        self, selector: MessageSel, connection: Connection, tracked: dict[ItemKey, TrackedItem]
     ) -> TrackedItem | None:
         """The item a message link names, or None when Slack returns no such message."""
         team_id, channel, ts = connection.team_id, selector.channel, str(selector.ts)
@@ -390,7 +239,7 @@ class _PullRun:
         return item
 
     def pull_workspace(self, team_id: str, items: list[TrackedItem]) -> None:
-        connection = self.workspaces.connection(team_id)
+        connection = self.workspaces.connection_to(team_id)
         conversations = [item for item in items if item.kind == "conversation"]
         threads = [item for item in items if item.kind != "conversation"]
         reads: dict[ItemKey, list[dict]] = {}
@@ -405,7 +254,7 @@ class _PullRun:
         for item in threads:
             if item.key not in reads:
                 continue
-            held = _HeldConversation(self.uow.archive, team_id, item.channel)
+            held = HeldConversation(self.uow.archive, team_id, item.channel)
             self.progress = _ItemProgress(self.reporter, item_label(item, view), report_start=False)
             self._append_thread(held, item.ts or "", reads[item.key], view)
             self.progress.seen += len(reads[item.key])
@@ -415,8 +264,8 @@ class _PullRun:
 
     def _finish(
         self,
-        connection: _Connection,
-        held: _HeldConversation,
+        connection: Connection,
+        held: HeldConversation,
         item: TrackedItem,
         view: DirectoryView,
     ) -> None:
@@ -433,7 +282,7 @@ class _PullRun:
         self.pulled += 1
         self._end_progress()
 
-    def _read_thread(self, connection: _Connection, item: TrackedItem) -> list[dict] | None:
+    def _read_thread(self, connection: Connection, item: TrackedItem) -> list[dict] | None:
         """The thread's messages, parent first, or None when the item cannot be read.
 
         A thread Slack no longer returns is skipped rather than recorded as deleted, since a
@@ -460,7 +309,7 @@ class _PullRun:
         return messages
 
     def _pull_conversation(
-        self, connection: _Connection, item: TrackedItem, view: DirectoryView
+        self, connection: Connection, item: TrackedItem, view: DirectoryView
     ) -> None:
         """Pulls new history and new replies under older parents, then re-reads active threads.
 
@@ -470,7 +319,7 @@ class _PullRun:
         skips the item without deletes; a history page that fails otherwise leaves the item
         unfinished, keeping the progress already recorded.
         """
-        held = _HeldConversation(self.uow.archive, item.team_id, item.channel)
+        held = HeldConversation(self.uow.archive, item.team_id, item.channel)
         self.progress = _ItemProgress(self.reporter, item_label(item, view))
         started_at_top = not item.backfill_complete and item.oldest_ts is None
         if started_at_top:
@@ -503,71 +352,64 @@ class _PullRun:
 
     def _pull_history(
         self,
-        connection: _Connection,
-        held: _HeldConversation,
+        connection: Connection,
+        held: HeldConversation,
         item: TrackedItem,
         view: DirectoryView,
         started_at_top: bool,
     ) -> TrackedItem:
         """Pages older history while the backfill is incomplete, then newer than newest_ts."""
         if not item.backfill_complete:
-            item = self._page_older(connection, held, item, view, item.oldest_ts or item.until)
+            latest = item.oldest_ts or item.until
+            item = self._page_history(
+                connection, held, item, view, item.since, latest, "history", newest_each_page=True
+            )
         if not started_at_top:
             oldest = item.newest_ts or item.since
-            item = self._page_newer(connection, held, item, view, oldest, "history")
-        return item
-
-    def _page_older(
-        self,
-        connection: _Connection,
-        held: _HeldConversation,
-        item: TrackedItem,
-        view: DirectoryView,
-        latest: str | None,
-    ) -> TrackedItem:
-        """Pages history from since up to latest and marks the backfill complete.
-
-        The item is recorded after every page, so an interrupted pull resumes below oldest_ts.
-        """
-        for page in connection.gateway.history(item.channel, item.since, latest):
-            self._append_history_page(connection, held, page, view, "history")
-            item = msgspec.structs.replace(
-                item,
-                newest_ts=_outermost(item.newest_ts, page, newest=True),
-                oldest_ts=_outermost(item.oldest_ts, page, newest=False),
+            item = self._page_history(
+                connection, held, item, view, oldest, item.until, "history", newest_each_page=False
             )
-            self._record(item, held)
-        item = msgspec.structs.replace(item, backfill_complete=True)
-        self._record(item, held)
         return item
 
-    def _page_newer(
+    def _page_history(
         self,
-        connection: _Connection,
-        held: _HeldConversation,
+        connection: Connection,
+        held: HeldConversation,
         item: TrackedItem,
         view: DirectoryView,
         oldest: str | None,
+        latest: str | None,
         reason: ThreadReason,
+        *,
+        newest_each_page: bool,
     ) -> TrackedItem:
-        """Pages history from oldest up to until, reading each parent's thread for reason.
+        """Pages history from oldest up to latest, reading each parent's thread for reason.
 
-        Pages come newest first, so newest_ts moves only once paging ends; an interrupted pull
-        then pages the same range again.
+        The item is recorded after every page with oldest_ts moved, so an interrupted pull
+        resumes below it. With newest_each_page, the backfill, newest_ts moves with each page and
+        the backfill is marked complete at the end. Otherwise pages come newest first, so
+        newest_ts moves only once paging ends; an interrupted pull then pages the same range
+        again.
         """
         newest = item.newest_ts
-        for page in connection.gateway.history(item.channel, oldest, item.until):
+        for page in connection.gateway.history(item.channel, oldest, latest):
             self._append_history_page(connection, held, page, view, reason)
             newest = _outermost(newest, page, newest=True)
             oldest_ts = _outermost(item.oldest_ts, page, newest=False)
             item = msgspec.structs.replace(item, oldest_ts=oldest_ts)
+            if newest_each_page:
+                item = msgspec.structs.replace(item, newest_ts=newest)
             self._record(item, held)
-        return msgspec.structs.replace(item, newest_ts=newest)
+        if not newest_each_page:
+            return msgspec.structs.replace(item, newest_ts=newest)
+        item = msgspec.structs.replace(item, backfill_complete=True)
+        self._record(item, held)
+        return item
 
     def _search_replies(
         self,
-        connection: _Connection,
-        held: _HeldConversation,
+        connection: Connection,
+        held: HeldConversation,
         item: TrackedItem,
         view: DirectoryView,
     ) -> TrackedItem:
@@ -593,8 +435,8 @@ class _PullRun:
 
     def _reread_range(
         self,
-        connection: _Connection,
-        held: _HeldConversation,
+        connection: Connection,
+        held: HeldConversation,
         item: TrackedItem,
         view: DirectoryView,
     ) -> TrackedItem:
@@ -604,7 +446,9 @@ class _PullRun:
         messages only.
         """
         searched_at = fetched_now(self.uow)
-        item = self._page_newer(connection, held, item, view, item.since, "full")
+        item = self._page_history(
+            connection, held, item, view, item.since, item.until, "full", newest_each_page=False
+        )
         parents = {ts for ts in held.listed if held.has_replies(ts)}
         self._reread_threads(connection, held, parents, view, "full")
         stored = held.stored
@@ -619,8 +463,8 @@ class _PullRun:
 
     def _append_history_page(
         self,
-        connection: _Connection,
-        held: _HeldConversation,
+        connection: Connection,
+        held: HeldConversation,
         page: list[dict],
         view: DirectoryView,
         reason: ThreadReason,
@@ -632,8 +476,8 @@ class _PullRun:
 
     def _reread_threads(
         self,
-        connection: _Connection,
-        held: _HeldConversation,
+        connection: Connection,
+        held: HeldConversation,
         thread_ts: set[str],
         view: DirectoryView,
         reason: ThreadReason,
@@ -645,8 +489,8 @@ class _PullRun:
 
     def _append_read(
         self,
-        connection: _Connection,
-        held: _HeldConversation,
+        connection: Connection,
+        held: HeldConversation,
         page: list[dict],
         parents: list[str],
         view: DirectoryView,
@@ -683,7 +527,7 @@ class _PullRun:
             self._count_thread_read(team_id, channel, ts, reason)
         read = [*page, *(m for messages in threads.values() for m in messages)]
         bot_ids = {m["bot_id"] for m in read if m.get("bot_id")} - view.bots.keys()
-        bots = _unknown_bots(gateway, team_id, bot_ids, uow.archive)
+        bots = unknown_bots(gateway, team_id, bot_ids, uow.archive)
         append_directory(uow, team_id, "bot", bots, BOTS_API)
         view.bots.update(bots)
         self._append_messages(held, page, HISTORY_API, view)
@@ -694,7 +538,7 @@ class _PullRun:
             self.progress.add(len(read))
 
     def _append_messages(
-        self, held: _HeldConversation, messages: list[dict], api: str, view: DirectoryView
+        self, held: HeldConversation, messages: list[dict], api: str, view: DirectoryView
     ) -> None:
         uow, team_id, channel = self.uow, held.team_id, held.channel
         files = {f["id"]: f for m in messages for f in m.get("files") or []}
@@ -731,7 +575,7 @@ class _PullRun:
             )
 
     def _append_thread(
-        self, held: _HeldConversation, thread_ts: str, messages: list[dict], view: DirectoryView
+        self, held: HeldConversation, thread_ts: str, messages: list[dict], view: DirectoryView
     ) -> None:
         self._append_messages(held, messages, REPLIES_API, view)
         returned = {message["ts"] for message in messages}
@@ -739,7 +583,7 @@ class _PullRun:
         oldest = min(returned, key=MessageTs, default=None)
         self._append_deletes(held, infer_deletes(members, returned, None, oldest))
 
-    def _append_deletes(self, held: _HeldConversation, stamps: set[str]) -> None:
+    def _append_deletes(self, held: HeldConversation, stamps: set[str]) -> None:
         uow = self.uow
         for ts in sorted(stamps, key=MessageTs):
             meta = stamped_meta(uow, "deleted", team=held.team_id, channel=held.channel, ts=ts)
@@ -759,7 +603,7 @@ class _PullRun:
         self.reporter.warn(message)
         self.skipped.append(message)
 
-    def _skip(self, item: TrackedItem, message: str, held: _HeldConversation | None = None) -> None:
+    def _skip(self, item: TrackedItem, message: str, held: HeldConversation | None = None) -> None:
         self._warn(message)
         self._record(msgspec.structs.replace(item, status="not_visible"), held)
         self._end_progress()
@@ -778,7 +622,7 @@ class _PullRun:
             self._threads_counted.add(key)
             self.threads_read[reason] = self.threads_read.get(reason, 0) + 1
 
-    def _record(self, item: TrackedItem, held: _HeldConversation | None = None) -> None:
+    def _record(self, item: TrackedItem, held: HeldConversation | None = None) -> None:
         """Records the item in the run; with its held conversation, also the threads to retry."""
         if held is not None:
             item = msgspec.structs.replace(item, retry_threads=held.retry_threads(item))
@@ -803,65 +647,6 @@ class _ItemProgress:
 
     def end(self) -> None:
         self.reporter.progress(self.label, self.seen, self.seen)
-
-
-class _HeldConversation:
-    """What the archive holds for one conversation, read once and kept current as lines append.
-
-    listed holds the ts of each message history returned in this run, read_threads the
-    thread_ts of each thread read in this run, and failed_threads those whose read failed.
-    """
-
-    def __init__(self, archive: ArchiveStore, team_id: str, channel: str) -> None:
-        self.team_id = team_id
-        self.channel = channel
-        self._archive = archive
-        self.stored = archive.stored_messages(team_id, channel)
-        self.listed: set[str] = set()
-        self.read_threads: set[str] = set()
-        self.failed_threads: set[str] = set()
-        self._replies: dict[str, set[str]] = {}
-        for ts, stored in self.stored.items():
-            self._index(ts, stored)
-
-    @cached_property
-    def files(self) -> dict[str, DirectoryState]:
-        return self._archive.directory_state(self.team_id, "file")
-
-    @cached_property
-    def images(self) -> dict[str, DirectoryState]:
-        return self._archive.directory_state(self.team_id, "image")
-
-    @cached_property
-    def downloads(self) -> dict[tuple[str, str], DownloadState]:
-        return self._archive.downloads()
-
-    def record(self, ts: str, stored: StoredMessage) -> None:
-        self.stored[ts] = stored
-        self._index(ts, stored)
-
-    def thread(self, thread_ts: str) -> list[str]:
-        """The stored ts of a thread's parent and replies, oldest first."""
-        members = set(self._replies.get(thread_ts, ()))
-        if thread_ts in self.stored:
-            members.add(thread_ts)
-        return sorted(members, key=MessageTs)
-
-    def retry_threads(self, item: TrackedItem) -> list[str]:
-        """The threads the next pull re-reads first, oldest first.
-
-        They are the threads whose read failed in this run and the item's earlier ones not read
-        since, so a pull interrupted after a failure still keeps them.
-        """
-        retry = self.failed_threads | (set(item.retry_threads) - self.read_threads)
-        return sorted(retry, key=MessageTs)
-
-    def has_replies(self, thread_ts: str) -> bool:
-        return any(ts != thread_ts for ts in self._replies.get(thread_ts, ()))
-
-    def _index(self, ts: str, stored: StoredMessage) -> None:
-        if stored.thread_ts is not None:
-            self._replies.setdefault(stored.thread_ts, set()).add(ts)
 
 
 def _within(item: TrackedItem, stamps: set[str]) -> set[str]:

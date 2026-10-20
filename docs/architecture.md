@@ -8,7 +8,7 @@ Dependencies point inward: `cli.py` and `bootstrap.py` know everything, adapters
 
 - **Domain** (`domain/`): pure functions and value types. `links.py` (`MessageTs`, selectors, permalinks), `envelope.py` (the JSONL line), `hashing.py` (hashed subsets), `tracking.py` (`TrackedItem`, `DownloadState`, `RunRecord`), `directory.py` (`DirectoryView`, the name fallback rules), `plain.py` (`meta.plain`), `emoji.py`, and the HTML renderers in `render/`.
 - **Ports** (`ports.py`): one `Protocol` per outside dependency, the value types they pass, and `SlarcError` with its subclasses, whose `str()` is the message the user sees.
-- **Service layer** (`service/`): one module per use case (`pull`, `downloads`, `threads`, `selectors`, `appends`, `auth`, `listing`, `search`, `export`). Each takes its ports as arguments.
+- **Service layer** (`service/`): one module per use case (`pull`, `downloads`, `threads`, `selectors`, `appends`, `auth`, `listing`, `search`, `export`). Each takes its ports as arguments. `pull` is supported by `workspaces` (one connection per workspace), `held_conversation` (what the archive holds for one conversation) and `directory_refresh`.
 - **Unit of work** (`unit_of_work.py`): scopes one pull run; see below.
 - **Shared state fold** (`archive_state.py`): turns archive lines into current state, latest `(fetched_at, run)` line winning. `JsonlArchiveStore` and the in-memory fake both use it, so duplicate and out-of-order lines read the same in tests and on disk.
 - **Adapters** (`adapters/`): the real implementations of the ports, plus the credential readers (`chromium.py`, `leveldb.py`, `snappy.py`) and the rate limiter (`rate_limit.py`).
@@ -51,8 +51,8 @@ An archive is a directory with `slarc.toml`, month-partitioned message files und
 
 `pull()` in `service/pull.py`:
 
-1. Resolves selectors to tracked items, or takes every tracked item for a bare pull. `_Workspaces` connects each workspace once per run (each connection has its own rate limiter), runs `auth.test`, records the `auth` entry, and refuses an env session whose `auth.test` names a different workspace than the link.
-2. For each workspace, reads tracked threads and messages with `conversations.replies`, then refreshes the directory on every pull: `users.list`, `emoji.list`, `usergroups.list`, `bots.info` for bots not yet stored, and `conversations.info` for each conversation involved. Directory lines are appended only when their hash or blob changed.
+1. Resolves selectors to tracked items, or takes every tracked item for a bare pull. `workspaces.Workspaces` connects each workspace once per run (each connection has its own rate limiter), runs `auth.test`, records the `auth` entry, and refuses an env session whose `auth.test` names a different workspace than the link.
+2. For each workspace, reads tracked threads and messages with `conversations.replies`, then refreshes the directory (`directory_refresh.refresh_directory`) on every pull: `users.list`, `emoji.list`, `usergroups.list`, `bots.info` for bots not yet stored, and `conversations.info` for each conversation involved. Directory lines are appended only when their hash or blob changed.
 3. For each tracked conversation:
    - Retries: threads whose read failed in an earlier pull (`retry_threads`) are re-read first.
    - History: a first pull pages from `until` down to `since`, recording the item after each page so an interrupted backfill resumes below `oldest_ts`. Later pulls page only newer than `newest_ts`. Every parent with replies in a page has its thread read.

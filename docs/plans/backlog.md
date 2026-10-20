@@ -47,11 +47,11 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 - When a conversation turns `NotVisible` partway through a pull, deletes already appended for its re-read threads stay (`service/pull.py`).
 - A new link whose first read raises `NotVisible` is tracked as `not_visible`, while a `ThreadNotFound` link is not tracked (`service/pull.py` `_message_item`).
 - The "Slack returns no message" warning link leaves out `thread_ts` for a reply (`service/pull.py` `_missing_message`).
-- Bots are fetched only when not yet stored, so a bot rename is never recorded, and `bots.info` errors other than `AuthFailed` are dropped without a warning (`service/pull.py` `_unknown_bots`).
+- Bots are fetched only when not yet stored, so a bot rename is never recorded, and `bots.info` errors other than `AuthFailed` are dropped without a warning (`service/directory_refresh.py` `unknown_bots`).
 - A tracked `message` item keeps kind `message` after it gains replies, so `slarc list` shows "message" for a thread (`service/pull.py`).
 - `messages_seen` counts a thread parent twice, once from history and once from its replies (`service/pull.py`).
 - `_append_read` mutates the frozen `DirectoryView`'s `bots` dict (`service/pull.py`).
-- Each workspace gets two `auth.test` calls per run, in `SessionConnector.connect` and `_Workspaces._open`.
+- Each workspace gets two `auth.test` calls per run, in `SessionConnector.connect` and `Workspaces._open`.
 - A tracked DM may fail `search.messages` (DM search syntax is unverified) and warn on every pull; check `in:<#D...>` read-only and skip search for DMs if it fails (`service/pull.py` `_search_replies`).
 - `--max-file-size 0` is left out of the run line's args because `0 == False` (`cli.py` `_run_args`).
 - A skipped `not_visible` item shows a finished 0-message progress bar (`cli.py` `RichReporter`).
@@ -61,11 +61,10 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 - An uploaded HTML file served as `text/html` would be recorded `failed`, since the job lacks the file's mimetype; Slack serves the fixture upload as a snippet (`adapters/downloader.py`).
 - A 403 or 404 after an off-host redirect of a Slack file is recorded as terminal `forbidden` instead of `failed` with the session hint (`adapters/downloader.py`).
 - Waits inside slack_sdk's 429 retry handler are not counted in `rate_limit_wait_s`, and the spec's run row does not say so (`adapters/slack_gateway.py`).
-- `pull.py` is over 800 lines; split it at the `_PullRun` / `_HeldConversation` seam, merge the near-duplicate `_page_older` and `_page_newer` loops, and rename `_Workspaces.connect` / `connection` so they differ by more than a suffix.
 - The download status `Literal` is spelled out in `ports.py`, `domain/tracking.py`, `adapters/downloader.py` and `service/downloads.py`; `service/selectors.py` repeats the `ItemKey` type inline.
 
 ### Auth
-- An `SLARC_DOMAIN` that does not match the env token's workspace still tracks items under the token's team (`service/pull.py` `_Workspaces._open`).
+- An `SLARC_DOMAIN` that does not match the env token's workspace still tracks items under the token's team (`service/workspaces.py` `Workspaces._open`).
 - On macOS both keychain accounts are read, which can raise two dialogs where both Slack builds are installed (`adapters/desktop_session.py` `_keychain_passwords`).
 - `READ_ERRORS` includes `TypeError` and `AttributeError`, so programming bugs show as credential read failures (`adapters/desktop_session.py`).
 - `KeyringSource.store` writes the entry before the index, so a failure between them leaves an orphan entry (`adapters/credentials.py`).
