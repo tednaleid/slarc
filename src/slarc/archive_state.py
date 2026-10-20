@@ -119,8 +119,12 @@ def item_revisions(change: Commit, stored: StoredRevisions) -> dict[ItemKey, int
     """The revision each of the commit's items is written with.
 
     Raises CommitConflict when an item or unchanged item no longer has the revision it was
-    read with, or when an item with revision 0 is still tracked.
+    read with, or when an item with revision 0 is still tracked, and ValueError when two
+    items share a key.
     """
+    keys = [item.key for item in change.items]
+    if len(set(keys)) != len(keys):
+        raise ValueError("A commit names each tracked item at most once")
     revisions = {}
     for item in change.items:
         held = stored.get(item.key)
@@ -137,14 +141,6 @@ def item_revisions(change: Commit, stored: StoredRevisions) -> dict[ItemKey, int
         if held is None or held[0] != item.revision:
             raise CommitConflict()
     return revisions
-
-
-def next_revisions(items: Iterable[TrackedItem], stored: StoredRevisions) -> list[TrackedItem]:
-    """The items with each revision set one past the stored one, unchecked, as append_run writes."""
-    return [
-        msgspec.structs.replace(item, revision=stored.get(item.key, (0, ""))[0] + 1)
-        for item in items
-    ]
 
 
 def dropped_downloads(change: Commit, existing: set[DownloadKey]) -> set[DownloadKey]:

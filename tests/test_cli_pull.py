@@ -1,6 +1,7 @@
 # ABOUTME: Tests for the `slarc pull` command through the CLI with a real archive on disk.
 # ABOUTME: Slack, credentials, the clock and the downloader are fakes swapped in through bootstrap.
 import io
+import re
 from collections.abc import Iterator
 from contextlib import nullcontext
 from pathlib import Path
@@ -79,6 +80,7 @@ class Fixture:
         self.clock = FakeClock()
         self.downloader = FakeDownloader()
         self.download_sessions: list[dict[str, Session]] = []
+        self.run_suffix = ""
 
     def services(self) -> bootstrap.Services:
         def downloader(blobs: BlobStore, sessions: dict[str, Session]) -> nullcontext:
@@ -95,6 +97,7 @@ class Fixture:
             downloader=downloader,
             env=self.env,
             home=self.home,
+            run_suffix=self.run_suffix,
         )
 
     def pull(self, *args: str, input: str | None = None):
@@ -152,6 +155,17 @@ def test_new_archive_creates_a_lake(f: Fixture):
     assert result.exit_code == 0, result.output
     assert (f.work / "catalog.sqlite").is_file()
     assert "Imported" not in result.output
+
+
+def test_pull_run_id_ends_with_the_run_suffix(f: Fixture):
+    f.run_suffix = "3f9a"
+    result = f.pull("--yes", BASE)
+    assert result.exit_code == 0, result.output
+    assert f.runs()[-1].run == "r_20261019T134011Z_3f9a"
+
+
+def test_real_services_draw_a_random_run_suffix():
+    assert re.fullmatch("[0-9a-f]{4}", bootstrap.real_services().run_suffix)
 
 
 def test_pull_declined_creates_nothing(f: Fixture):

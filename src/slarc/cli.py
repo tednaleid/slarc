@@ -386,7 +386,9 @@ def pull_command(
             bootstrap.archive_stores(archive_root) as (archive, blobs),
             services.downloader(blobs, connector.authenticated) as downloader,
             RichReporter(err) as reporter,
-            UnitOfWork(archive, blobs, services.clock, "pull", args, __version__) as uow,
+            UnitOfWork(
+                archive, blobs, services.clock, "pull", args, __version__, services.run_suffix
+            ) as uow,
         ):
             report = pull(parsed, options, uow, connector, downloader, reporter)
     except NoSession as error:
@@ -736,7 +738,9 @@ def rm_command(
                 declined = True
             if declined:
                 _fail(NOTHING_REMOVED)
-            with UnitOfWork(archive, blobs, services.clock, "rm", args, __version__) as uow:
+            with UnitOfWork(
+                archive, blobs, services.clock, "rm", args, __version__, services.run_suffix
+            ) as uow:
                 apply_removal(removal, uow)
             try:
                 sweep(removal.teams, archive, blobs)

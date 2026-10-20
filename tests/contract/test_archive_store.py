@@ -231,9 +231,14 @@ def test_same_second_blob_line_wins_in_store_and_index(
 def test_tracked_items_last_commit_wins(store_and_reopen):
     store, reopen = store_and_reopen
     other = "C0OTHER0001"
-    store.append_run(run_record(R2, T2, tracked=[tracked("200.000000")]), VERSION)
-    store.append_run(
-        run_record(R1, T1, tracked=[tracked("100.000000"), tracked("50.000000", other)]), VERSION
+    store.commit(Commit(items=[tracked("200.000000")]))
+    store.commit(
+        Commit(
+            items=[
+                msgspec.structs.replace(tracked("100.000000"), revision=1),
+                tracked("50.000000", other),
+            ]
+        )
     )
 
     for current in (store, reopen()):
@@ -243,24 +248,24 @@ def test_tracked_items_last_commit_wins(store_and_reopen):
         assert len(items) == 2
 
 
-def test_append_run_bumps_each_items_stored_revision(store_and_reopen):
+def test_append_run_leaves_tracked_items_to_commits(store_and_reopen):
     store, reopen = store_and_reopen
-    stale = msgspec.structs.replace(tracked("100.000000"), revision=7)
-    store.append_run(run_record(R1, T1, tracked=[stale]), VERSION)
-    store.append_run(run_record(R2, T2, tracked=[stale]), VERSION)
+    store.commit(Commit(items=[tracked("100.000000")]))
+    stale = msgspec.structs.replace(tracked("200.000000"), revision=7)
+    newcomer = tracked("50.000000", OTHER_CHANNEL)
+    store.append_run(run_record(R1, T1, tracked=[stale, newcomer]), VERSION)
 
+    expected = msgspec.structs.replace(tracked("100.000000"), revision=1)
     for current in (store, reopen()):
-        assert current.tracked_items()[KEY].revision == 2
+        assert current.tracked_items() == {KEY: expected}
 
 
 def test_removed_items_leave_tracked_items(store_and_reopen):
     store, reopen = store_and_reopen
     keep = tracked("100.000000")
     gone = TrackedItem(team_id=TEAM, kind="thread", channel=CHANNEL, ts="1.000001")
-    store.append_run(run_record(R1, T1, tracked=[keep, gone]), VERSION)
-    store.append_run(
-        run_record(R2, T2, tracked=[msgspec.structs.replace(gone, status="removed")]), VERSION
-    )
+    store.commit(Commit(items=[keep, gone]))
+    store.commit(Commit(items=[msgspec.structs.replace(gone, status="removed", revision=1)]))
 
     for current in (store, reopen()):
         assert list(current.tracked_items()) == [keep.key]
@@ -270,10 +275,8 @@ def test_removed_items_leave_tracked_items(store_and_reopen):
 def test_retracking_a_removed_item_tracks_it_again(store_and_reopen):
     store, reopen = store_and_reopen
     item = tracked("100.000000")
-    store.append_run(
-        run_record(R1, T1, tracked=[msgspec.structs.replace(item, status="removed")]), VERSION
-    )
-    store.append_run(run_record(R2, T2, tracked=[item]), VERSION)
+    store.commit(Commit(items=[msgspec.structs.replace(item, status="removed")]))
+    store.commit(Commit(items=[item]))
 
     for current in (store, reopen()):
         assert list(current.tracked_items()) == [item.key]
@@ -398,7 +401,14 @@ def test_drop_workspace_removes_raw_and_directory(store_and_reopen):
     store.append(file_line("F1", T1, R1, "ab" * 32))
     store.append(message(TS, "kept", T1, R1, team=OTHER_TEAM))
     store.append(file_line("F2", T1, R1, None, team=OTHER_TEAM))
-    store.append_run(run_record(R1, T1, tracked=[tracked("100.000000")]), VERSION)
+    store.commit(
+        Commit(
+            items=[
+                tracked("100.000000"),
+                TrackedItem(team_id=OTHER_TEAM, kind="conversation", channel=CHANNEL),
+            ]
+        )
+    )
     store.stored_messages(TEAM, CHANNEL)
 
     store.drop_workspace(TEAM)
@@ -410,7 +420,7 @@ def test_drop_workspace_removes_raw_and_directory(store_and_reopen):
         assert current.directory_state(TEAM, "file") == {}
         assert set(current.stored_messages(OTHER_TEAM, CHANNEL)) == {TS}
         assert list(current.directory_state(OTHER_TEAM, "file")) == ["F2"]
-        assert len(current.tracked_items()) == 1
+        assert len(current.tracked_items()) == 2
 
     store.append(message(LATER_TS, "again", T2, R2))
     assert set(reopen().stored_messages(TEAM, CHANNEL)) == {LATER_TS}
@@ -654,3 +664,25 @@ def test_discard_empties_the_batch(store_and_reopen):
     store.commit(Commit())
     for current in (store, reopen()):
         assert set(current.stored_messages(TEAM, CHANNEL)) == {TS}
+
+
+def test_settled_key_deletes_a_download_state_the_same_commit_upserts(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.commit(Commit(items=[tracked("100.000000")], downloads=[download("F1", "pending", 0)]))
+
+    store.commit(Commit(downloads=[download("F1", "failed", 1)], settled={(TEAM, "F1")}))
+
+    for current in (store, reopen()):
+        assert current.downloads() == {}
+
+
+def test_duplicate_item_keys_in_one_commit_are_rejected(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.append(message(TS, "kept", T1, R1))
+
+    with pytest.raises(ValueError):
+        store.commit(Commit(items=[tracked("100.000000"), tracked("200.000000")]))
+
+    assert set(store.stored_messages(TEAM, CHANNEL)) == {TS}
+    for current in (store, reopen()):
+        assert current.tracked_items() == {}

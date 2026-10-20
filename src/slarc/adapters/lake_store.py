@@ -174,13 +174,12 @@ class DuckLakeArchiveStore:
         return {(state.team_id, state.target): state for state in states}
 
     def append_run(self, run: RunRecord, slarc_version: str) -> None:
-        """Commits the open batch, the run, and its tracked items and download states together.
+        """Commits the open batch, the run, and its download states together.
 
         The run row's tracked and downloads lists are empty: the tracked_item and
-        download_state tables hold that state. Each tracked item is written one revision past
-        its stored one, without a revision check. Commits are serialized, so the last commit's
-        tracked items and download states win. On failure nothing is written and the open
-        batch is kept.
+        download_state tables hold that state, and only commit writes tracked items. Commits
+        are serialized, so the last commit's download states win. On failure nothing is
+        written and the open batch is kept.
         """
         recorded = msgspec.structs.replace(run, tracked=[], downloads=[])
         with self._transaction():
@@ -189,8 +188,6 @@ class DuckLakeArchiveStore:
             insert_rows(
                 self._con, "run", RUN_COLUMNS, [run_row(run_envelope(recorded, slarc_version))]
             )
-            stored = self._stored_revisions()
-            self._upsert_tracked(archive_state.next_revisions(run.tracked, stored))
             self._upsert_downloads(run.downloads)
         self.discard()
 

@@ -1,6 +1,7 @@
 # ABOUTME: Composition root: builds the real adapters the CLI commands use as one Services value.
 # ABOUTME: Tests swap in fakes with override(), which current_services() then returns.
 import os
+import secrets
 import sys
 from collections.abc import Callable, Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
@@ -98,6 +99,7 @@ class Services:
     downloader: DownloaderFactory = http_downloader
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     home: Path = field(default_factory=Path.home)
+    run_suffix: str = ""  # ends the run id, telling apart commands started in the same second
 
     def connector(self) -> SessionConnector:
         return SessionConnector(self.credentials, self.gateway_factory)
@@ -110,6 +112,7 @@ def real_services() -> Services:
         credentials=CompositeSource([EnvSource(os.environ), keyring_source, desktop]),
         keychain=keyring_source,
         gateway_factory=session_gateway,
+        run_suffix=secrets.token_hex(2),
     )
 
 

@@ -6,8 +6,8 @@ import pytest
 
 from slarc import __version__
 from slarc.domain.links import parse_selector
-from slarc.domain.tracking import RunRecord, TrackedItem
-from slarc.ports import SearchHit, SlarcError
+from slarc.domain.tracking import TrackedItem
+from slarc.ports import Commit, SearchHit, SlarcError
 from slarc.service.remove import Removal, apply_removal, plan_removal, sweep
 from slarc.unit_of_work import UnitOfWork
 from tests.service.pull_harness import (
@@ -360,10 +360,7 @@ def test_rm_message_link_names_its_thread_and_message_items(h: Harness):
     h.pull(BASE)
     message_item = TrackedItem(team_id=TEAM, kind="message", channel=CHANNEL, ts=PARENT_TS)
     thread_item = TrackedItem(team_id=TEAM, kind="thread", channel=CHANNEL, ts=PARENT_TS)
-    later = "2026-10-20T00:00:00Z"
-    run = RunRecord(run="r_20261020T000000Z", command="pull", started=later, finished=later)
-    run.tracked = [message_item, thread_item]
-    h.archive.append_run(run, __version__)
+    h.archive.commit(Commit(items=[message_item, thread_item]))
 
     removal = plan(h, THREAD_LINK)
 

@@ -419,7 +419,9 @@ def test_tracked_item_and_download_views(tmp_path: Path, ext_dir: Path) -> None:
     state = DownloadState(
         team_id=RECORDED_TEAM, target_kind="file", target="F0PDF", status="failed", attempts=2
     )
-    commit(tmp_path, ext_dir, run=later_run(tracked=[item, removed], downloads=[state]))
+    store = DuckLakeArchiveStore(tmp_path, ext_dir)
+    store.commit(Commit(items=[item, removed], downloads=[state]))
+    store.close()
     with DuckDbQueryIndex(tmp_path, ext_dir) as index:
         rows = index.sql(
             "SELECT team_id, kind, channel_id, ts, newest_ts, status, "

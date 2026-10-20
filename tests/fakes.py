@@ -91,12 +91,9 @@ class InMemoryArchiveStore:
         return dict(self.download_states)
 
     def append_run(self, run: RunRecord, slarc_version: str) -> None:
-        """Commits the open batch, then records the run line, its tracked items one revision
-        past their stored ones, and its download states."""
+        """Commits the open batch, then records the run line and its download states."""
         self._apply_drops()
         self.lines.extend(self._batch)
-        for item in archive_state.next_revisions(run.tracked, self._stored_revisions()):
-            self.tracked[item.key] = item
         for state in run.downloads:
             self.download_states[(state.team_id, state.target)] = state
         self.lines.append(run_envelope(run, slarc_version))
@@ -151,13 +148,15 @@ class InMemoryArchiveStore:
         if not set(change.requires) <= directory:
             raise CommitConflict()
         self.lines = lines
-        for key in self._download_drops | set(change.settled):
+        for key in self._download_drops:
             self.download_states.pop(key, None)
         for item in change.items:
             self.tracked[item.key] = msgspec.structs.replace(item, revision=revisions[item.key])
         for state in change.downloads:
             if (state.team_id, state.target) not in dropped:
                 self.download_states[(state.team_id, state.target)] = state
+        for key in change.settled:
+            self.download_states.pop(key, None)
         return Committed(revisions=revisions, dropped=dropped)
 
     def _stored_revisions(self) -> archive_state.StoredRevisions:

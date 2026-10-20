@@ -4,12 +4,14 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Literal
 
+import msgspec
 import pytest
 
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.config import load_settings, read_global_config
-from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
+from slarc.domain.tracking import DownloadState, TrackedItem
+from slarc.ports import Commit
 from slarc.service.listing import ArchiveListing, ListRow, list_archive, list_remote
 from tests.fakes import FakeConnector, FakeSlackGateway
 from tests.recorded_fixtures import RECORDED_TEAM, recorded_lake
@@ -48,20 +50,20 @@ def listing_of(archive: Path, ext_dir: Path, store: DuckLakeArchiveStore) -> Arc
         return list_archive(settings, store, index)
 
 
-def append_run(
+def commit(
     store: DuckLakeArchiveStore,
     tracked: list[TrackedItem],
     downloads: list[DownloadState] | None = None,
 ) -> None:
-    run = RunRecord(
-        run="r_20261020T000000Z",
-        command="pull",
-        started=LATER,
-        finished=LATER,
-        tracked=tracked,
-        downloads=downloads or [],
-    )
-    store.append_run(run, "0.1.0")
+    """Commits the items, each over its stored revision if it has one, and the downloads."""
+    stored = store.tracked_items()
+    items = [
+        msgspec.structs.replace(item, revision=stored[item.key].revision)
+        if item.key in stored
+        else item
+        for item in tracked
+    ]
+    store.commit(Commit(items=items, downloads=downloads or []))
 
 
 def rows_by_item(listing: ArchiveListing) -> dict[tuple[str, str], ListRow]:
@@ -110,7 +112,7 @@ def test_list_counts_messages_and_pending(
         download("image", GIPHY, "forbidden"),
         download("image", AVATAR, "failed"),
     ]
-    append_run(store, tracked=[thread], downloads=downloads)
+    commit(store, tracked=[thread], downloads=downloads)
 
     listing = listing_of(archive, ext_dir, store)
 
@@ -149,7 +151,7 @@ def test_list_tells_apart_two_threads_in_one_conversation(
         TrackedItem(team_id=RECORDED_TEAM, kind="thread", channel="C0CA5396G03", ts=ts)
         for ts in (WAVE_PARENT, LONE_TS)
     ]
-    append_run(store, tracked=threads)
+    commit(store, tracked=threads)
 
     rows = listing_of(archive, ext_dir, store).rows
     labels = [row.conversation for row in rows if row.kind == "thread"]
@@ -162,7 +164,7 @@ def test_list_marks_not_visible(archive: Path, ext_dir: Path, store: DuckLakeArc
         TrackedItem(team_id=RECORDED_TEAM, kind="conversation", channel=channel, status=status)
         for channel, status in (("C0CA7SNHTSP", "not_visible"), ("C0CAGONE001", "not_visible"))
     ]
-    append_run(store, tracked=hidden)
+    commit(store, tracked=hidden)
 
     rows = rows_by_item(listing_of(archive, ext_dir, store))
 

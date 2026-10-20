@@ -1,11 +1,12 @@
 # ABOUTME: Tests for behavior only the lake store has: the open batch, which append_run commits
-# ABOUTME: in one transaction with the run's tracked items and download states.
+# ABOUTME: in one transaction with the run's download states, and tracked item round trips.
 from pathlib import Path
 
 import msgspec
 import pytest
 
 from slarc.adapters.lake_store import DuckLakeArchiveStore
+from slarc.ports import Commit
 from tests.contract.test_archive_store import (
     CHANNEL,
     R1,
@@ -61,14 +62,12 @@ def test_reads_see_the_open_batch(tmp_path: Path, ext_dir: Path) -> None:
     other.close()
 
 
-def test_append_run_commits_batch_items_and_downloads_together(
+def test_append_run_commits_batch_and_downloads_together(
     tmp_path: Path, ext_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = DuckLakeArchiveStore(tmp_path, ext_dir)
     line = message(TS, "Hello", T1, R1)
-    run = run_record(
-        R1, T1, tracked=[tracked("100.000000")], downloads=[download("F1", "pending", 0)]
-    )
+    run = run_record(R1, T1, downloads=[download("F1", "pending", 0)])
     store.append(line)
 
     def fail(*args: object) -> None:
@@ -80,14 +79,12 @@ def test_append_run_commits_batch_items_and_downloads_together(
             store.append_run(run, VERSION)
     other = DuckLakeArchiveStore(tmp_path, ext_dir)
     assert other.stored_messages(TEAM, CHANNEL) == {}
-    assert other.tracked_items() == {}
     assert other.downloads() == {}
 
     store.append_run(run, VERSION)
     store.close()
     for current in (other, DuckLakeArchiveStore(tmp_path, ext_dir)):
         assert set(current.stored_messages(TEAM, CHANNEL)) == {TS}
-        assert list(current.tracked_items()) == [tracked("100.000000").key]
         assert current.downloads() == {(TEAM, "F1"): download("F1", "pending", 0)}
         current.close()
 
@@ -102,7 +99,7 @@ def test_tracked_items_round_trip_every_field(tmp_path: Path, ext_dir: Path) -> 
     thread.backfill_complete = True
     conversation = tracked("200.000000")
     store = DuckLakeArchiveStore(tmp_path, ext_dir)
-    store.append_run(run_record(R1, T1, tracked=[thread, conversation]), VERSION)
+    store.commit(Commit(items=[thread, conversation]))
     store.close()
 
     reopened = DuckLakeArchiveStore(tmp_path, ext_dir)

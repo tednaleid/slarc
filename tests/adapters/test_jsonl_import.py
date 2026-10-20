@@ -22,7 +22,7 @@ from slarc.adapters.lake import CATALOG, DATA_DIR, connect_lake
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.domain.envelope import Envelope, Kind, encode_line, month_of
 from slarc.domain.tracking import run_envelope
-from slarc.ports import ArchiveStore, SlarcError
+from slarc.ports import ArchiveStore, Commit, SlarcError
 from tests.contract.test_archive_store import (
     CHANNEL,
     R1,
@@ -309,7 +309,8 @@ def test_export_then_import_round_trips(tmp_path: Path, ext_dir: Path) -> None:
     lake.append(file_line("F1", T3, R3, None))
     later = tracked("100.000000", channel="C0LATER0001")
     downloads = [download("F1", "failed", 1)]
-    lake.append_run(run_record(R3, T3, tracked=[later], downloads=downloads), VERSION)
+    lake.commit(Commit(items=[later], downloads=downloads))
+    lake.append_run(run_record(R3, T3), VERSION)
     lake.close()
 
     exported = tmp_path / "exported"

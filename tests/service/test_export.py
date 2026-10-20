@@ -120,11 +120,11 @@ def append_line(
 
 
 def commit(store: DuckLakeArchiveStore, *tracked: TrackedItem) -> None:
-    """Commits the store's open batch with a run that records the tracked items."""
-    run = RunRecord(
-        run=LATER_RUN, command="pull", started=LATER, finished=LATER, tracked=list(tracked)
+    """Commits the store's open batch with the tracked items, then a run."""
+    store.commit(Commit(items=list(tracked)))
+    store.append_run(
+        RunRecord(run=LATER_RUN, command="pull", started=LATER, finished=LATER), "0.1.0"
     )
-    store.append_run(run, "0.1.0")
 
 
 def append_message(store: DuckLakeArchiveStore, obj: dict) -> None:

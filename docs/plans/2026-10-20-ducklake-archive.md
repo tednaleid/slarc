@@ -282,7 +282,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
 - [x] **Step 4: Run `just check` and watch it pass.**
 - [x] **Step 5: Commit:** `Add commits with item revisions to the archive store`.
 
-### Task 8: UnitOfWork commits
+### Task 8: UnitOfWork commits [done]
 
 **Files:**
 - Modify: `src/slarc/unit_of_work.py`, `src/slarc/bootstrap.py` (passes a random run-id suffix)
@@ -302,16 +302,16 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
   - `__exit__`: when the block raised, it calls `discard()`. Otherwise it calls `commit()` for anything left open, and on `CommitConflict` it records the error in `run.errors` and discards. Then it calls `append_run`.
   - The bootstrap passes `secrets.token_hex(2)`, and tests keep the default `""`.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `test_commit_threads_revisions_through_stale_copies`: committing the same `TrackedItem` object twice succeeds;
   - `test_commit_sends_changed_download_states_only`;
   - `test_conflict_restores_downloads_and_reraises`;
   - `test_exit_after_an_exception_discards_the_open_batch_then_writes_the_run_row`;
   - `test_exit_commits_what_is_left_open`.
-- [ ] **Step 2: Run them and watch them fail.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run `just check` and watch it pass.**
-- [ ] **Step 5: Commit:** `Commit batches through the unit of work`.
+- [x] **Step 2: Run them and watch them fail.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run `just check` and watch it pass.**
+- [x] **Step 5: Commit:** `Commit batches through the unit of work`.
 
 ### Task 9: Pull commits per batch
 

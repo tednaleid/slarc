@@ -1,5 +1,6 @@
 # ABOUTME: Tests for the `slarc rm` command over a lake of the recorded archive, without Slack.
 # ABOUTME: One test pulls with the pull fixture to track a thread inside a tracked conversation.
+import dataclasses
 import shutil
 from pathlib import Path
 
@@ -109,9 +110,12 @@ def test_rm_yes_skips_prompt(archive: Path, tmp_path: Path, ext_dir: Path) -> No
 def test_rm_records_a_run_and_the_removed_item(
     archive: Path, tmp_path: Path, ext_dir: Path
 ) -> None:
-    invoke(tmp_path, "rm", "#all-naleid", "--yes", "--root", str(archive))
-    last = lake_rows(archive, ext_dir, f"SELECT command FROM run ORDER BY {VERSION_ORDER}")[-1]
-    assert last == ("rm",)
+    suffixed = dataclasses.replace(services(tmp_path, []), run_suffix="3f9a")
+    with bootstrap.override(suffixed):
+        runner.invoke(app, ["rm", "#all-naleid", "--yes", "--root", str(archive)])
+    query = f"SELECT command, run FROM run ORDER BY {VERSION_ORDER}"
+    command, run = lake_rows(archive, ext_dir, query)[-1]
+    assert (command, run.endswith("_3f9a")) == ("rm", True)
     query = f"SELECT status FROM tracked_item WHERE channel = '{ALL_NALEID}'"
     assert lake_rows(archive, ext_dir, query) == [("removed",)]
 
