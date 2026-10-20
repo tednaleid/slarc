@@ -525,7 +525,7 @@ class _PullRun:
         view: DirectoryView,
         reason: ThreadReason,
     ) -> None:
-        """Appends a page of history and the thread under each parent in it, then flushes."""
+        """Appends a page of history and the thread under each parent in it."""
         held.listed.update(message["ts"] for message in page)
         parents = [m["ts"] for m in page if (m.get("reply_count") or 0) > 0]
         self._append_read(connection, held, page, parents, view, reason)
@@ -554,7 +554,7 @@ class _PullRun:
     ) -> None:
         """Appends a page of history, then reads and appends the thread under each of parents.
 
-        The page and each thread are flushed and reported as they are appended. A thread whose
+        Progress is reported after the page and after each thread. A thread whose
         read fails with NotVisible or a plain SlarcError is kept in held.failed_threads;
         NotVisible then propagates, and a plain SlarcError skips the thread with a warning.
         AuthFailed and ArchiveWriteFailed propagate.
@@ -562,7 +562,7 @@ class _PullRun:
         if page:
             self._append_bots(connection, page, view)
             self._append_messages(held, page, HISTORY_API, view)
-            self._flush_and_report()
+            self._report_progress()
         gateway, channel = connection.gateway, held.channel
         for ts in parents:
             held.read_threads.add(ts)
@@ -587,7 +587,7 @@ class _PullRun:
             self._count_thread_read(held.team_id, channel, ts, reason)
             self._append_bots(connection, messages, view)
             self._append_thread(held, ts, messages, view)
-            self._flush_and_report()
+            self._report_progress()
 
     def _append_bots(
         self, connection: Connection, messages: list[dict], view: DirectoryView
@@ -599,8 +599,7 @@ class _PullRun:
         append_directory(self.uow, team_id, "bot", bots, BOTS_API)
         view.bots.update(bots)
 
-    def _flush_and_report(self) -> None:
-        self.uow.archive.flush()
+    def _report_progress(self) -> None:
         if self.progress is not None:
             self.progress.report()
 

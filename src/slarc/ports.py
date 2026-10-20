@@ -1,15 +1,18 @@
 # ABOUTME: Ports between slarc's service layer and its adapters, and the value types they pass.
 # ABOUTME: Also defines SlarcError and its subclasses, whose str() is the message shown to the user.
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol
 
 from slarc.domain.envelope import Envelope, Kind
-from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
+from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem
 
 PASTE_HINT = "Run `slarc auth --paste` to store a token and cookie instead."
+
+type DownloadKey = tuple[str, str]  # (team, target)
+type DirectoryRef = tuple[str, Kind, str]  # (team, kind, id)
 
 
 class SlarcError(Exception):
@@ -69,6 +72,11 @@ class FileDeleted(SlarcError):
     def __init__(self, file_id: str) -> None:
         self.file_id = file_id
         super().__init__(f"File {file_id} has been deleted from Slack.")
+
+
+class CommitConflict(SlarcError):
+    def __init__(self) -> None:
+        super().__init__("Another slarc command changed the archive at the same time.")
 
 
 class CredentialReadError(SlarcError):
@@ -177,21 +185,59 @@ class ExportWriter(Protocol):
     def write(self, path: Path, data: bytes) -> None: ...
 
 
+@dataclass(frozen=True)
+class Commit:
+    """What a commit writes along with the open batch, and the archive state it assumed.
+
+    An item with revision 0 starts tracking; any other item, and each unchanged item, must
+    still have the revision it was read with. Each requires ref must have a directory row.
+    downloads are upserted and settled download states deleted. With downloads_exist, a
+    download or settled key that has no download state is dropped, with the open batch's
+    directory rows for its target, instead of failing the commit.
+    """
+
+    items: Sequence[TrackedItem] = ()
+    unchanged: Sequence[TrackedItem] = ()
+    downloads: Sequence[DownloadState] = ()
+    settled: Collection[DownloadKey] = frozenset()
+    requires: Collection[DirectoryRef] = frozenset()
+    downloads_exist: bool = False
+
+
+@dataclass(frozen=True)
+class Committed:
+    """The revision each committed item now has, and the download keys the commit dropped."""
+
+    revisions: dict[ItemKey, int]
+    dropped: set[DownloadKey]
+
+
 class ArchiveStore(Protocol):
+    """Appends and drops wait in an open batch. Reads see the batch's appended lines; a drop
+    removes matching appended lines at once and committed rows when the batch commits.
+
+    commit writes the batch and the change in one transaction. When a check of the Commit
+    fails, or a team with directory lines in the batch has no tracked item that is not
+    removed (counting the commit's items), it writes nothing, empties the batch and raises
+    CommitConflict. discard empties the batch.
+    """
+
     def append(self, env: Envelope) -> None: ...
-    def flush(self) -> None: ...
+    def commit(self, change: Commit) -> Committed: ...
+    def discard(self) -> None: ...
     def stored_messages(self, team: str, channel: str) -> dict[str, StoredMessage]: ...
     def directory_state(self, team: str, kind: Kind) -> dict[str, DirectoryState]: ...
     def directory_objects(self, team: str, kind: Kind) -> dict[str, dict]: ...
     def tracked_items(self) -> dict[tuple[str, str, str, str], TrackedItem]: ...
     def removed_items(self) -> dict[tuple[str, str, str, str], TrackedItem]: ...
-    def downloads(self) -> dict[tuple[str, str], DownloadState]: ...
+    def downloads(self) -> dict[DownloadKey, DownloadState]: ...
     def append_run(self, run: RunRecord, slarc_version: str) -> None: ...
     def channels(self, team: str) -> list[str]: ...  # channels with stored message lines
     def message_lines(self, team: str, channel: str) -> Iterator[Envelope]: ...  # every version
     def drop_messages(self, team: str, channel: str, stamps: set[str]) -> int: ...
     def drop_directory_lines(self, team: str, kind: Kind, ids: set[str]) -> int: ...
     def drop_workspace(self, team: str) -> None: ...
+    def drop_downloads(self, team: str, targets: set[str]) -> None: ...
     def blob_references(self) -> list[tuple[str, Kind, str, str]]: ...  # (team, kind, id, blob)
 
 

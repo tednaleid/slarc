@@ -1,7 +1,6 @@
 # ABOUTME: Tests for pulling whole conversations: date ranges, paging, backfill and thread reads.
 # ABOUTME: A fake gateway pages history newest first; some tests interrupt or observe its paging.
 from collections.abc import Iterator
-from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -423,25 +422,6 @@ def test_later_until_widens_range_of_archived_conversation(h: Harness):
     assert message_ts_since(h, before) == [stamps[19]]
     [item] = h.tracked()
     assert (item.newest_ts, item.archived) == (stamps[19], True)
-
-
-def test_flush_called_per_page(h: Harness, monkeypatch: pytest.MonkeyPatch):
-    h.serve([ts_on(18, hour) for hour in range(5)], page_size=2)
-    served = h.gateway.history
-    flushes_before_page: list[int] = []
-
-    def recording(channel: str, oldest: str | None, latest: str | None) -> Iterator[list[dict]]:
-        for page in served(channel, oldest, latest):
-            flushes_before_page.append(h.archive.flushes)
-            yield page
-
-    monkeypatch.setattr(h.gateway, "history", recording)
-
-    h.pull(BASE)
-
-    counts = [*flushes_before_page, h.archive.flushes]
-    assert len(flushes_before_page) == 3
-    assert all(earlier < later for earlier, later in pairwise(counts))
 
 
 def test_not_visible_conversation_is_skipped_with_warning(h: Harness):

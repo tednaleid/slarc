@@ -336,7 +336,6 @@ class _Recorder:
             self._record_file(result)
         else:
             self._record_image(result)
-        self.uow.archive.flush()
         key = (job.team_id, job.target)
         held = (d for d in self.uow.run.downloads if (d.team_id, d.target) == key)
         return next((d.status for d in held), None)

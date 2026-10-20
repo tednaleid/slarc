@@ -1,6 +1,6 @@
-# ABOUTME: ArchiveStore over the archive's DuckLake. Appended lines wait in an open batch that
-# ABOUTME: reads see, and append_run commits them with the run, tracked items and download states.
-from collections.abc import Callable, Generator, Iterator
+# ABOUTME: ArchiveStore over the archive's DuckLake. Appends and drops wait in an open batch that
+# ABOUTME: commit writes in one transaction after checking item revisions; append_run commits too.
+from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -12,7 +12,15 @@ from slarc.adapters.lake import CATALOG, DATA_DIR, connect_lake
 from slarc.archive_state import LatestMessages
 from slarc.domain.envelope import Envelope, Kind, Meta
 from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem, run_envelope
-from slarc.ports import DirectoryState, StoredMessage
+from slarc.ports import (
+    Commit,
+    CommitConflict,
+    Committed,
+    DirectoryRef,
+    DirectoryState,
+    DownloadKey,
+    StoredMessage,
+)
 
 MESSAGE_KINDS = ("message", "deleted")
 
@@ -58,6 +66,7 @@ TRACKED_COLUMNS = {
     "kind": "VARCHAR",
     "channel": "VARCHAR",
     "ts": "VARCHAR",
+    "revision": "INTEGER",
     "since": "VARCHAR",
     "until": "VARCHAR",
     "newest_ts": "VARCHAR",
@@ -81,6 +90,7 @@ DOWNLOAD_COLUMNS = {
 }
 TRACKED_KEY = ("team", "kind", "channel", "ts")
 DOWNLOAD_KEY = ("team", "target")
+DIRECTORY_REF = ("team", "kind", "id")
 
 # Ascending (fetched_at, run), then insertion order, which is the order archive_state's folds
 # expect: of two lines with the same version, the later one wins.
@@ -95,6 +105,7 @@ class DuckLakeArchiveStore:
     ) -> None:
         self._con = connect_lake(root, ext_dir, catalog=catalog, data_dir=data_dir)
         self._batch: list[Envelope] = []
+        self._drops: list[tuple[str, str, list]] = []  # (table, condition, params) per DELETE
 
     def append(self, env: Envelope) -> None:
         meta = env.meta
@@ -106,8 +117,24 @@ class DuckLakeArchiveStore:
             raise ValueError(f"A {meta.kind} line needs meta.channel and meta.ts")
         self._batch.append(env)
 
-    def flush(self) -> None:
-        pass
+    def commit(self, change: Commit) -> Committed:
+        """Writes the open batch and the change in one transaction, then empties the batch.
+
+        On CommitConflict nothing is written and the batch is emptied; on any other failure
+        nothing is written and the batch is kept.
+        """
+        try:
+            with self._transaction():
+                committed = self._commit(change)
+        except CommitConflict:
+            self.discard()
+            raise
+        self.discard()
+        return committed
+
+    def discard(self) -> None:
+        self._batch.clear()
+        self._drops.clear()
 
     def close(self) -> None:
         self._con.close()
@@ -138,7 +165,7 @@ class DuckLakeArchiveStore:
     def removed_items(self) -> dict[ItemKey, TrackedItem]:
         return self._tracked_where("status = 'removed'")
 
-    def downloads(self) -> dict[tuple[str, str], DownloadState]:
+    def downloads(self) -> dict[DownloadKey, DownloadState]:
         names = ", ".join(DOWNLOAD_COLUMNS)
         rows = self._con.execute(
             f"SELECT {names} FROM download_state ORDER BY team, target"
@@ -150,19 +177,22 @@ class DuckLakeArchiveStore:
         """Commits the open batch, the run, and its tracked items and download states together.
 
         The run row's tracked and downloads lists are empty: the tracked_item and
-        download_state tables hold that state. Commits are serialized, so the last commit's
+        download_state tables hold that state. Each tracked item is written one revision past
+        its stored one, without a revision check. Commits are serialized, so the last commit's
         tracked items and download states win. On failure nothing is written and the open
         batch is kept.
         """
         recorded = msgspec.structs.replace(run, tracked=[], downloads=[])
         with self._transaction():
-            self._insert_batch()
+            self._apply_drops()
+            self._insert_batch(self._batch)
             insert_rows(
                 self._con, "run", RUN_COLUMNS, [run_row(run_envelope(recorded, slarc_version))]
             )
-            self._upsert_tracked(run.tracked)
+            stored = self._stored_revisions()
+            self._upsert_tracked(archive_state.next_revisions(run.tracked, stored))
             self._upsert_downloads(run.downloads)
-        self._batch.clear()
+        self.discard()
 
     def channels(self, team: str) -> list[str]:
         rows = self._con.execute(
@@ -189,7 +219,7 @@ class DuckLakeArchiveStore:
                 and m.ts in stamps
             )
         )
-        return dropped + self._delete(
+        return dropped + self._stage_drop(
             "message_version",
             "team = ? AND channel = ? AND list_contains(?, ts)",
             [team, channel, sorted(stamps)],
@@ -197,7 +227,7 @@ class DuckLakeArchiveStore:
 
     def drop_directory_lines(self, team: str, kind: Kind, ids: set[str]) -> int:
         dropped = self._drop_batched(lambda m: (m.team, m.kind) == (team, kind) and m.id in ids)
-        return dropped + self._delete(
+        return dropped + self._stage_drop(
             "directory_entry",
             "team = ? AND kind = ? AND list_contains(?, id)",
             [team, kind, sorted(ids)],
@@ -205,9 +235,13 @@ class DuckLakeArchiveStore:
 
     def drop_workspace(self, team: str) -> None:
         self._drop_batched(lambda m: m.team == team)
-        with self._transaction():
-            self._con.execute("DELETE FROM message_version WHERE team = ?", [team]).fetchall()
-            self._con.execute("DELETE FROM directory_entry WHERE team = ?", [team]).fetchall()
+        self._stage_drop("message_version", "team = ?", [team])
+        self._stage_drop("directory_entry", "team = ?", [team])
+
+    def drop_downloads(self, team: str, targets: set[str]) -> None:
+        self._stage_drop(
+            "download_state", "team = ? AND list_contains(?, target)", [team, sorted(targets)]
+        )
 
     def blob_references(self) -> list[tuple[str, Kind, str, str]]:
         rows = self._con.execute(
@@ -248,9 +282,56 @@ class DuckLakeArchiveStore:
             items[item.key] = item
         return items
 
-    def _insert_batch(self) -> None:
-        messages = [env for env in self._batch if env.meta.kind in MESSAGE_KINDS]
-        entries = [env for env in self._batch if env.meta.kind not in MESSAGE_KINDS]
+    def _commit(self, change: Commit) -> Committed:
+        stored = self._stored_revisions()
+        revisions = archive_state.item_revisions(change, stored)
+        existing = self._download_keys() if change.downloads_exist else set()
+        dropped = archive_state.dropped_downloads(change, existing)
+        batch = archive_state.without_targets(self._batch, dropped)
+        archive_state.require_live_teams(batch, stored, change.items)
+        self._apply_drops()
+        self._insert_batch(batch)
+        if self._missing_directory_rows(change.requires):
+            raise CommitConflict()
+        self._upsert_tracked(
+            [msgspec.structs.replace(item, revision=revisions[item.key]) for item in change.items]
+        )
+        self._upsert_downloads(
+            [state for state in change.downloads if (state.team_id, state.target) not in dropped]
+        )
+        settled = [{"team": team, "target": target} for team, target in change.settled]
+        self._delete_keys("download_state", DOWNLOAD_KEY, settled)
+        return Committed(revisions=revisions, dropped=dropped)
+
+    def _stored_revisions(self) -> archive_state.StoredRevisions:
+        rows = self._con.execute(
+            "SELECT team, kind, channel, ts, revision, status FROM tracked_item"
+        ).fetchall()
+        return {
+            (team, kind, channel, ts): (rev, status)
+            for team, kind, channel, ts, rev, status in rows
+        }
+
+    def _download_keys(self) -> set[DownloadKey]:
+        rows = self._con.execute("SELECT team, target FROM download_state").fetchall()
+        return {(team, target) for team, target in rows}
+
+    def _missing_directory_rows(self, refs: Iterable[DirectoryRef]) -> bool:
+        keys = [dict(zip(DIRECTORY_REF, ref, strict=True)) for ref in refs]
+        if not keys:
+            return False
+        missing = self._con.execute(
+            f"SELECT count(*) FROM (SELECT unnest(from_json(?::JSON, "
+            f"'{_structure(dict.fromkeys(DIRECTORY_REF, 'VARCHAR'))}')) AS k) WHERE NOT EXISTS "
+            "(SELECT 1 FROM directory_entry d "
+            "WHERE d.team = k.team AND d.kind = k.kind AND d.id = k.id)",
+            [msgspec.json.encode(keys).decode()],
+        ).fetchall()
+        return missing[0][0] > 0
+
+    def _insert_batch(self, batch: list[Envelope]) -> None:
+        messages = [env for env in batch if env.meta.kind in MESSAGE_KINDS]
+        entries = [env for env in batch if env.meta.kind not in MESSAGE_KINDS]
         messages.sort(key=lambda env: (env.meta.team, env.meta.channel, env.meta.ts))
         entries.sort(key=lambda env: (env.meta.team, env.meta.kind, env.meta.id or ""))
         message_rows = [message_row(env) for env in messages]
@@ -280,10 +361,17 @@ class DuckLakeArchiveStore:
             [msgspec.json.encode(keys).decode()],
         ).fetchall()
 
-    def _delete(self, table: str, condition: str, params: list) -> int:
-        with self._transaction():
-            deleted = self._con.execute(f"DELETE FROM {table} WHERE {condition}", params).fetchall()
-        return deleted[0][0]
+    def _stage_drop(self, table: str, condition: str, params: list) -> int:
+        """Stages a DELETE for the next commit; returns the committed rows it matches now."""
+        self._drops.append((table, condition, params))
+        matched = self._con.execute(
+            f"SELECT count(*) FROM {table} WHERE {condition}", params
+        ).fetchall()
+        return matched[0][0]
+
+    def _apply_drops(self) -> None:
+        for table, condition, params in self._drops:
+            self._con.execute(f"DELETE FROM {table} WHERE {condition}", params).fetchall()
 
     @contextmanager
     def _transaction(self) -> Generator[None]:

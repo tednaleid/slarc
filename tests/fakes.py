@@ -1,23 +1,29 @@
 # ABOUTME: In-memory doubles for slarc's ports: archive, blobs, export files, Slack and credentials.
-# ABOUTME: The archive fake reads like the JSONL store; the Slack fake pages and fails like Slack.
+# ABOUTME: The archive fake commits like the lake store; the Slack fake pages and fails like Slack.
 import hashlib
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
+
+import msgspec
 
 from slarc import archive_state
 from slarc.adapters.slack_gateway import MESSAGE_PAGE_LIMIT
 from slarc.archive_state import LatestMessages
 from slarc.domain.envelope import Envelope, Kind
 from slarc.domain.links import MessageTs
-from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem, run_envelope
+from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem, run_envelope
 from slarc.ports import (
     BlobStore,
+    Commit,
+    CommitConflict,
+    Committed,
     CredentialReadError,
     DirectoryState,
     DownloadJob,
+    DownloadKey,
     DownloadResult,
     FileDeleted,
     NoSession,
@@ -28,23 +34,44 @@ from slarc.ports import (
     ThreadNotFound,
 )
 
+MESSAGE_KINDS = ("message", "deleted")
+
 
 class InMemoryArchiveStore:
+    """Committed lines, run lines included, with tracked item and download state tables.
+
+    Appends and drops wait in an open batch that commit applies with the lake store's checks.
+    """
+
     def __init__(self) -> None:
         self.lines: list[Envelope] = []
-        self.flushes = 0
+        self.tracked: dict[ItemKey, TrackedItem] = {}
+        self.download_states: dict[DownloadKey, DownloadState] = {}
+        self._batch: list[Envelope] = []
+        self._line_drops: list[Callable[[Envelope], bool]] = []
+        self._download_drops: set[DownloadKey] = set()
 
     def append(self, env: Envelope) -> None:
-        self.lines.append(env)
+        self._batch.append(env)
 
-    def flush(self) -> None:
-        self.flushes += 1
+    def commit(self, change: Commit) -> Committed:
+        try:
+            committed = self._commit(change)
+        except CommitConflict:
+            self.discard()
+            raise
+        self.discard()
+        return committed
+
+    def discard(self) -> None:
+        self._batch.clear()
+        self._line_drops.clear()
+        self._download_drops.clear()
 
     def stored_messages(self, team: str, channel: str) -> dict[str, StoredMessage]:
         latest = LatestMessages()
-        for env in self.lines:
-            meta = env.meta
-            if meta.kind in ("message", "deleted") and (meta.team, meta.channel) == (team, channel):
+        for env in self._team_message_lines(team):
+            if env.meta.channel == channel:
                 latest.add(env)
         return latest.current()
 
@@ -54,17 +81,26 @@ class InMemoryArchiveStore:
     def directory_objects(self, team: str, kind: Kind) -> dict[str, dict]:
         return archive_state.directory_objects(self._directory_lines(team, kind))
 
-    def tracked_items(self) -> dict[tuple[str, str, str, str], TrackedItem]:
-        return archive_state.latest_runs(self.lines).tracked_items()
+    def tracked_items(self) -> dict[ItemKey, TrackedItem]:
+        return {key: item for key, item in self.tracked.items() if item.status != "removed"}
 
-    def removed_items(self) -> dict[tuple[str, str, str, str], TrackedItem]:
-        return archive_state.latest_runs(self.lines).removed_items()
+    def removed_items(self) -> dict[ItemKey, TrackedItem]:
+        return {key: item for key, item in self.tracked.items() if item.status == "removed"}
 
-    def downloads(self) -> dict[tuple[str, str], DownloadState]:
-        return archive_state.latest_runs(self.lines).downloads()
+    def downloads(self) -> dict[DownloadKey, DownloadState]:
+        return dict(self.download_states)
 
     def append_run(self, run: RunRecord, slarc_version: str) -> None:
-        self.append(run_envelope(run, slarc_version))
+        """Commits the open batch, then records the run line, its tracked items one revision
+        past their stored ones, and its download states."""
+        self._apply_drops()
+        self.lines.extend(self._batch)
+        for item in archive_state.next_revisions(run.tracked, self._stored_revisions()):
+            self.tracked[item.key] = item
+        for state in run.downloads:
+            self.download_states[(state.team_id, state.target)] = state
+        self.lines.append(run_envelope(run, slarc_version))
+        self.discard()
 
     def channels(self, team: str) -> list[str]:
         return sorted({env.meta.channel or "" for env in self._team_message_lines(team)})
@@ -73,37 +109,88 @@ class InMemoryArchiveStore:
         return iter([env for env in self._team_message_lines(team) if env.meta.channel == channel])
 
     def drop_messages(self, team: str, channel: str, stamps: set[str]) -> int:
-        dropped = [env for env in self.message_lines(team, channel) if env.meta.ts in stamps]
-        return self._drop(dropped)
+        return self._stage_drop(
+            lambda env: (
+                env.meta.kind in MESSAGE_KINDS
+                and (env.meta.team, env.meta.channel) == (team, channel)
+                and env.meta.ts in stamps
+            )
+        )
 
     def drop_directory_lines(self, team: str, kind: Kind, ids: set[str]) -> int:
-        return self._drop([env for env in self._directory_lines(team, kind) if env.meta.id in ids])
+        return self._stage_drop(
+            lambda env: (env.meta.team, env.meta.kind) == (team, kind) and env.meta.id in ids
+        )
 
     def drop_workspace(self, team: str) -> None:
-        self._drop([env for env in self.lines if env.meta.team == team and env.meta.kind != "run"])
+        self._stage_drop(lambda env: env.meta.team == team and env.meta.kind != "run")
+
+    def drop_downloads(self, team: str, targets: set[str]) -> None:
+        self._download_drops |= {(team, target) for target in targets}
 
     def blob_references(self) -> list[tuple[str, Kind, str, str]]:
         references = [
             (env.meta.team or "", env.meta.kind, env.meta.id or "", env.meta.blob)
-            for env in self.lines
+            for env in self._visible()
             if env.meta.blob is not None
         ]
         return list(dict.fromkeys(references))
 
+    def _commit(self, change: Commit) -> Committed:
+        stored = self._stored_revisions()
+        revisions = archive_state.item_revisions(change, stored)
+        dropped = archive_state.dropped_downloads(change, set(self.download_states))
+        batch = archive_state.without_targets(self._batch, dropped)
+        archive_state.require_live_teams(batch, stored, change.items)
+        lines = [env for env in self.lines if not self._staged(env)] + batch
+        directory = {
+            (env.meta.team, env.meta.kind, env.meta.id)
+            for env in lines
+            if env.meta.kind not in (*MESSAGE_KINDS, "run")
+        }
+        if not set(change.requires) <= directory:
+            raise CommitConflict()
+        self.lines = lines
+        for key in self._download_drops | set(change.settled):
+            self.download_states.pop(key, None)
+        for item in change.items:
+            self.tracked[item.key] = msgspec.structs.replace(item, revision=revisions[item.key])
+        for state in change.downloads:
+            if (state.team_id, state.target) not in dropped:
+                self.download_states[(state.team_id, state.target)] = state
+        return Committed(revisions=revisions, dropped=dropped)
+
+    def _stored_revisions(self) -> archive_state.StoredRevisions:
+        return {key: (item.revision, item.status) for key, item in self.tracked.items()}
+
+    def _stage_drop(self, drop: Callable[[Envelope], bool]) -> int:
+        """Drops matching batch lines now and stages the committed ones; returns both counts."""
+        kept = [env for env in self._batch if not drop(env)]
+        dropped = len(self._batch) - len(kept)
+        self._batch = kept
+        self._line_drops.append(drop)
+        return dropped + sum(1 for env in self.lines if drop(env))
+
+    def _staged(self, env: Envelope) -> bool:
+        return any(drop(env) for drop in self._line_drops)
+
+    def _apply_drops(self) -> None:
+        self.lines = [env for env in self.lines if not self._staged(env)]
+        for key in self._download_drops:
+            self.download_states.pop(key, None)
+
+    def _visible(self) -> list[Envelope]:
+        return self.lines + self._batch
+
     def _directory_lines(self, team: str, kind: Kind) -> list[Envelope]:
-        return [env for env in self.lines if (env.meta.team, env.meta.kind) == (team, kind)]
+        return [env for env in self._visible() if (env.meta.team, env.meta.kind) == (team, kind)]
 
     def _team_message_lines(self, team: str) -> list[Envelope]:
         return [
             env
-            for env in self.lines
-            if env.meta.kind in ("message", "deleted") and env.meta.team == team
+            for env in self._visible()
+            if env.meta.kind in MESSAGE_KINDS and env.meta.team == team
         ]
-
-    def _drop(self, dropped: list[Envelope]) -> int:
-        ids = {id(env) for env in dropped}
-        self.lines = [env for env in self.lines if id(env) not in ids]
-        return len(dropped)
 
 
 class InMemoryBlobStore:

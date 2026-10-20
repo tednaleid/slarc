@@ -116,6 +116,11 @@ def test_run_id_format():
     assert run_id(now) == "r_20261019T123045Z"
 
 
+def test_run_id_appends_a_suffix():
+    now = datetime(2026, 10, 19, 12, 30, 45, tzinfo=UTC)
+    assert run_id(now, "3f9a") == "r_20261019T123045Z_3f9a"
+
+
 def make_run() -> RunRecord:
     return RunRecord(
         run="r_20261019T123045Z",

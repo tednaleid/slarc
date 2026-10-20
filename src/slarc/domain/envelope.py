@@ -60,8 +60,9 @@ def fetched_at(now: datetime) -> str:
     return now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def run_id(now: datetime) -> str:
-    return "r_" + now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+def run_id(now: datetime, suffix: str = "") -> str:
+    stamp = "r_" + now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return f"{stamp}_{suffix}" if suffix else stamp
 
 
 def month_of(ts: str) -> str:

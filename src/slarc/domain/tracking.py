@@ -15,6 +15,7 @@ class TrackedItem(msgspec.Struct, kw_only=True):
     kind: Literal["conversation", "thread", "message"]
     channel: str
     ts: str | None = None
+    revision: int = 0
     since: str | None = None
     until: str | None = None
     newest_ts: str | None = None

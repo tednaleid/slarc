@@ -47,7 +47,6 @@ DIRECTORY_FILES: dict[Kind, str] = {
 RUNS_FILE = "runs.jsonl"
 IMPORTING = ".importing"
 IMPORTED_REVISION = 1
-IMPORTED_TRACKED_COLUMNS = {**TRACKED_COLUMNS, "revision": "INTEGER"}
 
 
 @dataclass(frozen=True)
@@ -183,7 +182,10 @@ def _read_archive(root: Path) -> _JsonlArchive:
         duplicates=duplicates,
         directory=directory,
         runs=runs,
-        tracked=[*fold.tracked_items().values(), *fold.removed_items().values()],
+        tracked=[
+            msgspec.structs.replace(item, revision=IMPORTED_REVISION)
+            for item in [*fold.tracked_items().values(), *fold.removed_items().values()]
+        ],
         downloads=_outstanding(fold.downloads().values(), directory),
     )
 
@@ -241,12 +243,13 @@ def _write(con: duckdb.DuckDBPyConnection, archive: _JsonlArchive) -> None:
     entries = sorted(
         archive.directory, key=lambda env: (env.meta.team or "", env.meta.kind, env.meta.id or "")
     )
-    tracked = [tracked_row(item) | {"revision": IMPORTED_REVISION} for item in archive.tracked]
     con.execute("BEGIN")
     insert_rows(con, "message_version", MESSAGE_COLUMNS, [message_row(env) for env in messages])
     insert_rows(con, "directory_entry", DIRECTORY_COLUMNS, [directory_row(env) for env in entries])
     insert_rows(con, "run", RUN_COLUMNS, [run_row(env) for env in archive.runs])
-    insert_rows(con, "tracked_item", IMPORTED_TRACKED_COLUMNS, tracked)
+    insert_rows(
+        con, "tracked_item", TRACKED_COLUMNS, [tracked_row(item) for item in archive.tracked]
+    )
     insert_rows(
         con, "download_state", DOWNLOAD_COLUMNS, [download_row(s) for s in archive.downloads]
     )

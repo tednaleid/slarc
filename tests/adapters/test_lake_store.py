@@ -2,6 +2,7 @@
 # ABOUTME: in one transaction with the run's tracked items and download states.
 from pathlib import Path
 
+import msgspec
 import pytest
 
 from slarc.adapters.lake_store import DuckLakeArchiveStore
@@ -26,7 +27,6 @@ def test_lines_without_a_run_line_are_not_kept(tmp_path: Path, ext_dir: Path) ->
     store = DuckLakeArchiveStore(tmp_path, ext_dir)
     store.append(message(TS, "uncommitted", T1, R1))
     store.append(file_line("F1", T1, R1, None))
-    store.flush()
     store.close()
 
     reopened = DuckLakeArchiveStore(tmp_path, ext_dir)
@@ -106,5 +106,8 @@ def test_tracked_items_round_trip_every_field(tmp_path: Path, ext_dir: Path) -> 
     store.close()
 
     reopened = DuckLakeArchiveStore(tmp_path, ext_dir)
-    assert reopened.tracked_items() == {thread.key: thread, conversation.key: conversation}
+    assert reopened.tracked_items() == {
+        thread.key: msgspec.structs.replace(thread, revision=1),
+        conversation.key: msgspec.structs.replace(conversation, revision=1),
+    }
     reopened.close()

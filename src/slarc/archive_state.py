@@ -1,13 +1,15 @@
-# ABOUTME: Folds archive lines into current state, where the latest (fetched_at, run) line wins.
-# ABOUTME: Shared by every ArchiveStore so duplicate and out-of-order lines read the same.
-from collections.abc import Iterable
+# ABOUTME: Folds archive lines into current state, where the latest (fetched_at, run) line wins,
+# ABOUTME: and checks a commit's revisions. Shared by every ArchiveStore so they behave the same.
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 
 import msgspec
 
 from slarc.domain.envelope import Envelope, Meta
 from slarc.domain.tracking import DownloadState, ItemKey, TrackedItem, run_from_envelope
-from slarc.ports import DirectoryState, StoredMessage
+from slarc.ports import Commit, CommitConflict, DirectoryState, DownloadKey, StoredMessage
+
+type StoredRevisions = Mapping[ItemKey, tuple[int, str]]  # (revision, status) per tracked item
 
 
 def version_key(meta: Meta) -> tuple[str, str]:
@@ -111,3 +113,65 @@ def latest_runs(lines: Iterable[Envelope]) -> LatestRuns:
     for env in lines:
         latest.add(env)
     return latest
+
+
+def item_revisions(change: Commit, stored: StoredRevisions) -> dict[ItemKey, int]:
+    """The revision each of the commit's items is written with.
+
+    Raises CommitConflict when an item or unchanged item no longer has the revision it was
+    read with, or when an item with revision 0 is still tracked.
+    """
+    revisions = {}
+    for item in change.items:
+        held = stored.get(item.key)
+        if item.revision == 0:
+            if held is not None and held[1] != "removed":
+                raise CommitConflict()
+            revisions[item.key] = (held[0] if held is not None else 0) + 1
+        else:
+            if held is None or held[0] != item.revision:
+                raise CommitConflict()
+            revisions[item.key] = item.revision + 1
+    for item in change.unchanged:
+        held = stored.get(item.key)
+        if held is None or held[0] != item.revision:
+            raise CommitConflict()
+    return revisions
+
+
+def next_revisions(items: Iterable[TrackedItem], stored: StoredRevisions) -> list[TrackedItem]:
+    """The items with each revision set one past the stored one, unchecked, as append_run writes."""
+    return [
+        msgspec.structs.replace(item, revision=stored.get(item.key, (0, ""))[0] + 1)
+        for item in items
+    ]
+
+
+def dropped_downloads(change: Commit, existing: set[DownloadKey]) -> set[DownloadKey]:
+    """With downloads_exist, the commit's download and settled keys that have no download state."""
+    if not change.downloads_exist:
+        return set()
+    keys = {(state.team_id, state.target) for state in change.downloads} | set(change.settled)
+    return keys - existing
+
+
+def without_targets(batch: list[Envelope], targets: set[DownloadKey]) -> list[Envelope]:
+    """The batch without the file and image lines of the targets."""
+    return [
+        env
+        for env in batch
+        if env.meta.kind not in ("file", "image") or (env.meta.team, env.meta.id) not in targets
+    ]
+
+
+def require_live_teams(
+    batch: Iterable[Envelope], stored: StoredRevisions, items: Iterable[TrackedItem]
+) -> None:
+    """Raises CommitConflict when a directory line's team has no tracked item that is not
+    removed, counting the commit's items."""
+    statuses = {key: status for key, (_, status) in stored.items()}
+    statuses.update((item.key, item.status) for item in items)
+    live = {key[0] for key, status in statuses.items() if status != "removed"}
+    teams = {env.meta.team for env in batch if env.meta.kind not in ("message", "deleted")}
+    if not teams <= live:
+        raise CommitConflict()

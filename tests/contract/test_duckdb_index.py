@@ -16,7 +16,7 @@ from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.cli import app
 from slarc.domain.envelope import Envelope, Meta
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
-from slarc.ports import SlarcError
+from slarc.ports import Commit, SlarcError
 from tests.fakes import FakeKeyring
 from tests.recorded_fixtures import RECORDED_TEAM, copy_recorded, recorded_lake, recorded_lines
 
@@ -311,6 +311,7 @@ def test_parent_stored_before_its_replies_is_thread_parent(archive: Path, ext_di
     del parent["object"]["thread_ts"]
     store = DuckLakeArchiveStore(archive, ext_dir)
     store.drop_messages(RECORDED_TEAM, ALL_NALEID, {WAVE_PARENT})
+    store.commit(Commit())
     store.close()
     commit(archive, ext_dir, envelope(parent))
     with DuckDbQueryIndex(archive, ext_dir) as index:

@@ -9,7 +9,7 @@ from slarc.domain.directory import directory_image_url
 from slarc.domain.envelope import Envelope
 from slarc.domain.links import ConversationSel, Selector, WorkspaceSel
 from slarc.domain.tracking import DownloadState, ItemKey, TrackedItem
-from slarc.ports import ArchiveStore, BlobStore, QueryIndex, SlarcError
+from slarc.ports import ArchiveStore, BlobStore, Commit, QueryIndex, SlarcError
 from slarc.service.downloads import image_urls
 from slarc.service.listing import workspace_domains
 from slarc.service.selectors import archived_conversation, only_workspace
@@ -109,6 +109,7 @@ def sweep(teams: list[str], archive: ArchiveStore, blobs: BlobStore) -> None:
             archive.drop_directory_lines(team.team, "file", team.files)
         if team.images:
             archive.drop_directory_lines(team.team, "image", team.images)
+    archive.commit(Commit())
     for blob in sorted(deletion.blobs):
         blobs.delete(blob)
 

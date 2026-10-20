@@ -1,5 +1,5 @@
 # ABOUTME: Contract tests every ArchiveStore must pass, run over the fake and the lake.
-# ABOUTME: Covers latest-wins reads, directory and run-line state, and dropping lines.
+# ABOUTME: Covers latest-wins reads, commits with revision checks, and staged drops.
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Literal
@@ -18,7 +18,7 @@ from slarc.domain.tracking import (
     run_envelope,
     run_from_envelope,
 )
-from slarc.ports import ArchiveStore, DirectoryState, StoredMessage
+from slarc.ports import ArchiveStore, Commit, CommitConflict, DirectoryState, StoredMessage
 from tests.fakes import InMemoryArchiveStore
 
 TEAM = "T0CB5LYPVFA"
@@ -37,6 +37,7 @@ R1 = "r_20261019T134011Z"
 R2 = "r_20261019T140000Z"
 R3 = "r_20261019T150000Z"
 R_REOPEN = "r_reopen"
+KEY = (TEAM, "conversation", CHANNEL, "")
 
 
 def message(
@@ -125,12 +126,17 @@ def store_and_reopen(
 ) -> Iterator[tuple[ArchiveStore, Callable[[], ArchiveStore]]]:
     """Yields a store and a function returning a store over the same archive.
 
-    The lake keeps only committed lines, so reopening it first commits each open store's
-    batch with a run that tracks nothing.
+    Only committed lines are kept, so reopening first commits each open store's batch with a
+    run that tracks nothing.
     """
     if request.param == "memory":
         memory = InMemoryArchiveStore()
-        yield memory, lambda: memory
+
+        def reopen_memory() -> ArchiveStore:
+            memory.append_run(run_record(R_REOPEN, T1), VERSION)
+            return memory
+
+        yield memory, reopen_memory
         return
     opened = [DuckLakeArchiveStore(tmp_path, ext_dir)]
 
@@ -222,10 +228,8 @@ def test_same_second_blob_line_wins_in_store_and_index(
             assert index.sql("SELECT blob FROM file WHERE id = 'F1'")[1] == [("cd" * 32,)]
 
 
-def test_tracked_items_latest_entry_across_runs(store_and_reopen):
+def test_tracked_items_last_commit_wins(store_and_reopen):
     store, reopen = store_and_reopen
-    if isinstance(store, DuckLakeArchiveStore):
-        pytest.skip("lake commits are serialized, so the last committed run wins")
     other = "C0OTHER0001"
     store.append_run(run_record(R2, T2, tracked=[tracked("200.000000")]), VERSION)
     store.append_run(
@@ -234,9 +238,19 @@ def test_tracked_items_latest_entry_across_runs(store_and_reopen):
 
     for current in (store, reopen()):
         items = current.tracked_items()
-        assert items[(TEAM, "conversation", CHANNEL, "")].newest_ts == "200.000000"
+        assert items[(TEAM, "conversation", CHANNEL, "")].newest_ts == "100.000000"
         assert items[(TEAM, "conversation", other, "")].newest_ts == "50.000000"
         assert len(items) == 2
+
+
+def test_append_run_bumps_each_items_stored_revision(store_and_reopen):
+    store, reopen = store_and_reopen
+    stale = msgspec.structs.replace(tracked("100.000000"), revision=7)
+    store.append_run(run_record(R1, T1, tracked=[stale]), VERSION)
+    store.append_run(run_record(R2, T2, tracked=[stale]), VERSION)
+
+    for current in (store, reopen()):
+        assert current.tracked_items()[KEY].revision == 2
 
 
 def test_removed_items_leave_tracked_items(store_and_reopen):
@@ -310,32 +324,6 @@ def test_downloads_keep_a_downloaded_targets_earlier_state(store_and_reopen):
         assert current.downloads() == {(TEAM, "F1"): download("F1", "pending", 0)}
 
 
-def test_run_lines_appended_after_a_read_fold_in_version_order(store_and_reopen):
-    store, reopen = store_and_reopen
-    if isinstance(store, DuckLakeArchiveStore):
-        pytest.skip("lake commits are serialized, so the last committed run wins")
-    store.append_run(run_record(R1, T1, tracked=[tracked("100.000000")]), VERSION)
-    store.downloads()
-    store.append_run(
-        run_record(
-            R3, T3, tracked=[tracked("300.000000")], downloads=[download("F1", "failed", 1)]
-        ),
-        VERSION,
-    )
-    store.append_run(
-        run_record(
-            R2, T2, tracked=[tracked("200.000000")], downloads=[download("F1", "pending", 0)]
-        ),
-        VERSION,
-    )
-
-    for current in (store, reopen()):
-        assert (
-            current.tracked_items()[(TEAM, "conversation", CHANNEL, "")].newest_ts == "300.000000"
-        )
-        assert current.downloads()[(TEAM, "F1")] == download("F1", "failed", 1)
-
-
 def stamps(store: ArchiveStore, team: str = TEAM, channel: str = CHANNEL) -> list[str | None]:
     return [env.meta.ts for env in store.message_lines(team, channel)]
 
@@ -384,7 +372,6 @@ def test_append_after_drop_messages_still_lands(store_and_reopen):
 
     store.drop_messages(TEAM, CHANNEL, {LATER_TS, third})
     store.append(message(fourth, "fourth", T3, R3))
-    assert set(store.stored_messages(TEAM, CHANNEL)) == {fourth}
     assert set(reopen().stored_messages(TEAM, CHANNEL)) == {fourth}
 
 
@@ -415,6 +402,7 @@ def test_drop_workspace_removes_raw_and_directory(store_and_reopen):
     store.stored_messages(TEAM, CHANNEL)
 
     store.drop_workspace(TEAM)
+    store.commit(Commit())
 
     for current in (store, reopen()):
         assert current.stored_messages(TEAM, CHANNEL) == {}
@@ -425,7 +413,6 @@ def test_drop_workspace_removes_raw_and_directory(store_and_reopen):
         assert len(current.tracked_items()) == 1
 
     store.append(message(LATER_TS, "again", T2, R2))
-    store.flush()
     assert set(reopen().stored_messages(TEAM, CHANNEL)) == {LATER_TS}
 
 
@@ -453,3 +440,217 @@ def test_channels_lists_channels_with_lines(store_and_reopen):
     for current in (store, reopen()):
         assert current.channels(TEAM) == [CHANNEL, OTHER_CHANNEL]
         assert current.channels(OTHER_TEAM) == []
+
+
+def live(store: ArchiveStore, key: tuple[str, str, str, str] = KEY) -> TrackedItem:
+    return store.tracked_items()[key]
+
+
+def test_commit_bumps_revision(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.append(message(TS, "Hello", T1, R1))
+
+    first = store.commit(Commit(items=[tracked("100.000000")]))
+    assert first.revisions == {KEY: 1}
+    assert first.dropped == set()
+    assert live(store).revision == 1
+
+    second = store.commit(Commit(items=[msgspec.structs.replace(live(store), newest_ts=TS)]))
+    assert second.revisions == {KEY: 2}
+
+    expected = msgspec.structs.replace(tracked(TS), revision=2)
+    for current in (store, reopen()):
+        assert current.tracked_items() == {KEY: expected}
+        assert set(current.stored_messages(TEAM, CHANNEL)) == {TS}
+
+
+def test_stale_revision_conflicts_and_clears_the_batch(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.commit(Commit(items=[tracked("100.000000")]))
+    stale = live(store)
+    store.commit(Commit(items=[msgspec.structs.replace(stale, newest_ts="200.000000")]))
+    store.append(message(TS, "lost", T2, R2))
+    store.drop_messages(TEAM, CHANNEL, {TS})
+    store.append(message(LATER_TS, "also lost", T2, R2))
+
+    newcomer = tracked("50.000000", OTHER_CHANNEL)
+    with pytest.raises(CommitConflict) as caught:
+        store.commit(
+            Commit(
+                items=[newcomer, msgspec.structs.replace(stale, newest_ts="300.000000")],
+                downloads=[download("F1", "pending", 0)],
+            )
+        )
+    assert str(caught.value) == "Another slarc command changed the archive at the same time."
+    assert store.stored_messages(TEAM, CHANNEL) == {}
+
+    store.commit(Commit())
+    for current in (store, reopen()):
+        assert current.stored_messages(TEAM, CHANNEL) == {}
+        assert list(current.tracked_items()) == [KEY]
+        assert (live(current).newest_ts, live(current).revision) == ("200.000000", 2)
+        assert current.downloads() == {}
+
+
+def test_revision_zero_retracks_a_removed_item(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.commit(Commit(items=[tracked("100.000000")]))
+    store.commit(Commit(items=[msgspec.structs.replace(live(store), status="removed")]))
+    assert store.removed_items()[KEY].revision == 2
+
+    committed = store.commit(Commit(items=[tracked("300.000000")]))
+
+    assert committed.revisions == {KEY: 3}
+    for current in (store, reopen()):
+        assert (live(current).newest_ts, live(current).revision) == ("300.000000", 3)
+        assert current.removed_items() == {}
+
+
+def test_revision_zero_conflicts_with_a_live_item(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.commit(Commit(items=[tracked("100.000000")]))
+
+    with pytest.raises(CommitConflict):
+        store.commit(Commit(items=[tracked("200.000000")]))
+
+    for current in (store, reopen()):
+        assert (live(current).newest_ts, live(current).revision) == ("100.000000", 1)
+
+
+def test_unchanged_item_conflict(store_and_reopen):
+    store, reopen = store_and_reopen
+    other_key = (TEAM, "conversation", OTHER_CHANNEL, "")
+    store.commit(Commit(items=[tracked("100.000000"), tracked("100.000000", OTHER_CHANNEL)]))
+    stale = live(store)
+    other = live(store, other_key)
+    store.commit(Commit(items=[msgspec.structs.replace(stale, newest_ts="200.000000")]))
+
+    with pytest.raises(CommitConflict):
+        store.commit(
+            Commit(
+                items=[msgspec.structs.replace(other, newest_ts="300.000000")], unchanged=[stale]
+            )
+        )
+    assert live(store, other_key).revision == 1
+
+    committed = store.commit(Commit(items=[other], unchanged=[live(store)]))
+
+    assert committed.revisions == {other_key: 2}
+    for current in (store, reopen()):
+        assert live(current).revision == 2
+        assert live(current, other_key).revision == 2
+
+
+def test_missing_required_directory_row_conflicts(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.commit(Commit(items=[tracked("100.000000")]))
+    store.append(message(TS, "lost", T1, R1))
+
+    with pytest.raises(CommitConflict):
+        store.commit(Commit(requires={(TEAM, "file", "F1")}))
+    assert store.stored_messages(TEAM, CHANNEL) == {}
+
+    store.append(file_line("F1", T1, R1, None))
+    store.commit(Commit())
+    store.append(message(TS, "kept", T2, R2))
+    store.append(file_line("F2", T2, R2, None))
+    store.commit(Commit(requires={(TEAM, "file", "F1"), (TEAM, "file", "F2")}))
+
+    with pytest.raises(CommitConflict):
+        store.commit(Commit(requires={(TEAM, "image", "F1")}))
+    for current in (store, reopen()):
+        assert set(current.stored_messages(TEAM, CHANNEL)) == {TS}
+
+
+def test_directory_rows_need_a_live_item_in_their_team(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.append(file_line("F1", T1, R1, None))
+    with pytest.raises(CommitConflict):
+        store.commit(Commit())
+    assert store.directory_state(TEAM, "file") == {}
+
+    store.append(file_line("F1", T1, R1, None))
+    store.commit(Commit(items=[tracked("100.000000")]))
+
+    store.append(file_line("F2", T1, R1, None, team=OTHER_TEAM))
+    with pytest.raises(CommitConflict):
+        store.commit(Commit())
+
+    store.append(file_line("F3", T1, R1, None))
+    with pytest.raises(CommitConflict):
+        store.commit(Commit(items=[msgspec.structs.replace(live(store), status="removed")]))
+
+    store.append(file_line("F4", T1, R1, None))
+    store.commit(Commit(items=[msgspec.structs.replace(live(store), status="not_visible")]))
+
+    for current in (store, reopen()):
+        assert sorted(current.directory_state(TEAM, "file")) == ["F1", "F4"]
+        assert current.directory_state(OTHER_TEAM, "file") == {}
+
+
+def test_downloads_exist_drops_missing_keys_and_their_directory_rows(store_and_reopen):
+    store, reopen = store_and_reopen
+    pending = [download("F1", "pending", 0), download("F2", "pending", 0)]
+    store.commit(Commit(items=[tracked("100.000000")], downloads=pending))
+    store.drop_downloads(TEAM, {"F2"})
+    store.commit(Commit())
+    store.append(message(TS, "kept", T1, R1))
+    store.append(file_line("F1", T1, R1, "ab" * 32))
+    store.append(file_line("F2", T1, R1, "cd" * 32))
+    store.append(file_line("F3", T1, R1, None))
+
+    committed = store.commit(
+        Commit(
+            downloads=[download("F3", "failed", 1)],
+            settled={(TEAM, "F1"), (TEAM, "F2")},
+            downloads_exist=True,
+        )
+    )
+
+    assert committed.dropped == {(TEAM, "F2"), (TEAM, "F3")}
+    for current in (store, reopen()):
+        assert current.downloads() == {}
+        assert list(current.directory_state(TEAM, "file")) == ["F1"]
+        assert set(current.stored_messages(TEAM, CHANNEL)) == {TS}
+
+
+def test_drops_wait_for_commit(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.append(message(TS, "gone", T1, R1))
+    store.append(message(LATER_TS, "kept", T1, R1))
+    store.append(message(TS, "elsewhere", T1, R1, team=OTHER_TEAM))
+    store.append(file_line("F1", T1, R1, None))
+    store.commit(Commit(items=[tracked("100.000000")], downloads=[download("F1", "pending", 0)]))
+
+    store.drop_messages(TEAM, CHANNEL, {TS})
+    store.drop_directory_lines(TEAM, "file", {"F1"})
+    store.drop_downloads(TEAM, {"F1"})
+    store.drop_workspace(OTHER_TEAM)
+
+    assert set(store.stored_messages(TEAM, CHANNEL)) == {TS, LATER_TS}
+    assert list(store.directory_state(TEAM, "file")) == ["F1"]
+    assert list(store.downloads()) == [(TEAM, "F1")]
+    assert set(store.stored_messages(OTHER_TEAM, CHANNEL)) == {TS}
+
+    store.commit(Commit())
+
+    for current in (store, reopen()):
+        assert set(current.stored_messages(TEAM, CHANNEL)) == {LATER_TS}
+        assert current.directory_state(TEAM, "file") == {}
+        assert current.downloads() == {}
+        assert current.stored_messages(OTHER_TEAM, CHANNEL) == {}
+
+
+def test_discard_empties_the_batch(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.append(message(TS, "kept", T1, R1))
+    store.commit(Commit(items=[tracked("100.000000")]))
+    store.append(message(LATER_TS, "discarded", T2, R2))
+    store.drop_messages(TEAM, CHANNEL, {TS})
+
+    store.discard()
+
+    assert set(store.stored_messages(TEAM, CHANNEL)) == {TS}
+    store.commit(Commit())
+    for current in (store, reopen()):
+        assert set(current.stored_messages(TEAM, CHANNEL)) == {TS}

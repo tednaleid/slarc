@@ -231,7 +231,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
 
 ## Phase 2: commits
 
-### Task 7: The commit port, revisions and run ids
+### Task 7: The commit port, revisions and run ids [done]
 
 **Files:**
 - Modify: `src/slarc/domain/tracking.py`, `src/slarc/domain/envelope.py`, `src/slarc/ports.py`, `src/slarc/adapters/lake_store.py`, `tests/fakes.py`
@@ -263,7 +263,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
     - **On success:** the open batch's rows are inserted, staged drops applied, items upserted, `downloads` upserted and `settled` rows deleted.
   - The fake implements the same rules over in-memory tables.
 
-- [ ] **Step 1: Write the failing contract tests,** over fake and lake:
+- [x] **Step 1: Write the failing contract tests,** over fake and lake:
   - `test_commit_bumps_revision`;
   - `test_stale_revision_conflicts_and_clears_the_batch`;
   - `test_revision_zero_retracks_a_removed_item`;
@@ -274,13 +274,13 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
   - `test_downloads_exist_drops_missing_keys_and_their_directory_rows`;
   - `test_drops_wait_for_commit`;
   - `test_discard_empties_the_batch`.
-- [ ] **Step 2: Run them and watch them fail.**
-- [ ] **Step 3: Implement the domain, port, fake and lake store changes.**
+- [x] **Step 2: Run them and watch them fail.**
+- [x] **Step 3: Implement the domain, port, fake and lake store changes.**
   - Remove every `flush()` call in the services; they're no-ops since Task 2.
   - `remove.sweep` ends with `archive.commit(Commit())`, so its staged drops apply as they do today.
   - Nothing else in the services changes yet.
-- [ ] **Step 4: Run `just check` and watch it pass.**
-- [ ] **Step 5: Commit:** `Add commits with item revisions to the archive store`.
+- [x] **Step 4: Run `just check` and watch it pass.**
+- [x] **Step 5: Commit:** `Add commits with item revisions to the archive store`.
 
 ### Task 8: UnitOfWork commits
 

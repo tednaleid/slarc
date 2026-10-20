@@ -14,7 +14,7 @@ from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.domain.envelope import Envelope, Kind, Meta
 from slarc.domain.links import parse_selector
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
-from slarc.ports import SlarcError
+from slarc.ports import Commit, SlarcError
 from slarc.service.export import export
 from tests.fakes import InMemoryBlobStore, InMemoryExportWriter
 from tests.recorded_fixtures import RECORDED_TEAM, recorded_blobs, recorded_lake
@@ -629,6 +629,7 @@ def test_workspace_holding_nothing_exportable_says_to_pull(archive, store, blobs
         store.drop_messages(
             RECORDED_TEAM, channel, set(store.stored_messages(RECORDED_TEAM, channel))
         )
+    store.commit(Commit())
     with pytest.raises(SlarcError) as caught:
         run_export(archive, store, blobs, "naleidworkspace")
     assert str(caught.value) == (

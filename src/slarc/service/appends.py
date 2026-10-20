@@ -46,9 +46,6 @@ def append_directory(
         meta = stamped_meta(uow, kind, team=team_id, id=id_, api=api, hash=digest, blob=blob)
         append_line(uow, Envelope(meta=meta, object=obj))
         appended[id_] = DirectoryState(hash=digest, blob=blob)
-    if appended:
-        # Directory state is read back from the store, which must see these lines.
-        uow.archive.flush()
     return appended
 
 

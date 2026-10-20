@@ -10,6 +10,7 @@ from slarc import archive_state
 from slarc.adapters import jsonl_import
 from slarc.adapters.jsonl_import import (
     DIRECTORY_FILES,
+    IMPORTED_REVISION,
     RUNS_FILE,
     ImportReport,
     export_jsonl,
@@ -48,8 +49,18 @@ def teams_of(root: Path) -> list[str]:
     return sorted({p.name for top in ("raw", "directory") for p in (root / top).glob("*")})
 
 
+def imported(items: dict) -> dict:
+    return {
+        key: msgspec.structs.replace(item, revision=IMPORTED_REVISION)
+        for key, item in items.items()
+    }
+
+
 class JsonlFolds:
-    """The state of a JSONL archive read through archive_state's folds, without any store."""
+    """The state of a JSONL archive read through archive_state's folds, without any store.
+
+    Its tracked and removed items carry the revision the import gives them.
+    """
 
     def __init__(self, root: Path) -> None:
         self._root = root
@@ -57,10 +68,10 @@ class JsonlFolds:
         self._runs = runs
 
     def tracked_items(self) -> dict:
-        return self._runs.tracked_items()
+        return imported(self._runs.tracked_items())
 
     def removed_items(self) -> dict:
-        return self._runs.removed_items()
+        return imported(self._runs.removed_items())
 
     def channels(self, team: str) -> list[str]:
         raw = self._root / "raw" / team
