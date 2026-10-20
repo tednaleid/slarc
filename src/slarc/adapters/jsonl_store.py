@@ -184,11 +184,14 @@ class JsonlArchiveStore:
                 tmp.writelines(kept)
                 tmp.flush()
                 os.fsync(tmp.fileno())
+            shutil.copymode(path, tmp_name)
             os.replace(tmp_name, path)
-        except OSError as e:
+        except BaseException as e:
             if tmp_name is not None:
                 Path(tmp_name).unlink(missing_ok=True)
-            raise ArchiveWriteFailed(path, e.strerror) from None
+            if isinstance(e, OSError):
+                raise ArchiveWriteFailed(path, e.strerror) from None
+            raise
         return dropped
 
     def _handle(self, path: Path) -> BinaryIO:

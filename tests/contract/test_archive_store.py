@@ -523,3 +523,35 @@ def test_failed_rewrite_leaves_original_intact(
 
     assert month.read_bytes() == original
     assert list(month.parent.iterdir()) == [month]
+
+
+def test_interrupted_rewrite_leaves_original_intact(
+    jsonl_store: JsonlArchiveStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    month = tmp_path / "raw" / TEAM / CHANNEL / "2026-10.jsonl"
+    jsonl_store.append(message(TS, "first", T1, R1))
+    jsonl_store.append(message(LATER_TS, "second", T1, R1))
+    jsonl_store.flush()
+    original = month.read_bytes()
+
+    def interrupt(fd: int) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("slarc.adapters.jsonl_store.os.fsync", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        jsonl_store.drop_messages(TEAM, CHANNEL, {TS})
+
+    assert month.read_bytes() == original
+    assert list(month.parent.iterdir()) == [month]
+
+
+def test_rewritten_file_keeps_its_mode(jsonl_store: JsonlArchiveStore, tmp_path: Path):
+    month = tmp_path / "raw" / TEAM / CHANNEL / "2026-10.jsonl"
+    jsonl_store.append(message(TS, "first", T1, R1))
+    jsonl_store.append(message(LATER_TS, "second", T1, R1))
+    jsonl_store.flush()
+    month.chmod(0o644)
+
+    jsonl_store.drop_messages(TEAM, CHANNEL, {TS})
+
+    assert month.stat().st_mode & 0o777 == 0o644
