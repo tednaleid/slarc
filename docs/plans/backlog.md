@@ -53,7 +53,6 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 - `_append_read` mutates the frozen `DirectoryView`'s `bots` dict (`service/pull.py`).
 - Each workspace gets two `auth.test` calls per run, in `SessionConnector.connect` and `_Workspaces._open`.
 - A tracked DM may fail `search.messages` (DM search syntax is unverified) and warn on every pull; check `in:<#D...>` read-only and skip search for DMs if it fails (`service/pull.py` `_search_replies`).
-- Ctrl-C during the drain waits for every in-flight download, up to 60 s and 100 MB each; check a cancel flag per chunk (`adapters/downloader.py`).
 - `--max-file-size 0` is left out of the run line's args because `0 == False` (`cli.py` `_run_args`).
 - A skipped `not_visible` item shows a finished 0-message progress bar (`cli.py` `RichReporter`).
 - Images over the size limit stay `too_large` after the limit is raised; only files are retried (`service/downloads.py` `_image_state`).

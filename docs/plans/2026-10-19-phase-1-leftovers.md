@@ -352,7 +352,7 @@ git commit -m "Say nothing is tracked on a bare pull, and treat an aborted promp
 
 ---
 
-### Task 5: Ctrl-C stops in-flight downloads within one chunk
+### Task 5: Ctrl-C stops in-flight downloads within one chunk [done]
 
 Backlog line: "Ctrl-C during the drain waits for every in-flight download, up to 60 s and 100 MB each".
 
@@ -366,7 +366,7 @@ Backlog line: "Ctrl-C during the drain waits for every in-flight download, up to
 **Interfaces:**
 - Produces: `fetch` creates a `threading.Event` and sets it in its `finally` before `pool.shutdown`. Each worker checks the event before each request hop and in `_limited` before yielding each chunk, and stops by raising a private `Cancelled` exception. `_fetch` turns `Cancelled` into `_result(job, "failed", "Download interrupted.")`. `FsBlobStore.write` already removes its temp file when the chunk iterator raises.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_closing_fetch_stops_an_in_flight_download(tmp_path: Path):
@@ -400,16 +400,16 @@ def test_closing_fetch_stops_an_in_flight_download(tmp_path: Path):
 
 If `MockTransport` turns out to read an iterator body in full before returning, serve `/slow` from a local `http.server` thread instead and say so in the report.
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `just test tests/adapters/test_downloader.py -k closing_fetch`
 Expected: FAIL on the elapsed-time assertion (about 100 s without the fix). Run it with `--timeout` if the plugin is installed. Otherwise lower the loop count to 200 (10 s) while checking that it fails, then restore it.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
-- [ ] **Step 4: Run `just check`**
+- [x] **Step 4: Run `just check`**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -m "Stop in-flight downloads within one chunk on Ctrl-C"

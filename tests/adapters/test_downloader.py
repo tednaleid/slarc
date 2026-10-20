@@ -2,6 +2,8 @@
 # ABOUTME: Responses are served in memory; blobs go to the in-memory or filesystem blob store.
 import hashlib
 import threading
+import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
@@ -199,3 +201,32 @@ def test_downloader_parallelism_bounded():
     assert len(results) == 9
     assert {r.status for r in results} == {"ok"}
     assert peak == 3
+
+
+def test_closing_fetch_stops_an_in_flight_download(tmp_path: Path):
+    streaming = threading.Event()
+
+    def slow_body() -> Iterator[bytes]:
+        for _ in range(2000):
+            streaming.set()
+            yield b"x" * 1024
+            time.sleep(0.05)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/slow":
+            return httpx.Response(200, content=slow_body())
+        return httpx.Response(200, content=b"fast")
+
+    jobs = [
+        job("https://cdn.example.com/slow", max_bytes=10**7),
+        job("https://cdn.example.com/fast"),
+    ]
+    results = downloader(handler, FsBlobStore(tmp_path)).fetch(jobs, 2)
+
+    assert next(results).job.url.endswith("/fast")
+    assert streaming.wait(5)
+    started = time.monotonic()
+    results.close()
+
+    assert time.monotonic() - started < 1.0
+    assert list(tmp_path.rglob(".tmp-*")) == []

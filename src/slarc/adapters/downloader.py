@@ -1,6 +1,7 @@
 # ABOUTME: Downloader over httpx that streams each URL into the blob store, several at a time.
 # ABOUTME: Sends the session's token and d cookie only to Slack's private file host.
-from collections.abc import Iterator
+import threading
+from collections.abc import Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Literal
 
@@ -20,6 +21,10 @@ class TooLarge(Exception):
     pass
 
 
+class Cancelled(Exception):
+    pass
+
+
 class HttpDownloader:
     def __init__(
         self, blobs: BlobStore, sessions: dict[str, Session], client: httpx.Client
@@ -29,29 +34,35 @@ class HttpDownloader:
         self._sessions = sessions
         self._client = client
 
-    def fetch(self, jobs: list[DownloadJob], parallelism: int) -> Iterator[DownloadResult]:
+    def fetch(self, jobs: list[DownloadJob], parallelism: int) -> Generator[DownloadResult]:
         """Yields each job's result as it finishes, with at most parallelism in flight."""
         pool = ThreadPoolExecutor(max_workers=parallelism)
+        cancel = threading.Event()
         try:
-            futures = [pool.submit(self._fetch, job) for job in jobs]
+            futures = [pool.submit(self._fetch, job, cancel) for job in jobs]
             for future in as_completed(futures):
                 yield future.result()
         finally:
-            # A caller that stops early, or Ctrl-C, abandons the downloads not started yet.
+            # A caller that stops early, or Ctrl-C, abandons the downloads not started yet
+            # and tells the running ones to stop at their next chunk.
+            cancel.set()
             pool.shutdown(cancel_futures=True)
 
-    def _fetch(self, job: DownloadJob) -> DownloadResult:
+    def _fetch(self, job: DownloadJob, cancel: threading.Event) -> DownloadResult:
         try:
-            return self._download(job)
+            return self._download(job, cancel)
+        except Cancelled:
+            return _result(job, "failed", "Download interrupted.")
         except TooLarge:
             return _result(job, "too_large", f"Larger than the limit of {job.max_bytes} bytes.")
         except (httpx.HTTPError, httpx.InvalidURL) as error:
             return _result(job, "failed", f"Download failed: {type(error).__name__}.")
 
-    def _download(self, job: DownloadJob) -> DownloadResult:
+    def _download(self, job: DownloadJob, cancel: threading.Event) -> DownloadResult:
         """Follows redirects itself, so each hop gets credentials only if it is a Slack file."""
         url = job.url
         for _ in range(MAX_REDIRECTS + 1):
+            _raise_if_set(cancel)
             with self._client.stream("GET", url, headers=self._headers(job, url)) as response:
                 if response.is_redirect and "location" in response.headers:
                     url = str(response.url.join(response.headers["location"]))
@@ -67,7 +78,9 @@ class HttpDownloader:
                 declared = response.headers.get("content-length", "")
                 if declared.isdigit() and int(declared) > job.max_bytes:
                     raise TooLarge
-                sha256, size = self._blobs.write(_limited(response.iter_bytes(), job.max_bytes))
+                sha256, size = self._blobs.write(
+                    _limited(response.iter_bytes(), job.max_bytes, cancel)
+                )
                 return DownloadResult(job, "ok", sha256, size, content_type or None, None)
         return _result(job, "failed", f"More than {MAX_REDIRECTS} redirects.")
 
@@ -92,9 +105,15 @@ def _slack_refusal(job: DownloadJob, url: str, content_type: str) -> str | None:
     return None
 
 
-def _limited(chunks: Iterator[bytes], max_bytes: int) -> Iterator[bytes]:
+def _raise_if_set(cancel: threading.Event) -> None:
+    if cancel.is_set():
+        raise Cancelled
+
+
+def _limited(chunks: Iterator[bytes], max_bytes: int, cancel: threading.Event) -> Iterator[bytes]:
     total = 0
     for chunk in chunks:
+        _raise_if_set(cancel)
         total += len(chunk)
         if total > max_bytes:
             raise TooLarge
