@@ -60,6 +60,7 @@ NOTHING_TO_REMOVE = "Nothing to remove."
 NOTHING_REMOVED = "Nothing removed."
 CANNOT_PULL_AGAIN = "Messages deleted from Slack since they were pulled cannot be pulled again."
 LEFTOVERS = "what is left of removed items"
+RUN_RM_AGAIN = "Run the same slarc rm again to finish it."
 
 
 def _print_version(value: bool) -> None:
@@ -708,7 +709,13 @@ def rm_command(
                 _fail(NOTHING_REMOVED)
             with UnitOfWork(archive, blobs, services.clock, "rm", args, __version__) as uow:
                 apply_removal(removal, uow)
-            sweep(removal.teams, archive, blobs)
+            try:
+                sweep(removal.teams, archive, blobs)
+            except SlarcError as error:
+                _fail(f"{error} {RUN_RM_AGAIN}")
+            except KeyboardInterrupt:
+                err.print(f"{INTERRUPTED} {RUN_RM_AGAIN}", markup=False)
+                raise typer.Exit(INTERRUPTED_EXIT) from None
     except SlarcError as error:
         _fail(str(error))
     except KeyboardInterrupt:

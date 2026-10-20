@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from slarc import bootstrap, cli
 from slarc.cli import app
+from slarc.ports import ArchiveWriteFailed
 from tests.recorded_fixtures import RECORDED, copy_recorded
 from tests.test_cli_list_search import services
 from tests.test_cli_pull import BASE, Fixture, f  # noqa: F401
@@ -148,6 +149,36 @@ def test_rm_cleanup_only_prompts_and_sweeps(archive: Path, tmp_path: Path) -> No
     assert "Messages deleted from Slack" in result.output
     assert result.output.strip().splitlines()[-1].startswith("Cleaned up ")
     assert not leftover.exists()
+
+
+def test_rm_interrupted_sweep_says_to_run_it_again(
+    archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def interrupt(*args: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "sweep", interrupt)
+    result = invoke(tmp_path, "rm", "#all-naleid", "--yes", "--root", str(archive))
+    assert result.exit_code == 130
+    output = " ".join(result.output.split())
+    assert "Interrupted; progress so far is saved. Run the same slarc rm again to finish it." in (
+        output
+    )
+
+
+def test_rm_failed_sweep_says_to_run_it_again(
+    archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    month = archive / "raw/T0CB5LYPVFA/C0CA5396G03/2026-10.jsonl"
+
+    def disk_full(*args: object) -> None:
+        raise ArchiveWriteFailed(month, "No space left on device")
+
+    monkeypatch.setattr(cli, "sweep", disk_full)
+    result = invoke(tmp_path, "rm", "#all-naleid", "--yes", "--root", str(archive))
+    assert result.exit_code == 1
+    output = " ".join(result.output.split())
+    assert "No space left on device. Run the same slarc rm again to finish it." in output
 
 
 def test_rm_thread_in_tracked_conversation_reports_kept(f: Fixture) -> None:  # noqa: F811
