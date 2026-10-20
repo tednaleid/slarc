@@ -9,6 +9,7 @@ import pytest
 from slarc.adapters import lake
 from slarc.adapters.lake import (
     CATALOG,
+    CatalogNotSynced,
     ExtensionsMissing,
     connect_lake,
     extension_directory,
@@ -114,3 +115,28 @@ def test_read_only_connect_to_a_corrupt_catalog_raises_a_clear_error(
     message = str(error.value)
     assert message.startswith(f"Could not read {tmp_path / CATALOG}: ")
     assert "\n" not in message
+
+
+@pytest.mark.parametrize("directory", ["data", "blobs"])
+def test_connect_refuses_to_create_a_catalog_beside_synced_files(
+    directory: str, tmp_path: Path, ext_dir: Path
+) -> None:
+    (tmp_path / directory / "ab").mkdir(parents=True)
+    (tmp_path / directory / "ab" / "file").write_bytes(b"synced first")
+    with pytest.raises(CatalogNotSynced) as refused:
+        connect_lake(tmp_path, ext_dir)
+    assert str(refused.value) == (
+        "This archive has data files but no catalog.sqlite. Wait until your synced folder "
+        "has finished syncing, then run the command again."
+    )
+    assert not (tmp_path / CATALOG).exists()
+    assert sorted(path.name for path in tmp_path.iterdir()) == [directory]
+
+
+def test_connect_creates_a_lake_beside_empty_data_and_blob_directories(
+    tmp_path: Path, ext_dir: Path
+) -> None:
+    (tmp_path / "data" / "main").mkdir(parents=True)
+    (tmp_path / "blobs").mkdir()
+    connect_lake(tmp_path, ext_dir).close()
+    assert (tmp_path / CATALOG).exists()

@@ -73,6 +73,9 @@ def _this_host() -> tuple[str, str]:
 
 
 _locks: dict[Path, FlockArchiveLock] = {}
+_owner_checked: dict[
+    tuple[Path, str], bool
+] = {}  # (root, machine id) to whether the run is cautious
 
 
 def archive_lock(root: Path) -> FlockArchiveLock:
@@ -105,9 +108,19 @@ def _check_owner(root: Path, take_ownership: bool) -> bool:
     is cautious. See check_owner.
 
     A record naming this machine is read under the read lock alone. Recording this machine, on
-    the first open or when taking ownership, takes the write lock as well.
+    the first open or when taking ownership, takes the write lock as well. A check that has
+    passed for this archive and machine in this process is not repeated.
     """
     machine, host = _this_host()
+    key = (root.resolve(), machine)
+    if key in _owner_checked:
+        return _owner_checked[key]
+    cautious = _check_owner_once(root, machine, host, take_ownership)
+    _owner_checked[key] = cautious
+    return cautious
+
+
+def _check_owner_once(root: Path, machine: str, host: str, take_ownership: bool) -> bool:
     lock = archive_lock(root)
     lock.hold_shared()
     try:

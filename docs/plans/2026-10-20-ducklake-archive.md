@@ -516,6 +516,18 @@ Ted decided (2026-10-20) that slarc will not import JSONL archives. slarc has on
 - [x] **Step 4: Run `just check` and watch it pass.**
 - [x] **Step 5: Commit:** `Record the archive's owning host and add --take-ownership`.
 
+### Task 14b: Guard catalog creation against an unsynced folder, and check the owner once per process [done]
+
+**Files:**
+- Modify: `src/slarc/adapters/lake.py` (`CatalogNotSynced`), `src/slarc/adapters/host.py` (`machine_id` cached), `src/slarc/bootstrap.py` (per-root owner-check memo), README, `docs/architecture.md`, the design doc
+- Test: `tests/adapters/test_lake.py`, `tests/adapters/test_lake_owner.py`, `tests/test_cli.py`
+
+- [x] **Step 1: Write the failing tests:** creation refused beside files in `data/` or `blobs/`, an empty archive still created, one owner check per archive and process, and no snapshot from a takeover.
+- [x] **Step 2: Implement the guard and the memo.**
+- [x] **Step 3: Update the docs.**
+- [x] **Step 4: Run `just check` and watch it pass.**
+- [x] **Step 5: Commit:** `Refuse to create a catalog beside synced data, and check the owner once per process`.
+
 ## Phase 5: docs, measurements, acceptance
 
 ### Task 15: Docs and ADRs

@@ -28,6 +28,8 @@ slarc --take-ownership list                                                   # 
 
 The first `pull` offers to create an archive (a directory with `slarc.toml`) in the current directory. Every command finds the archive from `--root`, then `SLARC_ARCHIVE`, then the current directory or its parents, then `default_archive` in the global config.
 
+An archive in a synced folder is safe to open from one machine at a time. If a command stops with "This archive has data files but no catalog.sqlite", the folder's data files have arrived before the catalog; wait until it has finished syncing and run the command again. slarc creates a catalog only in an archive whose `data/` and `blobs/` hold no files.
+
 Automated access can trigger security alerts in managed Slack workspaces. Check your organization's policies before using slarc there.
 
 ## License

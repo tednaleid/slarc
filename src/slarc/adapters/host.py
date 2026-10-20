@@ -4,6 +4,7 @@ import re
 import socket
 import subprocess
 import sys
+from functools import cache
 from pathlib import Path
 
 from slarc.ports import SlarcError
@@ -20,6 +21,7 @@ class NoMachineId(SlarcError):
         )
 
 
+@cache
 def machine_id(platform: str = sys.platform, linux_machine_id: Path = LINUX_MACHINE_ID) -> str:
     """The IOPlatformUUID on macOS, or the contents of /etc/machine-id elsewhere.
 

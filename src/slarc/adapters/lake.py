@@ -12,6 +12,7 @@ from slarc.ports import ArchiveReadFailed, ArchiveWriteFailed, SlarcError
 CATALOG = "catalog.sqlite"
 CREATING = f"{CATALOG}.creating"  # where a new catalog is built before it is renamed
 DATA_DIR = "data"
+BLOB_DIR = "blobs"
 EXTENSIONS = ("ducklake", "sqlite_scanner")
 
 # DuckLake attaches the SQLite catalog under this name. The owner record is a table of the catalog
@@ -80,6 +81,14 @@ class OwnedElsewhere(SlarcError):
         )
 
 
+class CatalogNotSynced(SlarcError):
+    def __init__(self) -> None:
+        super().__init__(
+            "This archive has data files but no catalog.sqlite. Wait until your synced folder "
+            "has finished syncing, then run the command again."
+        )
+
+
 class SyncNotFinished(SlarcError):
     def __init__(self) -> None:
         super().__init__(
@@ -130,7 +139,9 @@ def connect_lake(
     """Attach the archive's lake as `lake` and make it the default catalog.
 
     A writable connection creates the catalog, tables and options when they are missing, so the
-    caller holds the archive's write lock. A new catalog is built under a temporary name and
+    caller holds the archive's write lock. It raises CatalogNotSynced instead of creating a
+    catalog beside data or blob files, which a synced folder may have delivered before the
+    catalog. A new catalog is built under a temporary name and
     renamed into place, so a catalog that exists is complete. It raises ArchiveWriteFailed, and
     a read-only one ArchiveReadFailed, when it cannot open the catalog. `autoinstall=False`
     skips the download and exists for tests.
@@ -141,6 +152,8 @@ def connect_lake(
         if not read_only:
             root.mkdir(parents=True, exist_ok=True)
             if not (root / CATALOG).exists():
+                if _has_files(root / DATA_DIR) or _has_files(root / BLOB_DIR):
+                    raise CatalogNotSynced()
                 _create_catalog(con, root)
         _attach(con, root, root / CATALOG, read_only=read_only)
         if not read_only:
@@ -149,6 +162,10 @@ def connect_lake(
         con.close()
         raise
     return con
+
+
+def _has_files(directory: Path) -> bool:
+    return any(path.is_file() for path in directory.rglob("*"))
 
 
 def _create_catalog(con: duckdb.DuckDBPyConnection, root: Path) -> None:

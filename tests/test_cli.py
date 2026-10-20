@@ -53,6 +53,7 @@ def test_cli_take_ownership_option(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     )
 
     def on(host: str, *args: str):
+        bootstrap._owner_checked.clear()
         monkeypatch.setattr(bootstrap, "_this_host", lambda: (f"machine-{host}", host))
         with bootstrap.override(services):
             return runner.invoke(app, [*args, "sql", "SELECT 1", "--root", str(root)])
@@ -72,3 +73,22 @@ def test_cli_take_ownership_option(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         "Take this archive over from the machine that last used it, "
         "once your synced folder has finished syncing."
     ) in help_text
+
+
+def test_cli_refuses_to_create_a_catalog_beside_synced_files(tmp_path: Path) -> None:
+    root = tmp_path / "archive"
+    (root / "data").mkdir(parents=True)
+    (root / "data" / "ducklake-1.parquet").write_bytes(b"synced first")
+    (root / "slarc.toml").write_text("")
+    services = bootstrap.Services(
+        credentials=CompositeSource([]),
+        keychain=KeyringSource(FakeKeyring()),
+        gateway_factory=lambda _: pytest.fail("this command never connects to Slack"),
+        env={},
+        home=tmp_path,
+    )
+    with bootstrap.override(services):
+        result = runner.invoke(app, ["sql", "SELECT 1", "--root", str(root)])
+    assert result.exit_code == 1
+    assert "has data files but no catalog.sqlite" in result.output
+    assert not (root / "catalog.sqlite").exists()

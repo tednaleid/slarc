@@ -120,6 +120,7 @@ def test_take_ownership_with_a_missing_data_file_stops(
 
 def test_takeover_run_skips_orphan_and_blob_deletion(tmp_path: Path, ext_dir: Path) -> None:
     blobs = FsBlobStore(tmp_path)
+    connect_lake(tmp_path, ext_dir).close()
     unreferenced, _ = blobs.write([b"synced ahead of the catalog"])
     store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock(), cautious=True)
     for env in messages(50):
@@ -150,9 +151,56 @@ def test_only_the_run_that_takes_ownership_is_cautious(tmp_path: Path) -> None:
     with bootstrap.archive_stores(root):
         pass
     unreferenced, _ = FsBlobStore(root).write([b"synced ahead of the catalog"])
+    bootstrap._owner_checked.clear()
     with bootstrap.archive_stores(root, take_ownership=True) as (archive, blobs):
         assert archive.maintain(blobs) is True
         assert list(blobs.ids()) == [unreferenced]
+    bootstrap._owner_checked.clear()
     with bootstrap.archive_stores(root) as (archive, blobs):
         assert archive.maintain(blobs) is True
         assert list(blobs.ids()) == []
+
+
+def test_one_process_checks_the_owner_once_per_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "archive"
+    with bootstrap.archive_stores(root):
+        pass
+    calls: list[bool] = []
+    real = bootstrap.check_owner
+
+    def spy(con: duckdb.DuckDBPyConnection, machine: str, host: str, take_ownership: bool) -> bool:
+        calls.append(take_ownership)
+        return real(con, machine, host, take_ownership)
+
+    monkeypatch.setattr(bootstrap, "check_owner", spy)
+    bootstrap._owner_checked.clear()
+    with bootstrap.archive_stores(root, take_ownership=True) as (_archive, _):
+        with bootstrap.query_index(root, take_ownership=True):
+            pass
+        with bootstrap.archive_stores(root, take_ownership=True):
+            pass
+    assert calls == [True]
+    assert owner_rows(root) == [("test-machine", "test-host")]
+
+
+def test_takeover_creates_no_snapshot(tmp_path: Path, ext_dir: Path) -> None:
+    con = connect_lake(tmp_path, ext_dir)
+    con.execute("INSERT INTO run (run) VALUES ('r1')")
+    check_owner(con, *ALPHA, take_ownership=False)
+
+    def snapshots() -> int:
+        rows = con.execute(
+            "SELECT count(*) FROM __ducklake_metadata_lake.ducklake_snapshot"
+        ).fetchall()
+        return rows[0][0]
+
+    before = snapshots()
+    check_owner(con, *BETA, take_ownership=True)
+    con.close()
+    con = connect_lake(tmp_path, ext_dir)
+    try:
+        assert snapshots() == before
+    finally:
+        con.close()

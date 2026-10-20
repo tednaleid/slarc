@@ -40,3 +40,9 @@ def lock_cache(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Mon
 def this_host(monkeypatch: pytest.MonkeyPatch) -> None:
     """Gives bootstrap a fixed machine id, so no test reads the real one."""
     monkeypatch.setattr(bootstrap, "_this_host", lambda: ("test-machine", "test-host"))
+
+
+@pytest.fixture(autouse=True)
+def owner_memo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Starts each test with no archive remembered as owner-checked."""
+    monkeypatch.setattr(bootstrap, "_owner_checked", {})

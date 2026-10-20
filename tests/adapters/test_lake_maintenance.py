@@ -103,9 +103,9 @@ def test_maintain_physically_deletes_dropped_rows_and_unreferenced_blobs(
     tmp_path: Path, ext_dir: Path
 ) -> None:
     blobs = FsBlobStore(tmp_path)
+    store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
     kept, _ = blobs.write([b"kept"])
     blobs.write([b"unreferenced"])
-    store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
     for env in messages(50):
         store.append(env)
     store.append(file_line("F1", T1, R1, kept))
@@ -126,9 +126,9 @@ def test_maintain_defers_deletion_while_another_command_holds_the_archive(
     tmp_path: Path, ext_dir: Path
 ) -> None:
     blobs = FsBlobStore(tmp_path)
-    unreferenced, _ = blobs.write([b"unreferenced"])
     lock = FakeArchiveLock()
     store = DuckLakeArchiveStore(tmp_path, ext_dir, lock)
+    unreferenced, _ = blobs.write([b"unreferenced"])
     for env in messages(50):
         store.append(env)
     store.commit(Commit(items=[tracked(TS)]))

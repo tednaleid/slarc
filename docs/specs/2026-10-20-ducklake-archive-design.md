@@ -204,6 +204,8 @@ An archive is opened by one machine at a time, and slarc enforces it.
 
 - **The record.** The catalog holds the owning host: a stable machine id (the IOPlatformUUID on macOS, `/etc/machine-id` on Linux) plus the hostname for messages. Hostnames change, so the id is what is compared. Reading the id is an adapter's job.
 - **The first open** records the current host, including the open that creates the lake.
+- **Creation is guarded.** A command that would create a catalog because `catalog.sqlite` is missing refuses, and creates nothing, when `data/` or `blobs/` already holds a file: a synced folder can deliver those before the catalog. The error says to wait until the folder has finished syncing and run the command again. An archive with no files in either directory is created as usual.
+- **One check per process.** The owner check runs once per archive and machine in a process, so a command that opens both a store and an index does not check, or take ownership, twice.
 - **Every command,** reads included, checks the record when it opens the archive. Even a read creates WAL files that a synced folder carries to other machines. If the record names another host, the command stops with a message naming that host. The message says to wait until the synced folder has finished syncing, then run the command again with `--take-ownership`.
 - **`--take-ownership`** is a global option. It asserts that every change from the previous host has arrived. slarc cannot verify that, so the option is the user's statement. It records the current host, and the run that takes ownership is cautious:
   - it checks that every data file the catalog references exists, and stops with a "the synced folder has not finished syncing" error if any are missing;
