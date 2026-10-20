@@ -74,8 +74,10 @@ def archive_lock(root: Path) -> FlockArchiveLock:
 def ensure_lake(root: Path) -> None:
     """Creates an empty lake in the archive if it has no catalog, under the archive's locks.
 
-    The check runs under the write lock because a catalog file exists before its tables do.
+    connect_lake renames a new catalog into place complete, so finding one needs no lock.
     """
+    if (root / CATALOG).exists():
+        return
     lock = archive_lock(root)
     lock.hold_shared()
     try:
@@ -88,8 +90,7 @@ def ensure_lake(root: Path) -> None:
 
 @contextmanager
 def archive_stores(root: Path) -> Generator[tuple[DuckLakeArchiveStore, FsBlobStore]]:
-    """The archive's lake and blob stores, with ensure_lake run first; closed on exit."""
-    ensure_lake(root)
+    """The archive's lake and blob stores; the lake store creates a missing lake. Closed on exit."""
     archive = DuckLakeArchiveStore(root, _extension_directory(), archive_lock(root))
     try:
         yield archive, FsBlobStore(root)

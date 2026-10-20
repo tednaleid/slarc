@@ -6,6 +6,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
+from slarc.adapters import lake
 from slarc.adapters.lake import (
     CATALOG,
     ExtensionsMissing,
@@ -41,6 +42,36 @@ def test_connect_creates_catalog_tables_and_settings(tmp_path: Path, ext_dir: Pa
     assert tables >= TABLES
     with sqlite3.connect(tmp_path / CATALOG) as catalog:
         assert catalog.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+
+
+def test_a_new_catalog_appears_only_when_complete(
+    tmp_path: Path, ext_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog_existed = []
+    create_missing = lake._create_missing
+
+    def spy(con: duckdb.DuckDBPyConnection) -> None:
+        catalog_existed.append((tmp_path / CATALOG).exists())
+        create_missing(con)
+
+    monkeypatch.setattr(lake, "_create_missing", spy)
+    connect_lake(tmp_path, ext_dir).close()
+    assert catalog_existed == [False, True]
+    assert sorted(path.name for path in tmp_path.iterdir() if path.name.startswith(CATALOG)) == [
+        CATALOG
+    ]
+
+
+def test_a_leftover_temporary_catalog_is_deleted_and_rebuilt(tmp_path: Path, ext_dir: Path) -> None:
+    for leftover in ("catalog.sqlite.creating", "catalog.sqlite.creating-wal"):
+        (tmp_path / leftover).write_bytes(b"left by a killed creator " * 64)
+    connect_lake(tmp_path, ext_dir).close()
+    assert sorted(path.name for path in tmp_path.iterdir() if path.name.startswith(CATALOG)) == [
+        CATALOG
+    ]
+    con = connect_lake(tmp_path, ext_dir, read_only=True)
+    assert con.execute("SELECT count(*) FROM tracked_item").fetchall() == [(0,)]
+    con.close()
 
 
 def test_moved_archive_still_opens(tmp_path: Path, ext_dir: Path) -> None:

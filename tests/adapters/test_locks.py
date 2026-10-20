@@ -3,6 +3,7 @@
 import hashlib
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -141,3 +142,23 @@ def test_store_and_index_hold_the_read_lock_while_open(tmp_path: Path, ext_dir: 
     index.close()
     assert other.try_exclusive()
     other.release_exclusive()
+
+
+def test_a_read_command_on_an_existing_archive_takes_no_write_lock(
+    tmp_path: Path, ext_dir: Path
+) -> None:
+    root = tmp_path / "archive"
+    connect_lake(root, ext_dir).close()
+    writer = FlockArchiveLock(root, bootstrap._cache_home())
+    opened = threading.Event()
+
+    def read() -> None:
+        with bootstrap.query_index(root):
+            opened.set()
+
+    with writer.write():
+        reader = threading.Thread(target=read)
+        reader.start()
+        held = opened.wait(timeout=10)
+    reader.join()
+    assert held

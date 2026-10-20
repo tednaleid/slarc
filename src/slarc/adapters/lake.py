@@ -8,6 +8,7 @@ import duckdb
 from slarc.ports import ArchiveReadFailed, ArchiveWriteFailed, SlarcError
 
 CATALOG = "catalog.sqlite"
+CREATING = f"{CATALOG}.creating"  # where a new catalog is built before it is renamed
 DATA_DIR = "data"
 EXTENSIONS = ("ducklake", "sqlite_scanner")
 
@@ -86,38 +87,57 @@ def connect_lake(
     """Attach the archive's lake as `lake` and make it the default catalog.
 
     A writable connection creates the catalog, tables and options when they are missing, so the
-    caller holds the archive's write lock. It raises ArchiveWriteFailed, and a read-only one
-    ArchiveReadFailed, when it cannot open the catalog. `autoinstall=False` skips the download
-    and exists for tests.
+    caller holds the archive's write lock. A new catalog is built under a temporary name and
+    renamed into place, so a catalog that exists is complete. It raises ArchiveWriteFailed, and
+    a read-only one ArchiveReadFailed, when it cannot open the catalog. `autoinstall=False`
+    skips the download and exists for tests.
     """
     con = duckdb.connect(":memory:")
     try:
         _load_extensions(con, ext_dir, autoinstall=autoinstall)
         if not read_only:
             root.mkdir(parents=True, exist_ok=True)
-        attach_options = [
-            f"DATA_PATH '{root / DATA_DIR}/'",
-            "OVERRIDE_DATA_PATH true",
-            "METADATA_PARAMETERS MAP {'journal_mode': 'wal'}",
-        ]
-        if read_only:
-            attach_options.append("READ_ONLY")
-        try:
-            con.execute(
-                f"ATTACH 'ducklake:sqlite:{root / CATALOG}' AS lake ({', '.join(attach_options)})"
-            )
-        except duckdb.Error as error:
-            # DuckDB's message ends with the cause, after the catalog path it already names.
-            reason = str(error).splitlines()[0].rsplit(": ", 1)[-1]
-            failure = ArchiveReadFailed if read_only else ArchiveWriteFailed
-            raise failure(root / CATALOG, reason) from None
-        con.execute("USE lake")
+            if not (root / CATALOG).exists():
+                _create_catalog(con, root)
+        _attach(con, root, root / CATALOG, read_only=read_only)
         if not read_only:
             _create_missing(con)
     except BaseException:
         con.close()
         raise
     return con
+
+
+def _create_catalog(con: duckdb.DuckDBPyConnection, root: Path) -> None:
+    """Builds an empty lake at CREATING, after deleting any a killed creator left, and renames
+    it to CATALOG. Detaching closes the SQLite catalog, which checkpoints and removes its WAL.
+    """
+    creating = root / CREATING
+    for leftover in (creating, *(Path(f"{creating}{suffix}") for suffix in ("-wal", "-shm"))):
+        leftover.unlink(missing_ok=True)
+    _attach(con, root, creating, read_only=False)
+    _create_missing(con)
+    con.execute("USE memory")
+    con.execute("DETACH lake")
+    creating.rename(root / CATALOG)
+
+
+def _attach(con: duckdb.DuckDBPyConnection, root: Path, catalog: Path, *, read_only: bool) -> None:
+    attach_options = [
+        f"DATA_PATH '{root / DATA_DIR}/'",
+        "OVERRIDE_DATA_PATH true",
+        "METADATA_PARAMETERS MAP {'journal_mode': 'wal'}",
+    ]
+    if read_only:
+        attach_options.append("READ_ONLY")
+    try:
+        con.execute(f"ATTACH 'ducklake:sqlite:{catalog}' AS lake ({', '.join(attach_options)})")
+    except duckdb.Error as error:
+        # DuckDB's message ends with the cause, after the catalog path it already names.
+        reason = str(error).splitlines()[0].rsplit(": ", 1)[-1]
+        failure = ArchiveReadFailed if read_only else ArchiveWriteFailed
+        raise failure(root / CATALOG, reason) from None
+    con.execute("USE lake")
 
 
 def _create_missing(con: duckdb.DuckDBPyConnection) -> None:
