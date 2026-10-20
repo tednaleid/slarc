@@ -492,8 +492,6 @@ def test_failed_read_of_a_tracked_thread_leaves_it_for_next_pull(
     report = h.pull()
 
     assert report.items_pulled == 0
-    assert report.skipped[0].startswith("Could not read ")
-    assert report.skipped[0].endswith(f"; the next pull tries again: {UNREACHABLE}")
     assert report.skipped == [
         f"Could not read {THREAD_LINK}; the next pull tries again: {UNREACHABLE}"
     ]

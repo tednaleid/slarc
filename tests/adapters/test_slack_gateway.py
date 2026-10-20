@@ -1,5 +1,5 @@
 # ABOUTME: Tests for the session-token Slack gateway and the connector that picks sessions.
-# ABOUTME: A fake Web API client serves spike-shaped responses; nothing here touches the network.
+# ABOUTME: A fake Web API client and a loopback server serve spike-shaped responses.
 import json
 import logging
 import threading

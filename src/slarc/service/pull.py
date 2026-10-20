@@ -385,8 +385,8 @@ class _PullRun:
     ) -> TrackedItem:
         """Pages history from oldest up to latest, reading each parent's thread for reason.
 
-        The item is recorded after every page with oldest_ts moved, so an interrupted pull
-        resumes below it. With newest_each_page, the backfill, newest_ts moves with each page and
+        The item is recorded after every page with oldest_ts moved. With newest_each_page, the
+        backfill, newest_ts moves with each page, so an interrupted pull resumes below it, and
         the backfill is marked complete at the end. Otherwise pages come newest first, so
         newest_ts moves only once paging ends; an interrupted pull then pages the same range
         again.

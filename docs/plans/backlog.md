@@ -62,6 +62,10 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 - A 403 or 404 after an off-host redirect of a Slack file is recorded as terminal `forbidden` instead of `failed` with the session hint (`adapters/downloader.py`).
 - Waits inside slack_sdk's 429 retry handler are not counted in `rate_limit_wait_s`, and the spec's run row does not say so (`adapters/slack_gateway.py`).
 - The download status `Literal` is spelled out in `ports.py`, `domain/tracking.py`, `adapters/downloader.py` and `service/downloads.py`; `service/selectors.py` repeats the `ItemKey` type inline.
+- Under `--full` or a reopened backfill, a thread in `retry_threads` is read twice in one run: first as a retry, then again as a parent in the paged history, because `_append_history_page` does not skip threads already in `held.read_threads` (`service/pull.py`).
+- When a conversation turns `NotVisible` partway through paging, `_skip` records the item as it was before paging, discarding the per-page `oldest_ts` progress; the next pull re-pages more than needed (`service/pull.py` `_pull_conversation`).
+- A download worker blocked in a socket read on a stalled connection still waits up to the httpx read timeout (60 s) after Ctrl-C; flowing downloads stop within a chunk (`adapters/downloader.py`).
+- A bare `slarc pull --root DIR` where DIR has no `slarc.toml` says "No tracked items yet", which hides that DIR is not an archive; untested (`cli.py`).
 
 ### Auth
 - An `SLARC_DOMAIN` that does not match the env token's workspace still tracks items under the token's team (`service/workspaces.py` `Workspaces._open`).
@@ -88,6 +92,7 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 - `slarc search --in @user` is refused although the spec gives `search` pull's selectors (`service/search.py`, `SEARCH` in `adapters/duckdb_index.py`).
 - With `--root DIR` and no `slarc.toml`, `NoArchive` still says "here or in any parent directory" (`ports.py`, `cli.py`).
 - The global config dict carries a `_path` sentinel key, and `_pick`'s error would print "None:" without it (`config.py`).
+- Write failures other than opening a month file surface as a raw `OSError` traceback: `JsonlArchiveStore` write and flush, `FsBlobStore`; `export_writer.py` raises a plain `SlarcError` rather than `ArchiveWriteFailed` (`adapters/jsonl_store.py`, `adapters/blob_store.py`, `adapters/export_writer.py`).
 
 ### Export and rendering
 - Emoji and image assets with no recorded content type take their extension from the URL, or `bin`; detect the type from the file signature instead (`service/export.py` `_image_extension`).
@@ -130,6 +135,8 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 - Acceptance check (b)'s `new_lines()` slices the channel's lines by position across month files, so a run that crosses a month boundary can falsely FAIL (`scripts/acceptance.py`).
 - Acceptance notes recorded before an exception in a check are lost from the output (`scripts/acceptance.py` `attempt`).
 - `appends.counted()` returns 0 without complaint for a dict value, and the counter tests repeat `isinstance` narrowing (`service/appends.py`).
+- No test pins a history-page `SlarcError` on page 1 of a new conversation, or that page-1 progress (`oldest_ts`) is kept and a second pull finishes the backfill; extend `test_failed_history_page_skips_the_conversation_and_pulls_the_rest` (`tests/service/test_pull_conversation.py`).
+- The `retry_threads` rule is untested for a thread that fails again on retry and for a pull interrupted before any record; `test_interrupted_pull_keeps_every_new_item` does not assert `backfill_complete` is false right after the interrupt (`tests/service/test_pull_conversation.py`).
 
 ## Open questions
 
