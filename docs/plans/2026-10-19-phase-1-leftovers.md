@@ -32,7 +32,7 @@
 
 ---
 
-### Task 1: Keep the session cookie out of slack_sdk's debug log
+### Task 1: Keep the session cookie out of slack_sdk's debug log [done]
 
 Backlog line: "slack_sdk's DEBUG request log redacts `Authorization` but not the `Cookie` header".
 
@@ -45,7 +45,7 @@ slack_sdk's `BaseClient` builds its "Sending a request" log line whenever its ow
 **Interfaces:**
 - Produces: `SDK_LOGGER = "slarc.slack_sdk"` in `slack_gateway.py`; `web_api` passes `logger=logging.getLogger(SDK_LOGGER)` to `WebClient` after setting that logger's level to `logging.INFO`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Serve one JSON response from a local `http.server.HTTPServer` on `127.0.0.1` port 0 in a daemon thread, and point the client at it.
 
@@ -64,18 +64,18 @@ def test_debug_logging_never_shows_the_session_cookie(caplog: pytest.LogCaptureF
 
 `local_slack_api` is a context manager in the test module that starts the server and yields `f"http://127.0.0.1:{port}/api/"`.
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `just test tests/adapters/test_slack_gateway.py -k debug_logging`
 Expected: FAIL, with `xoxd-test` found in the captured "Sending a request" line.
 
-- [ ] **Step 3: Pass a logger pinned at INFO to `WebClient` in `web_api`**
+- [x] **Step 3: Pass a logger pinned at INFO to `WebClient` in `web_api`**
 
-- [ ] **Step 4: Run the test and `just check`**
+- [x] **Step 4: Run the test and `just check`**
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -m "Keep the session cookie out of slack_sdk's debug log"

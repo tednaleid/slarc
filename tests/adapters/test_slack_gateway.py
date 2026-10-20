@@ -1,6 +1,11 @@
 # ABOUTME: Tests for the session-token Slack gateway and the connector that picks sessions.
 # ABOUTME: A fake Web API client serves spike-shaped responses; nothing here touches the network.
 import json
+import logging
+import threading
+from collections.abc import Generator
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.error import URLError
 
@@ -429,3 +434,41 @@ def test_connector_does_not_record_a_session_that_fails_auth_test():
     with pytest.raises(AuthFailed):
         connector.connect("one")
     assert connector.authenticated == {}
+
+
+@contextmanager
+def local_slack_api(body: dict) -> Generator[str]:
+    payload = json.dumps(body).encode()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        do_POST = do_GET
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/api/"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_debug_logging_never_shows_the_session_cookie(caplog: pytest.LogCaptureFixture):
+    caplog.set_level(logging.DEBUG)
+    with local_slack_api({"ok": True, "team_id": "T0CB5LYPVFA"}) as base_url:
+        api = web_api(
+            Session("T0CB5LYPVFA", "naleidworkspace", "naleid", "desktop", "xoxc-test", "xoxd-test")
+        )
+        api.client.base_url = base_url
+        assert api.call("auth.test", {})["ok"] is True
+    assert "xoxd-test" not in caplog.text
+    assert "xoxc-test" not in caplog.text

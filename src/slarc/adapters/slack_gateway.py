@@ -1,5 +1,6 @@
 # ABOUTME: Read-only Slack Web API gateway over slack_sdk using a session token and d cookie.
 # ABOUTME: Also the connector that picks a session for a workspace and checks it with auth.test.
+import logging
 from collections.abc import Callable, Iterator
 from typing import Any, Protocol
 
@@ -33,6 +34,8 @@ USER_PAGE_LIMIT = 1000
 SEARCH_COUNT = 100
 CONVERSATION_TYPES = "public_channel,private_channel,mpim,im"
 RATE_LIMIT_RETRIES = 3
+# slack_sdk's DEBUG request log redacts Authorization but prints the Cookie header.
+SDK_LOGGER = "slarc.slack_sdk"
 
 NOT_VISIBLE_ERRORS = ("channel_not_found", "not_in_channel")
 AUTH_ERRORS = ("invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive")
@@ -60,8 +63,11 @@ class SlackWebApi:
 
 
 def web_api(session: Session) -> SlackWebApi:
+    sdk_logger = logging.getLogger(SDK_LOGGER)
+    sdk_logger.setLevel(logging.INFO)
     client = WebClient(
         token=session.xoxc,
+        logger=sdk_logger,
         headers={"Cookie": f"d={session.xoxd}"},
         retry_handlers=[
             RateLimitErrorRetryHandler(max_retry_count=RATE_LIMIT_RETRIES),

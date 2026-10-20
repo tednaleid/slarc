@@ -77,7 +77,6 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 - `slarc auth --paste` ignores a WORKSPACE argument without saying so, and credential source warnings show only when no session works (`cli.py` `auth`).
 - Cookie decryption does not check the `v10`/`v11` prefix (`adapters/chromium.py`); an unknown LevelDB batch record kind is read as a delete (`adapters/leveldb.py`); `read_varint` lives in `snappy.py`.
 - A non-JSON Slack response gives a long error and a slack_sdk ERROR log on stderr (`adapters/slack_gateway.py`).
-- slack_sdk's DEBUG request log redacts `Authorization` but not the `Cookie` header; pin the `slack_sdk` logger at INFO (`adapters/slack_gateway.py`).
 
 ### Storage and query
 - `MessageTs` compares fractions as integers, so a fraction shorter than six digits misorders, and `message_link` assumes six digits; Slack always sends six (`domain/links.py`).
