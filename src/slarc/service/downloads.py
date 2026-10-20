@@ -128,8 +128,11 @@ def drain_downloads(
     after each one. A result counts as failed or skipped by the status it settles into, so a
     file whose files.info read fails after its download counts as failed. A result whose
     target's download state an rm deleted meanwhile is dropped and counts as neither.
+    Requeued downloads are committed before any job starts, so each later commit carries
+    only its own result's state.
     """
-    _requeue_earlier(uow, max_bytes)
+    if _requeue_earlier(uow, max_bytes):
+        uow.commit(downloads_exist=True)
     jobs = [_job(state, max_bytes) for state in uow.run.downloads if state.status == "pending"]
     jobs = _with_credentials(jobs, connector, reporter)
     recorder = _Recorder(uow, connector)
@@ -295,9 +298,11 @@ def _job(state: DownloadState, max_bytes: int) -> DownloadJob:
     return DownloadJob(state.team_id, state.target_kind, state.target, url, max_bytes, slack_auth)
 
 
-def _requeue_earlier(uow: UnitOfWork, max_bytes: int) -> None:
-    """Queues earlier runs' pending and failed downloads, and too_large files that now fit."""
+def _requeue_earlier(uow: UnitOfWork, max_bytes: int) -> bool:
+    """Queues earlier runs' pending and failed downloads, and too_large files that now fit;
+    returns whether it queued any."""
     queued = {(d.team_id, d.target) for d in uow.run.downloads}
+    requeued = False
     sizes: dict[str, dict[str, dict]] = {}
     for key, state in outstanding_downloads(uow.archive).items():
         if key in queued or state.url is None:
@@ -310,6 +315,8 @@ def _requeue_earlier(uow: UnitOfWork, max_bytes: int) -> None:
             retry = size is not None and size <= max_bytes
         if retry:
             uow.run.downloads.append(msgspec.structs.replace(state, status="pending"))
+            requeued = True
+    return requeued
 
 
 class _Recorder:
@@ -331,9 +338,13 @@ class _Recorder:
         was downloaded or dropped.
 
         The commit drops the result, directory line and state change alike, when its target
-        has no download state left.
+        has no download state left. A result whose state an earlier commit dropped is
+        dropped without recording it.
         """
         job = result.job
+        key = (job.team_id, job.target)
+        if self._held(key) is None:
+            return None
         downloaded = None
         if result.status != "ok":
             self._settle(job, result.status, result.error)
@@ -341,15 +352,14 @@ class _Recorder:
             downloaded = self._record_file(result)
         else:
             downloaded = self._record_image(result)
-        key = (job.team_id, job.target)
         if key in self.uow.commit(downloads_exist=True):
             return None
         if downloaded is not None:
             self.saved[downloaded] += 1
             if downloaded == "image":
                 self.images.setdefault(job.team_id, set()).add(job.url)
-        held = (d for d in self.uow.run.downloads if (d.team_id, d.target) == key)
-        return next((d.status for d in held), None)
+        held = self._held(key)
+        return held.status if held is not None else None
 
     def finish(self) -> None:
         """Commits the new lines of users and emoji whose image was downloaded."""
@@ -399,9 +409,14 @@ class _Recorder:
         append_line(uow, Envelope(meta=meta, object=obj))
         self._replace(job, None)
 
+    def _held(self, key: DownloadKey) -> DownloadState | None:
+        """The run's download state for the key, or None when it has none."""
+        return next((d for d in self.uow.run.downloads if (d.team_id, d.target) == key), None)
+
     def _settle(self, job: DownloadJob, status: SettledStatus, error: str | None) -> None:
-        key = (job.team_id, job.target)
-        held = next(d for d in self.uow.run.downloads if (d.team_id, d.target) == key)
+        held = self._held((job.team_id, job.target))
+        if held is None:
+            raise ValueError(f"No download state is queued for {job.target}")
         attempts = held.attempts + 1
         if status == "failed" and not job.slack_auth and attempts >= OUTSIDE_MAX_ATTEMPTS:
             status = "gave_up"

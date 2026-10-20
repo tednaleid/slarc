@@ -586,6 +586,65 @@ def test_result_for_a_removed_target_is_dropped(h: Harness, monkeypatch: pytest.
     assert h.blobs.exists(sha256(snippet_bytes()))
 
 
+def drop_download(h: Harness, target: str) -> None:
+    """Deletes the target's download state, as an rm committed by another command does."""
+    with h.archive.elsewhere() as archive:
+        archive.drop_downloads(TEAM, {target})
+        archive.commit(Commit())
+
+
+@pytest.mark.parametrize("second_result", ["ok", "failed"])
+def test_requeued_target_removed_before_the_first_result_commits_is_dropped(
+    h: Harness, monkeypatch: pytest.MonkeyPatch, second_result: str
+):
+    h.pull(SNIPPET_LINK)
+    h.downloader.serve(SNIPPET_URL, snippet_bytes())
+    if second_result == "ok":
+        h.downloader.serve(avatar(ME), b"avatar", "image/png")
+    else:
+        h.downloader.fail(avatar(ME), error="HTTP 500")
+    fetch = h.downloader.fetch
+
+    def rm_drops_the_second_target_first(
+        jobs: list[DownloadJob], parallelism: int
+    ) -> Iterator[DownloadResult]:
+        assert [job.target for job in jobs] == [SNIPPET, avatar(ME)]
+        results = list(fetch(jobs, parallelism))
+        drop_download(h, avatar(ME))
+        yield from results
+
+    monkeypatch.setattr(h.downloader, "fetch", rm_drops_the_second_target_first)
+
+    with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
+        drained = drain_downloads(
+            uow, h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter
+        )
+
+    assert (drained.files_saved, drained.images_saved) == (1, 0)
+    assert avatar(ME) not in h.archive.directory_state(TEAM, "image")
+    assert h.archive.downloads() == {}
+
+
+def test_requeued_state_removed_while_no_job_can_run_stays_removed(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+):
+    h.downloader.fail(SNIPPET_URL, error="HTTP 500")
+    h.downloader.serve(avatar(ME), b"avatar", "image/png")
+    h.pull(SNIPPET_LINK)
+    assert list(h.archive.downloads()) == [(TEAM, SNIPPET)]
+
+    def rm_commits_while_connecting(workspace: str) -> None:
+        drop_download(h, SNIPPET)
+        raise AuthFailed("desktop", workspace)
+
+    monkeypatch.setattr(h.connector, "connect", rm_commits_while_connecting)
+
+    with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
+        drain_downloads(uow, h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter)
+
+    assert h.archive.downloads() == {}
+
+
 def test_drain_reports_no_progress_without_jobs(h: Harness):
     with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
         drain_downloads(uow, h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter)
