@@ -683,7 +683,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cryptography", specifier = ">=50.0.2" },
-    { name = "duckdb", specifier = ">=1.5.6" },
+    { name = "duckdb", specifier = "==1.5.6" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "keyring", specifier = ">=25.7.0" },

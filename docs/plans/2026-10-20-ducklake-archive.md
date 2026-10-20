@@ -68,7 +68,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
 
 ## Phase 1: storage swap
 
-### Task 1: Lake connection, schema and extensions
+### Task 1: Lake connection, schema and extensions [done]
 
 **Files:**
 - Create: `src/slarc/adapters/lake.py`
@@ -89,17 +89,17 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
     - `tracked_item`: team, kind, channel, ts (empty string for a conversation, as `ItemKey` does), revision INTEGER, plus every other `TrackedItem` field. `last_read` and `retry_threads` are JSON.
     - `download_state`: team, target_kind, target, url, status, attempts INTEGER, last_error.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `test_connect_creates_catalog_tables_and_settings`: after `connect_lake`, `PRAGMA journal_mode` on `catalog.sqlite` (read with `sqlite3`) is `wal`. `ducklake_options()` shows `target_file_size` 16MB and `rewrite_delete_threshold` 0. The five tables exist.
   - `test_moved_archive_still_opens`: insert a row, close, rename the archive directory, connect at the new path, and read the row back.
   - `test_missing_extensions_raise_a_clear_error`: point `ext_dir` at an empty temp directory and disable autoinstall through a test-only `autoinstall=False` keyword. `connect_lake` raises `ExtensionsMissing`, whose message contains `ducklake` and `Run any slarc command once while online`.
   - `test_read_only_connect_cannot_write`.
   - `test_extension_directory_follows_xdg_cache_home`.
-- [ ] **Step 2: Run `just test tests/adapters/test_lake.py` and watch them fail.**
-- [ ] **Step 3: Implement `lake.py`.** `SET extension_directory` comes before `ATTACH`. Turn DuckDB's download and not-found errors on `INSTALL`/`LOAD` into `ExtensionsMissing`.
-- [ ] **Step 4: Add the extension install to `just install`:** `uv run python -c "from slarc.adapters.lake import install_extensions, extension_directory; import os, pathlib; install_extensions(extension_directory(os.environ, pathlib.Path.home()))"`. Pin duckdb and run `uv lock`.
-- [ ] **Step 5: Run `just check` and watch it pass.**
-- [ ] **Step 6: Commit:** `Add the lake connection: SQLite catalog in WAL mode, schema and extensions`.
+- [x] **Step 2: Run `just test tests/adapters/test_lake.py` and watch them fail.**
+- [x] **Step 3: Implement `lake.py`.** `SET extension_directory` comes before `ATTACH`. Turn DuckDB's download and not-found errors on `INSTALL`/`LOAD` into `ExtensionsMissing`.
+- [x] **Step 4: Add the extension install to `just install`:** `uv run python -c "from slarc.adapters.lake import install_extensions, extension_directory; import os, pathlib; install_extensions(extension_directory(os.environ, pathlib.Path.home()))"`. Pin duckdb and run `uv lock`.
+- [x] **Step 5: Run `just check` and watch it pass.**
+- [x] **Step 6: Commit:** `Add the lake connection: SQLite catalog in WAL mode, schema and extensions`.
 
 ### Task 2: A lake ArchiveStore with today's semantics
 

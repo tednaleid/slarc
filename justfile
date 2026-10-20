@@ -33,9 +33,10 @@ fmt-check:
 build:
     uv build
 
-# Install slarc on PATH as an editable uv tool that tracks this working tree
+# Install slarc on PATH as an editable uv tool that tracks this working tree, plus its DuckDB extensions
 install:
     uv tool install --editable --force .
+    uv run python scripts/install-extensions.py
 
 # Run slarc from the working tree with arbitrary arguments
 run *ARGS:
