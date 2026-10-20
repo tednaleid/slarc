@@ -115,6 +115,7 @@ def test_maintain_physically_deletes_dropped_rows_and_unreferenced_blobs(
     store.commit(Commit())
 
     assert store.maintain(blobs) is True
+    assert written
     assert written.isdisjoint(data_files(tmp_path))
     assert sorted(blobs.ids()) == [kept]
     assert store.channels(TEAM) == []
@@ -139,6 +140,7 @@ def test_maintain_defers_deletion_while_another_command_holds_the_archive(
 
     assert store.maintain(blobs) is False
     assert lock.events == ["write", "end write", "release_shared", "try_exclusive", "hold_shared"]
+    assert written
     assert written <= data_files(tmp_path)
     assert list(blobs.ids()) == [unreferenced]
     assert store.channels(TEAM) == []
@@ -226,15 +228,16 @@ def test_catalog_and_file_count_stay_bounded(tmp_path: Path, ext_dir: Path) -> N
     store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
     blobs = FsBlobStore(tmp_path)
     item = tracked(TS)
-    for env in messages(200):
+    sizes = {}
+    for number, env in enumerate(messages(30), start=1):
         store.append(env)
         committed = store.commit(Commit(items=[item]))
         item = msgspec.structs.replace(
             item, newest_ts=env.meta.ts, revision=committed.revisions[KEY]
         )
         store.maintain(blobs)
-    assert len(data_files(tmp_path)) < 50
-    # Without maintenance the 200 commits stay inlined and the catalog passes 270 KB.
-    assert (tmp_path / CATALOG).stat().st_size < 256 * 1024
-    assert len(store.stored_messages(TEAM, CHANNEL)) == 200
+        sizes[number] = (tmp_path / CATALOG).stat().st_size
+    assert len(data_files(tmp_path)) < 10
+    assert sizes[30] == sizes[10]
+    assert len(store.stored_messages(TEAM, CHANNEL)) == 30
     store.close()

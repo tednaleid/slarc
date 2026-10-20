@@ -23,6 +23,7 @@ slarc sql "SELECT channel_id, count(*) FROM message GROUP BY 1"               # 
 slarc export https://yourworkspace.slack.com/archives/C0123456789 --out ./share  # static HTML
 slarc export acme                                                             # static HTML of everything tracked in workspace acme
 slarc rm https://yourworkspace.slack.com/archives/C0123456789                 # stop tracking it and delete what only it kept (asks first)
+slarc --take-ownership list                                                   # take the archive over from the machine that last used it, once it has synced
 ```
 
 The first `pull` offers to create an archive (a directory with `slarc.toml`) in the current directory. Every command finds the archive from `--root`, then `SLARC_ARCHIVE`, then the current directory or its parents, then `default_archive` in the global config.

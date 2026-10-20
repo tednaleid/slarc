@@ -10,7 +10,7 @@ import pytest
 
 from slarc import bootstrap
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
-from slarc.adapters.lake import connect_lake
+from slarc.adapters.lake import check_owner, connect_lake
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.adapters.locks import FlockArchiveLock
 
@@ -144,11 +144,13 @@ def test_store_and_index_hold_the_read_lock_while_open(tmp_path: Path, ext_dir: 
     other.release_exclusive()
 
 
-def test_a_read_command_on_an_existing_archive_takes_no_write_lock(
+def test_a_read_command_on_an_archive_this_machine_owns_takes_no_write_lock(
     tmp_path: Path, ext_dir: Path
 ) -> None:
     root = tmp_path / "archive"
-    connect_lake(root, ext_dir).close()
+    con = connect_lake(root, ext_dir)
+    check_owner(con, *bootstrap._this_host(), take_ownership=False)
+    con.close()
     writer = FlockArchiveLock(root, bootstrap._cache_home())
     opened = threading.Event()
 

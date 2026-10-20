@@ -1,6 +1,5 @@
 # ABOUTME: Tests for the DuckDB query index over a lake loaded from the recorded test workspace.
 # ABOUTME: Covers latest-wins views, deleted messages, repeated rows, and `slarc sql`.
-import json
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -446,26 +445,13 @@ def test_tracked_item_and_download_views(tmp_path: Path, ext_dir: Path) -> None:
         )
 
 
-def test_run_view_keeps_tracked_and_downloads_columns(archive: Path, ext_dir: Path) -> None:
-    """Runs record their state in the tables, so their tracked and downloads lists are empty."""
-    recorded_run = recorded_lines("runs.jsonl")[0]["object"]
-    item = TrackedItem(team_id=RECORDED_TEAM, kind="conversation", channel=ALL_NALEID)
-    state = DownloadState(
-        team_id=RECORDED_TEAM, target_kind="file", target="F0PDF", status="pending"
-    )
-    store = DuckLakeArchiveStore(archive, ext_dir, FakeArchiveLock())
-    store.commit(Commit(downloads=[state]))
-    store.close()
-    commit(archive, ext_dir, run=later_run(tracked=[item], downloads=[state]))
+def test_run_view_leaves_out_tracked_and_downloads(archive: Path, ext_dir: Path) -> None:
+    """Runs record that state in the tracked_item and download_state tables instead."""
     with DuckDbQueryIndex(archive, ext_dir, FakeArchiveLock()) as index:
-        columns, rows = index.sql("SELECT run, tracked, downloads FROM run ORDER BY run")
-        assert columns == ["run", "tracked", "downloads"]
-        assert [(run, json.loads(t), json.loads(d)) for run, t, d in rows] == [
-            (recorded_run["run"], [], []),
-            (LATER_RUN, [], []),
-        ]
-        query = "SELECT target, status FROM download WHERE target = 'F0PDF'"
-        assert index.sql(query)[1] == [("F0PDF", "pending")]
+        columns, rows = index.sql("SELECT * FROM run")
+    assert rows
+    assert "tracked" not in columns
+    assert "downloads" not in columns
 
 
 def test_bad_sql_raises_one_line_slarc_error(index: DuckDbQueryIndex) -> None:

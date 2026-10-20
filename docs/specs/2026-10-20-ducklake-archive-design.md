@@ -238,7 +238,7 @@ Physically removing a conversation of 16,746 versions took 0.58 s in spike 3. Af
 
 - **Gone:** the `*_line` source views over JSONL, and the dedupe step in `message_line`.
 - **`tracked_item` and `download`** are new views, built to the spec's columns over their tables, with no fold. They don't exist in `duckdb_index.py` today.
-- **`run`** keeps its `tracked` and `downloads` columns. They are empty, because runs record that state in the tables instead.
+- **`run`** drops its `tracked` and `downloads` columns, because runs record that state in the `tracked_item` and `download_state` tables instead.
 - **`message`'s current version** becomes a single `QUALIFY` over `message_version`, ordered by (fetched_at DESC, run DESC, kind). It must keep today's rules: a deleted message keeps its last content with `deleted_at` set; a parent stored before its first reply becomes a thread parent once replies are stored; `first_seen_at` and `last_seen_at`; reply counts. The existing index contract tests define the behavior. Spike 3 measured search at 0.64 s with a single QUALIFY, before those rules were ported.
 - **`messages` and `thread`** filter `message_version` by team and channel, and thread also by `thread_ts`, at the source. This replaces today's per-channel file selection.
 

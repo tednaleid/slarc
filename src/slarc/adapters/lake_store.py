@@ -111,11 +111,18 @@ _decode = msgspec.json.Decoder()
 
 
 class DuckLakeArchiveStore:
-    """Holds the archive's read lock from open to close, and the write lock for each write."""
+    """Holds the archive's read lock from open to close, and the write lock for each write.
 
-    def __init__(self, root: Path, ext_dir: Path, lock: ArchiveLock) -> None:
+    A cautious store, opened by the run that takes ownership of the archive, keeps orphaned
+    files and unreferenced blobs, because files that synced ahead of the catalog look the same.
+    """
+
+    def __init__(
+        self, root: Path, ext_dir: Path, lock: ArchiveLock, *, cautious: bool = False
+    ) -> None:
         self._catalog = root / CATALOG
         self._lock = lock
+        self._cautious = cautious
         lock.hold_shared()
         try:
             with lock.write():
@@ -218,7 +225,8 @@ class DuckLakeArchiveStore:
         has data files in flight or has written a blob it has not committed, so the deletion
         uses no time windows: it expires every snapshot but the newest, deletes every old and
         orphaned data file and every blob no directory row references, and vacuums the
-        catalog once over a quarter of its pages are free. Returns whether the deletion ran.
+        catalog once over a quarter of its pages are free. A cautious store skips the orphaned
+        files and the blobs. Returns whether the deletion ran.
         Raises ValueError if the open batch is not empty, and MaintenanceFailed when the lake,
         the catalog or the blob store fails.
         """
@@ -314,15 +322,19 @@ class DuckLakeArchiveStore:
                 "SELECT count(*) FROM ducklake_expire_snapshots('lake', versions => ?)",
                 [[snapshot for (snapshot,) in snapshots[:-1]]],
             ).fetchall()
-        for function in ("ducklake_cleanup_old_files", "ducklake_delete_orphaned_files"):
+        cleanups = ["ducklake_cleanup_old_files"]
+        if not self._cautious:
+            cleanups.append("ducklake_delete_orphaned_files")
+        for function in cleanups:
             self._con.execute(
                 f"SELECT count(*) FROM {function}('lake', cleanup_all => true)"
             ).fetchall()
-        rows = self._con.execute(
-            "SELECT DISTINCT blob FROM directory_entry WHERE blob IS NOT NULL"
-        ).fetchall()
-        for blob in sorted(set(blobs.ids()) - {blob for (blob,) in rows}):
-            blobs.delete(blob)
+        if not self._cautious:
+            rows = self._con.execute(
+                "SELECT DISTINCT blob FROM directory_entry WHERE blob IS NOT NULL"
+            ).fetchall()
+            for blob in sorted(set(blobs.ids()) - {blob for (blob,) in rows}):
+                blobs.delete(blob)
         self._vacuum_catalog()
 
     def _vacuum_catalog(self) -> None:

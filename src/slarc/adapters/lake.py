@@ -1,6 +1,8 @@
 # ABOUTME: Connects to an archive's DuckLake: a SQLite catalog in WAL mode plus Parquet data files.
-# ABOUTME: Creates the tables and settings on first connect and manages the DuckDB extensions.
+# ABOUTME: Creates the tables and settings on first connect, manages the DuckDB extensions and
+# ABOUTME: keeps the record of the machine that owns the archive.
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
@@ -11,6 +13,31 @@ CATALOG = "catalog.sqlite"
 CREATING = f"{CATALOG}.creating"  # where a new catalog is built before it is renamed
 DATA_DIR = "data"
 EXTENSIONS = ("ducklake", "sqlite_scanner")
+
+# DuckLake attaches the SQLite catalog under this name. The owner record is a table of the catalog
+# itself, outside the lake, so it never moves into a data file that has not synced yet.
+METADATA = "__ducklake_metadata_lake"
+OWNER_SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS {METADATA}.archive_owner (
+    machine_id VARCHAR, host_name VARCHAR, since VARCHAR);
+"""
+
+# Every file the catalog references, with the table and schema directories its path may be
+# relative to; a relative schema path is relative to the data path.
+REFERENCED_FILES = f"""
+SELECT f.path, f.path_is_relative, t.path, t.path_is_relative, s.path, s.path_is_relative
+FROM (
+    SELECT table_id, path, path_is_relative FROM {METADATA}.ducklake_data_file
+    UNION ALL
+    SELECT table_id, path, path_is_relative FROM {METADATA}.ducklake_delete_file
+) f
+JOIN (
+    SELECT DISTINCT table_id, schema_id, path, path_is_relative FROM {METADATA}.ducklake_table
+) t ON t.table_id = f.table_id
+JOIN (
+    SELECT DISTINCT schema_id, path, path_is_relative FROM {METADATA}.ducklake_schema
+) s ON s.schema_id = t.schema_id
+"""
 
 # Slarc's own settings for every lake; the reasons are in the lake design's settings section.
 OPTIONS = {"target_file_size": "16MB", "rewrite_delete_threshold": "0"}
@@ -42,6 +69,22 @@ class ExtensionsMissing(SlarcError):
         super().__init__(
             "slarc needs the DuckDB extensions ducklake and sqlite_scanner and could not "
             f"install them ({reason}). Run any slarc command once while online to install them."
+        )
+
+
+class OwnedElsewhere(SlarcError):
+    def __init__(self, host_name: str) -> None:
+        super().__init__(
+            f"This archive is owned by {host_name}. Wait until your synced folder has finished "
+            "syncing, then run the command again with --take-ownership."
+        )
+
+
+class SyncNotFinished(SlarcError):
+    def __init__(self) -> None:
+        super().__init__(
+            "Some of this archive's files have not arrived yet; "
+            "wait until your synced folder has finished syncing."
         )
 
 
@@ -142,7 +185,79 @@ def _attach(con: duckdb.DuckDBPyConnection, root: Path, catalog: Path, *, read_o
 
 def _create_missing(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(SCHEMA)
+    con.execute(OWNER_SCHEMA)
     present = {row[0] for row in con.execute("SELECT option_name FROM lake.options()").fetchall()}
     for name, value in OPTIONS.items():
         if name not in present:
             con.execute("CALL lake.set_option(?, ?)", [name, value])
+
+
+def check_owner(
+    con: duckdb.DuckDBPyConnection, machine: str, host: str, take_ownership: bool
+) -> bool:
+    """Checks the archive's owner record against this machine; returns whether the run is
+    cautious, which it is only when it takes ownership.
+
+    With no record it records this machine, and with one naming this machine it does nothing.
+    One naming another machine raises OwnedElsewhere unless take_ownership is set. Taking
+    ownership raises SyncNotFinished, writing nothing, when a file the catalog references is
+    missing, and otherwise records this machine. Only a recording needs a writable connection,
+    and the caller holds the archive's write lock for it.
+    """
+    if take_ownership:
+        if _missing_files(con):
+            raise SyncNotFinished()
+        _record_owner(con, machine, host)
+        return True
+    owner = read_owner(con)
+    if owner is None:
+        _record_owner(con, machine, host)
+    elif owner[0] != machine:
+        raise OwnedElsewhere(owner[1])
+    return False
+
+
+def read_owner(con: duckdb.DuckDBPyConnection) -> tuple[str, str] | None:
+    """The machine id and host name the owner record names, or None when it names none."""
+    try:
+        rows = con.execute(f"SELECT machine_id, host_name FROM {METADATA}.archive_owner").fetchall()
+    except duckdb.CatalogException:
+        return None  # a catalog without the owner table has no owner yet
+    return rows[0] if rows else None
+
+
+def _record_owner(con: duckdb.DuckDBPyConnection, machine: str, host: str) -> None:
+    since = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    con.execute("BEGIN")
+    try:
+        con.execute(f"DELETE FROM {METADATA}.archive_owner")
+        con.execute(
+            f"INSERT INTO {METADATA}.archive_owner VALUES (?, ?, ?)", [machine, host, since]
+        )
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise
+    con.execute("COMMIT")
+
+
+def _missing_files(con: duckdb.DuckDBPyConnection) -> bool:
+    data_dir = _data_dir(con)
+    for file, file_rel, table, table_rel, schema, schema_rel in con.execute(
+        REFERENCED_FILES
+    ).fetchall():
+        schema_dir = _resolve(data_dir, schema, schema_rel)
+        if not _resolve(_resolve(schema_dir, table, table_rel), file, file_rel).exists():
+            return True
+    return False
+
+
+def _data_dir(con: duckdb.DuckDBPyConnection) -> Path:
+    """The data path connect_lake attached: DATA_DIR beside the catalog."""
+    rows = con.execute(
+        "SELECT path FROM duckdb_databases() WHERE database_name = 'lake'"
+    ).fetchall()
+    return Path(rows[0][0].removeprefix("sqlite:")).parent / DATA_DIR
+
+
+def _resolve(base: Path, path: str, relative: bool) -> Path:
+    return base / path if relative else Path(path)

@@ -1,5 +1,6 @@
 # ABOUTME: Typer entrypoint for the slarc command line.
 # ABOUTME: Each command takes its adapters from bootstrap and calls the service layer.
+import dataclasses
 import signal
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -82,12 +83,23 @@ def _warn(messages: list[str]) -> None:
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     version: Annotated[
         bool,
         typer.Option("--version", callback=_print_version, is_eager=True, help="Show version."),
     ] = False,
+    take_ownership: Annotated[
+        bool,
+        typer.Option(
+            "--take-ownership",
+            help="Take this archive over from the machine that last used it, once your synced "
+            "folder has finished syncing.",
+        ),
+    ] = False,
 ) -> None:
     signal.signal(signal.SIGTERM, _interrupt)
+    # Every command takes its services from here, so they carry the global options.
+    ctx.obj = dataclasses.replace(bootstrap.current_services(), take_ownership=take_ownership)
 
 
 def _interrupt(signum: int, frame: FrameType | None) -> None:
@@ -111,6 +123,7 @@ def _status_line(status: AuthStatus) -> tuple[str, str | None]:
 
 @app.command()
 def auth(
+    ctx: typer.Context,
     workspace: Annotated[
         str | None, typer.Argument(help="Workspace domain or team id to check.")
     ] = None,
@@ -120,7 +133,7 @@ def auth(
     ] = False,
 ) -> None:
     """List the Slack sessions found and who you are in each workspace."""
-    services = bootstrap.current_services()
+    services: bootstrap.Services = ctx.obj
     if paste:
         xoxc = typer.prompt("Token (xoxc-...)", hide_input=True)
         xoxd = typer.prompt("d cookie (xoxd-...)", hide_input=True)
@@ -293,6 +306,7 @@ def _run_args(
 
 @app.command("pull")
 def pull_command(
+    ctx: typer.Context,
     selectors: Annotated[
         list[str] | None,
         typer.Argument(
@@ -342,7 +356,7 @@ def pull_command(
     _check_date("--since", since)
     _check_date("--until", until)
     all_workspaces = all(isinstance(selector, WorkspaceSel) for selector in parsed)
-    services = bootstrap.current_services()
+    services: bootstrap.Services = ctx.obj
     flags = {"--channel": channel, "--full": full, "--downloads": downloads}
     args = _run_args(texts, since, until, flags | {"--max-file-size": max_file_size})
     try:
@@ -364,7 +378,7 @@ def pull_command(
         )
         connector = services.connector()
         with (
-            bootstrap.archive_stores(archive_root) as (archive, blobs),
+            bootstrap.archive_stores(archive_root, services.take_ownership) as (archive, blobs),
             services.downloader(blobs, connector.authenticated) as downloader,
             RichReporter(err) as reporter,
             UnitOfWork(
@@ -407,16 +421,17 @@ def _cell(value: object) -> Text:
 
 @app.command("sql")
 def sql_command(
+    ctx: typer.Context,
     query: Annotated[str, typer.Argument(help="A DuckDB query over the archive's views.")],
     root: Annotated[
         Path | None, typer.Option(metavar="DIR", help="The archive directory to use.")
     ] = None,
 ) -> None:
     """Run a DuckDB query against the archive's views."""
-    services = bootstrap.current_services()
+    services: bootstrap.Services = ctx.obj
     try:
         archive_root = _existing_archive(root, services.env, services.home)
-        with bootstrap.query_index(archive_root) as index:
+        with bootstrap.query_index(archive_root, services.take_ownership) as index:
             columns, rows = index.sql(query)
     except SlarcError as error:
         _fail(str(error))
@@ -496,6 +511,7 @@ def _print_remote(rows: list[RemoteRow]) -> None:
 
 @app.command("list")
 def list_command(
+    ctx: typer.Context,
     remote: Annotated[
         bool,
         typer.Option(
@@ -507,12 +523,12 @@ def list_command(
     ] = None,
 ) -> None:
     """Show the archive, its config files and each tracked item."""
-    services = bootstrap.current_services()
+    services: bootstrap.Services = ctx.obj
     try:
         archive_root = _existing_archive(root, services.env, services.home)
         if remote:
             connector = services.connector()
-            with bootstrap.archive_stores(archive_root) as (archive, _):
+            with bootstrap.archive_stores(archive_root, services.take_ownership) as (archive, _):
                 teams = sorted({team_id for team_id, _, _, _ in archive.tracked_items()})
                 if not teams:
                     _fail(NO_WORKSPACE)
@@ -524,8 +540,8 @@ def list_command(
         global_config = read_global_config(services.env, services.home)
         settings = load_settings(archive_root, global_config, services.env, {})
         with (
-            bootstrap.archive_stores(archive_root) as (archive, _),
-            bootstrap.query_index(archive_root) as index,
+            bootstrap.archive_stores(archive_root, services.take_ownership) as (archive, _),
+            bootstrap.query_index(archive_root, services.take_ownership) as index,
         ):
             listing = list_archive(settings, archive, index)
     except NoSession as error:
@@ -538,6 +554,7 @@ def list_command(
 
 @app.command("search")
 def search_command(
+    ctx: typer.Context,
     query: Annotated[str, typer.Argument(help="Text to find in messages, ignoring case.")],
     in_conv: Annotated[
         str | None,
@@ -554,10 +571,10 @@ def search_command(
     ] = None,
 ) -> None:
     """Find archived messages containing the text, newest first, with their Slack links."""
-    services = bootstrap.current_services()
+    services: bootstrap.Services = ctx.obj
     try:
         archive_root = _existing_archive(root, services.env, services.home)
-        with bootstrap.query_index(archive_root) as index:
+        with bootstrap.query_index(archive_root, services.take_ownership) as index:
             hits = search(index, query, in_conv, from_user)
     except SlarcError as error:
         _fail(str(error))
@@ -573,6 +590,7 @@ def search_command(
 
 @app.command("export")
 def export_command(
+    ctx: typer.Context,
     selectors: Annotated[
         list[str],
         typer.Argument(
@@ -614,14 +632,14 @@ def export_command(
         parsed = [parse_selector(text) for text in selectors]
     except ValueError as error:
         _fail(str(error))
-    services = bootstrap.current_services()
+    services: bootstrap.Services = ctx.obj
     try:
         archive_root = _existing_archive(root, services.env, services.home)
         global_config = read_global_config(services.env, services.home)
         settings = load_settings(archive_root, global_config, services.env, {"tz": tz})
         with (
-            bootstrap.archive_stores(archive_root) as (archive, blobs),
-            bootstrap.query_index(archive_root) as index,
+            bootstrap.archive_stores(archive_root, services.take_ownership) as (archive, blobs),
+            bootstrap.query_index(archive_root, services.take_ownership) as index,
         ):
             written = export(
                 parsed,
@@ -691,6 +709,7 @@ def _removal_result(removal: Removal, maintained: bool | None) -> str:
 
 @app.command("rm")
 def rm_command(
+    ctx: typer.Context,
     selectors: Annotated[
         list[str],
         typer.Argument(
@@ -713,12 +732,12 @@ def rm_command(
         parsed = [(text, parse_selector(text)) for text in selectors]
     except ValueError as error:
         _fail(str(error))
-    services = bootstrap.current_services()
+    services: bootstrap.Services = ctx.obj
     args = _run_args(selectors, None, None, {"--channel": channel})
     try:
         archive_root = _existing_archive(root, services.env, services.home)
-        with bootstrap.archive_stores(archive_root) as (archive, blobs):
-            with bootstrap.query_index(archive_root) as index:
+        with bootstrap.archive_stores(archive_root, services.take_ownership) as (archive, blobs):
+            with bootstrap.query_index(archive_root, services.take_ownership) as index:
                 removal = plan_removal(parsed, channel, archive, blobs, index)
             if removal.nothing_to_do:
                 out.print(NOTHING_TO_REMOVE, markup=False)

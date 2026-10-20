@@ -18,7 +18,15 @@ from slarc.adapters.desktop_session import DesktopSessionSource
 from slarc.adapters.downloader import HttpDownloader
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
 from slarc.adapters.export_writer import FsExportWriter
-from slarc.adapters.lake import CATALOG, cache_home, connect_lake, extension_directory
+from slarc.adapters.host import host_name, machine_id
+from slarc.adapters.lake import (
+    CATALOG,
+    cache_home,
+    check_owner,
+    connect_lake,
+    extension_directory,
+    read_owner,
+)
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.adapters.locks import FlockArchiveLock
 from slarc.adapters.slack_gateway import USER_AGENT, SessionConnector, session_gateway
@@ -60,6 +68,10 @@ def _cache_home() -> Path:
     return cache_home(os.environ, Path.home())
 
 
+def _this_host() -> tuple[str, str]:
+    return machine_id(), host_name()
+
+
 _locks: dict[Path, FlockArchiveLock] = {}
 
 
@@ -88,10 +100,45 @@ def ensure_lake(root: Path) -> None:
         lock.release_shared()
 
 
+def _check_owner(root: Path, take_ownership: bool) -> bool:
+    """Checks the existing lake's owner record against this machine; returns whether the run
+    is cautious. See check_owner.
+
+    A record naming this machine is read under the read lock alone. Recording this machine, on
+    the first open or when taking ownership, takes the write lock as well.
+    """
+    machine, host = _this_host()
+    lock = archive_lock(root)
+    lock.hold_shared()
+    try:
+        if not take_ownership:
+            con = connect_lake(root, _extension_directory(), read_only=True)
+            try:
+                if read_owner(con) is not None:
+                    return check_owner(con, machine, host, take_ownership=False)
+            finally:
+                con.close()
+        with lock.write():
+            con = connect_lake(root, _extension_directory())
+            try:
+                return check_owner(con, machine, host, take_ownership)
+            finally:
+                con.close()
+    finally:
+        lock.release_shared()
+
+
 @contextmanager
-def archive_stores(root: Path) -> Generator[tuple[DuckLakeArchiveStore, FsBlobStore]]:
-    """The archive's lake and blob stores; the lake store creates a missing lake. Closed on exit."""
-    archive = DuckLakeArchiveStore(root, _extension_directory(), archive_lock(root))
+def archive_stores(
+    root: Path, take_ownership: bool = False
+) -> Generator[tuple[DuckLakeArchiveStore, FsBlobStore]]:
+    """The archive's lake and blob stores, with ensure_lake and the owner check run first;
+    closed on exit."""
+    ensure_lake(root)
+    cautious = _check_owner(root, take_ownership)
+    archive = DuckLakeArchiveStore(
+        root, _extension_directory(), archive_lock(root), cautious=cautious
+    )
     try:
         yield archive, FsBlobStore(root)
     finally:
@@ -99,9 +146,11 @@ def archive_stores(root: Path) -> Generator[tuple[DuckLakeArchiveStore, FsBlobSt
 
 
 @contextmanager
-def query_index(root: Path) -> Generator[QueryIndex]:
-    """Views over the archive's lake, with ensure_lake run first; closed on exit."""
+def query_index(root: Path, take_ownership: bool = False) -> Generator[QueryIndex]:
+    """Views over the archive's lake, with ensure_lake and the owner check run first; closed on
+    exit."""
     ensure_lake(root)
+    _check_owner(root, take_ownership)
     with DuckDbQueryIndex(root, _extension_directory(), archive_lock(root)) as index:
         yield index
 
@@ -120,6 +169,7 @@ class Services:
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     home: Path = field(default_factory=Path.home)
     run_suffix: str = ""  # ends the run id, telling apart commands started in the same second
+    take_ownership: bool = False  # the global --take-ownership option
 
     def connector(self) -> SessionConnector:
         return SessionConnector(self.credentials, self.gateway_factory)

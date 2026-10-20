@@ -479,7 +479,7 @@ Ted decided (2026-10-20) that slarc will not import JSONL archives. slarc has on
   - `test_rm_physically_removes_a_conversation_when_idle`: after rm, scan every Parquet file under `data/` with `read_parquet` and every catalog table. None holds the channel, and the blob is gone.
   - `test_deletion_waits_while_another_process_holds_the_archive`: a subprocess holds the shared lock. rm prints the deferred message, the bytes remain, and a later pull deletes them.
   - `test_killed_writer_leaves_last_commit_and_orphans_are_removed`: kill a subprocess writer with SIGKILL mid-insert. The state equals the last commit, and the next idle maintenance removes the leftover files.
-  - `test_catalog_and_file_count_stay_bounded`: 200 small commits with maintenance after each keep the file count under 50.
+  - `test_catalog_and_file_count_stay_bounded`: 30 small commits with maintenance after each keep the file count under 10, and the catalog's size after commit 30 equals its size after commit 10.
 - [x] **Step 2: Run them and watch them fail.**
 - [x] **Step 3: Implement.**
 - [x] **Step 4: Run `just check` and watch it pass.**
@@ -487,7 +487,7 @@ Ted decided (2026-10-20) that slarc will not import JSONL archives. slarc has on
 
 ## Phase 4: one owning host
 
-### Task 14: Owning host and --take-ownership
+### Task 14: Owning host and --take-ownership [done]
 
 **Files:**
 - Create: `src/slarc/adapters/host.py`
@@ -505,16 +505,16 @@ Ted decided (2026-10-20) that slarc will not import JSONL archives. slarc has on
   - **A cautious store's `maintain`** skips orphan-file and blob deletion.
   - **The global option:** `slarc --take-ownership <command>`, help text `Take this archive over from the machine that last used it, once your synced folder has finished syncing.` It reaches the bootstrap through `Services`.
 
-- [ ] **Step 1: Write the failing tests,** with an injectable machine id:
+- [x] **Step 1: Write the failing tests,** with an injectable machine id:
   - `test_first_open_records_the_host`;
   - `test_other_host_is_refused_with_its_name`;
   - `test_take_ownership_with_a_missing_data_file_stops`;
   - `test_takeover_run_skips_orphan_and_blob_deletion`;
   - `test_cli_take_ownership_option`.
-- [ ] **Step 2: Run them and watch them fail.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run `just check` and watch it pass.**
-- [ ] **Step 5: Commit:** `Record the archive's owning host and add --take-ownership`.
+- [x] **Step 2: Run them and watch them fail.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run `just check` and watch it pass.**
+- [x] **Step 5: Commit:** `Record the archive's owning host and add --take-ownership`.
 
 ## Phase 5: docs, measurements, acceptance
 

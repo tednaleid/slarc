@@ -246,9 +246,7 @@ ENTITY_VIEWS = {
             CAST(object -> 'counts' -> 'rate_limit_wait_s' AS DOUBLE) AS rate_limit_wait_s,
             object -> 'counts' -> 'api_calls' AS api_calls,
             object -> 'counts' -> 'threads_read' AS threads_read,
-            object -> 'errors' AS errors,
-            object -> 'tracked' AS tracked,
-            object -> 'downloads' AS downloads
+            object -> 'errors' AS errors
         FROM lake.main.run
         WHERE run IS NOT NULL
         QUALIFY row_number() OVER (
