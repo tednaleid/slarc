@@ -44,7 +44,6 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 
 ### Pull
 - A bare `slarc pull` with nothing tracked prints "Pulled 0 items" instead of saying nothing is tracked (`cli.py`; `NO_TRACKED_ITEMS` exists).
-- A transient error (network, `ratelimited` after retries) on one thread's `conversations.replies` aborts the whole pull instead of warning and continuing (`service/pull.py` `_append_read`).
 - The downloads drain after a mid-pull `AuthFailed` can re-raise it, so no summary prints; the exit code and run line are still right (`service/downloads.py`).
 - Interrupting a first pull before its first history page completes loses the new item or a widened `since`; record the item before paging (`service/pull.py`).
 - When a conversation turns `NotVisible` partway through a pull, deletes already appended for its re-read threads stay (`service/pull.py`).

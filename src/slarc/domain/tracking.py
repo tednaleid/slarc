@@ -22,6 +22,7 @@ class TrackedItem(msgspec.Struct, kw_only=True):
     last_pull_at: str | None = None
     status: Literal["ok", "not_visible"] = "ok"
     last_read: dict[str, str] = {}
+    retry_threads: list[str] = []
 
     @property
     def key(self) -> tuple[str, str, str, str]:

@@ -34,6 +34,7 @@ JIM = "U0CA61XJF2R"
 THREAD_LINK = f"{BASE}/p1792410693663869"
 REPLY_LINK = f"{BASE}/p1792410743787639?thread_ts={PARENT_TS}&cid={CHANNEL}"
 LONE_LINK = f"{BASE}/p1792422552941749"
+UNREACHABLE = "Could not reach Slack to call conversations.replies."
 ENV_SESSION = Session("", "", "", "env", "xoxc-env", "xoxd-env")
 
 
@@ -476,3 +477,40 @@ def test_skipped_item_is_not_counted_as_pulled(h: Harness):
 
     assert report.items_pulled == 0
     assert h.reporter.progress_updates[1:] == []
+
+
+def test_failed_read_of_a_tracked_thread_leaves_it_for_next_pull(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+):
+    h.pull(THREAD_LINK)
+    [before] = h.tracked()
+
+    def unreachable(channel: str, ts: str) -> list[dict]:
+        raise SlarcError(UNREACHABLE)
+
+    monkeypatch.setattr(h.gateway, "replies", unreachable)
+    report = h.pull()
+
+    assert report.items_pulled == 0
+    assert report.skipped[0].startswith("Could not read ")
+    assert report.skipped[0].endswith(f"; the next pull tries again: {UNREACHABLE}")
+    assert report.skipped == [
+        f"Could not read {THREAD_LINK}; the next pull tries again: {UNREACHABLE}"
+    ]
+    [after] = h.tracked()
+    assert (after.status, after.last_pull_at) == ("ok", before.last_pull_at)
+
+
+def test_failed_read_of_a_new_message_link_is_not_tracked(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+):
+    def unreachable(channel: str, ts: str) -> list[dict]:
+        raise SlarcError(UNREACHABLE)
+
+    monkeypatch.setattr(h.gateway, "replies", unreachable)
+    report = h.pull(LONE_LINK)
+
+    assert report.skipped == [
+        f"Could not read {LONE_LINK}; pull it again to track it: {UNREACHABLE}"
+    ]
+    assert h.tracked() == []

@@ -55,8 +55,8 @@ THREADS_READ = "threads_read"
 
 type ItemKey = tuple[str, str, str, str]
 # Why a thread was read: a thread or message link, a parent in history, a search hit, an active
-# thread, or a --full re-read.
-type ThreadReason = Literal["link", "history", "search", "active", "full"]
+# thread, a --full re-read, or a retry of a read that failed in an earlier pull.
+type ThreadReason = Literal["link", "history", "search", "active", "full", "retry"]
 
 
 @dataclass
@@ -101,7 +101,8 @@ def pull(
 ) -> PullReport:
     """Pulls the selected items, or every tracked item when selectors is empty.
 
-    A workspace that cannot connect is skipped with a warning and the others are pulled.
+    A workspace that cannot connect is skipped with a warning and the others are pulled. A read
+    that fails for another reason skips one thread or item with a warning.
     """
     run = _PullRun(options, uow, reporter, _Workspaces(connector, uow))
     counts = uow.run.counts
@@ -123,7 +124,7 @@ def pull(
         counts[API_CALLS] = run.workspaces.api_calls()
         counts[THREADS_READ] = dict(run.threads_read)
     return PullReport(
-        items_pulled=sum(1 for item in uow.run.tracked if item.status == "ok"),
+        items_pulled=run.pulled,
         lines_appended=counted(uow, LINES_APPENDED),
         messages_seen=counted(uow, MESSAGES_SEEN),
         skipped=run.skipped,
@@ -309,6 +310,7 @@ class _PullRun:
         self.skipped: list[str] = []
         self.progress: _ItemProgress | None = None
         self.threads_read: dict[str, int] = {}
+        self.pulled = 0
         self._threads_counted: set[tuple[str, str, str]] = set()
 
     def resolve(self, selectors: list[Selector]) -> list[TrackedItem]:
@@ -370,6 +372,12 @@ class _PullRun:
         except ThreadNotFound:
             self._warn(_missing_message(connection.domain, channel, ts))
             return None
+        except AuthFailed:
+            raise
+        except SlarcError as error:
+            link = message_link(connection.domain, channel, ts)
+            self._warn(f"Could not read {link}; pull it again to track it: {error}")
+            return None
         kind = "thread" if len(messages) > 1 else "message"
         item = TrackedItem(team_id=team_id, kind=kind, channel=channel, ts=messages[0]["ts"])
         self._count_thread_read(team_id, channel, messages[0]["ts"], "link")
@@ -396,11 +404,17 @@ class _PullRun:
             self.progress = _ItemProgress(self.reporter, item_label(item, view), report_start=False)
             self._append_thread(held, item.ts or "", reads[item.key], view)
             self.progress.seen += len(reads[item.key])
-            self._finish(connection, item, view)
+            self._finish(connection, held, item, view)
         for item in conversations:
             self._pull_conversation(connection, item, view)
 
-    def _finish(self, connection: _Connection, item: TrackedItem, view: DirectoryView) -> None:
+    def _finish(
+        self,
+        connection: _Connection,
+        held: _HeldConversation,
+        item: TrackedItem,
+        view: DirectoryView,
+    ) -> None:
         last_read = dict(item.last_read)
         conversation = view.conversations.get(item.channel, {})
         if conversation.get("last_read"):
@@ -408,8 +422,10 @@ class _PullRun:
         self._record(
             msgspec.structs.replace(
                 item, status="ok", last_pull_at=fetched_now(self.uow), last_read=last_read
-            )
+            ),
+            held,
         )
+        self.pulled += 1
         self._end_progress()
 
     def _read_thread(self, connection: _Connection, item: TrackedItem) -> list[dict] | None:
@@ -429,6 +445,12 @@ class _PullRun:
         except ThreadNotFound:
             self._skip(item, _missing_message(connection.domain, item.channel, ts))
             return None
+        except AuthFailed:
+            raise
+        except SlarcError as error:
+            link = message_link(connection.domain, item.channel, ts)
+            self._warn(f"Could not read {link}; the next pull tries again: {error}")
+            return None
         self._count_thread_read(item.team_id, item.channel, ts, "link")
         return messages
 
@@ -437,9 +459,11 @@ class _PullRun:
     ) -> None:
         """Pulls new history and new replies under older parents, then re-reads active threads.
 
-        --full re-reads the whole range instead. A first pull's history covers every reply, so
+        Threads whose read failed in an earlier pull are re-read first. --full re-reads the
+        whole range instead of history and search. A first pull's history covers every reply, so
         it skips search and later pulls search from its start. Any read failing with NotVisible
-        skips the item without deletes.
+        skips the item without deletes; a history page that fails otherwise leaves the item
+        unfinished, keeping the progress already recorded.
         """
         held = _HeldConversation(self.uow.archive, item.team_id, item.channel)
         self.progress = _ItemProgress(self.reporter, item_label(item, view))
@@ -447,6 +471,8 @@ class _PullRun:
         if started_at_top:
             item = msgspec.structs.replace(item, last_search_at=fetched_now(self.uow))
         try:
+            retries = _within(item, set(item.retry_threads))
+            self._reread_threads(connection, held, retries, view, "retry")
             if self.options.full and not started_at_top:
                 item = self._reread_range(connection, held, item, view)
             else:
@@ -457,9 +483,18 @@ class _PullRun:
             active = active_threads(held.stored, now, days)
             self._reread_threads(connection, held, _within(item, active), view, "active")
         except NotVisible as error:
-            self._skip(item, str(error))
+            self._skip(item, str(error), held)
             return
-        self._finish(connection, item, view)
+        except AuthFailed:
+            raise
+        except SlarcError as error:
+            self._warn(
+                f"Could not finish pulling conversation {item.channel}; the next pull resumes it: "
+                f"{error}"
+            )
+            self._end_progress()
+            return
+        self._finish(connection, held, item, view)
 
     def _pull_history(
         self,
@@ -496,9 +531,9 @@ class _PullRun:
                 newest_ts=_outermost(item.newest_ts, page, newest=True),
                 oldest_ts=_outermost(item.oldest_ts, page, newest=False),
             )
-            self._record(item)
+            self._record(item, held)
         item = msgspec.structs.replace(item, backfill_complete=True)
-        self._record(item)
+        self._record(item, held)
         return item
 
     def _page_newer(
@@ -521,7 +556,7 @@ class _PullRun:
             newest = _outermost(newest, page, newest=True)
             oldest_ts = _outermost(item.oldest_ts, page, newest=False)
             item = msgspec.structs.replace(item, oldest_ts=oldest_ts)
-            self._record(item)
+            self._record(item, held)
         return msgspec.structs.replace(item, newest_ts=newest)
 
     def _search_replies(
@@ -612,7 +647,11 @@ class _PullRun:
         view: DirectoryView,
         reason: ThreadReason,
     ) -> None:
-        """Appends a page of history and the thread under each of parents, then flushes."""
+        """Appends a page of history and the thread under each of parents, then flushes.
+
+        A thread whose read fails with anything but NotVisible or AuthFailed is skipped with a
+        warning and kept in held.failed_threads.
+        """
         uow, gateway, team_id, channel = self.uow, connection.gateway, held.team_id, held.channel
         threads: dict[str, list[dict]] = {}
         for ts in parents:
@@ -621,6 +660,16 @@ class _PullRun:
                 threads[ts] = gateway.replies(channel, ts)
             except ThreadNotFound:
                 self._warn(_missing_message(connection.domain, channel, ts))
+                continue
+            except NotVisible, AuthFailed:
+                raise
+            except SlarcError as error:
+                link = message_link(connection.domain, channel, ts)
+                self._warn(
+                    f"Could not read the thread at {link}, so it is retried on the next pull: "
+                    f"{error}"
+                )
+                held.failed_threads.add(ts)
                 continue
             self._count_thread_read(team_id, channel, ts, reason)
         read = [*page, *(m for messages in threads.values() for m in messages)]
@@ -701,9 +750,9 @@ class _PullRun:
         self.reporter.warn(message)
         self.skipped.append(message)
 
-    def _skip(self, item: TrackedItem, message: str) -> None:
+    def _skip(self, item: TrackedItem, message: str, held: _HeldConversation | None = None) -> None:
         self._warn(message)
-        self._record(msgspec.structs.replace(item, status="not_visible"))
+        self._record(msgspec.structs.replace(item, status="not_visible"), held)
         self._end_progress()
 
     def _end_progress(self) -> None:
@@ -720,9 +769,12 @@ class _PullRun:
             self._threads_counted.add(key)
             self.threads_read[reason] = self.threads_read.get(reason, 0) + 1
 
-    def _record(self, item: TrackedItem) -> None:
+    def _record(self, item: TrackedItem, held: _HeldConversation | None = None) -> None:
+        """Records the item in the run; with its held conversation, also the threads to retry."""
+        if held is not None:
+            item = msgspec.structs.replace(item, retry_threads=held.retry_threads(item))
         tracked = self.uow.run.tracked
-        tracked[:] = [held for held in tracked if held.key != item.key]
+        tracked[:] = [recorded for recorded in tracked if recorded.key != item.key]
         tracked.append(item)
 
 
@@ -747,8 +799,8 @@ class _ItemProgress:
 class _HeldConversation:
     """What the archive holds for one conversation, read once and kept current as lines append.
 
-    listed holds the ts of each message history returned in this run, and read_threads the
-    thread_ts of each thread read in this run.
+    listed holds the ts of each message history returned in this run, read_threads the
+    thread_ts of each thread read in this run, and failed_threads those whose read failed.
     """
 
     def __init__(self, archive: ArchiveStore, team_id: str, channel: str) -> None:
@@ -758,6 +810,7 @@ class _HeldConversation:
         self.stored = archive.stored_messages(team_id, channel)
         self.listed: set[str] = set()
         self.read_threads: set[str] = set()
+        self.failed_threads: set[str] = set()
         self._replies: dict[str, set[str]] = {}
         for ts, stored in self.stored.items():
             self._index(ts, stored)
@@ -784,6 +837,15 @@ class _HeldConversation:
         if thread_ts in self.stored:
             members.add(thread_ts)
         return sorted(members, key=MessageTs)
+
+    def retry_threads(self, item: TrackedItem) -> list[str]:
+        """The threads the next pull re-reads first, oldest first.
+
+        They are the threads whose read failed in this run and the item's earlier ones not read
+        since, so a pull interrupted after a failure still keeps them.
+        """
+        retry = self.failed_threads | (set(item.retry_threads) - self.read_threads)
+        return sorted(retry, key=MessageTs)
 
     def has_replies(self, thread_ts: str) -> bool:
         return any(ts != thread_ts for ts in self._replies.get(thread_ts, ()))

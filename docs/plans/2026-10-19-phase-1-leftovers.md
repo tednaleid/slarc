@@ -83,7 +83,7 @@ git commit -m "Keep the session cookie out of slack_sdk's debug log"
 
 ---
 
-### Task 2: A failed read skips one thread or item, not the whole pull
+### Task 2: A failed read skips one thread or item, not the whole pull [done]
 
 Backlog line: "A transient error (network, `ratelimited` after retries) on one thread's `conversations.replies` aborts the whole pull".
 
@@ -118,7 +118,7 @@ Warning texts, exactly:
 - Produces: `_PullRun.pulled: int`, incremented in `_finish`.
 - `retry_threads` on every conversation record is `sorted(held.failed_threads | (set(item.retry_threads) - held.read_threads), key=MessageTs)`, so a pull interrupted after a failure still keeps the thread. Route every `_record` call made while a conversation is held through one helper that applies this.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `tests/service/test_pull_conversation.py`:
 
@@ -196,26 +196,26 @@ def test_failed_read_of_a_new_message_link_is_not_tracked(h, monkeypatch):
 
 Use the thread and message link constants the module already defines. Replace each `<error text>` with the `SlarcError` message the test raises.
 
-- [ ] **Step 2: Run them and watch them fail**
+- [x] **Step 2: Run them and watch them fail**
 
 Run: `just test tests/service -k "failed_ or auth_failure_on_a_thread"`
 Expected: the `SlarcError` tests fail with the error propagating out of `pull`. The `AuthFailed` test may already pass; it guards the new `except` clauses.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Catch `SlarcError` after the existing `AuthFailed`, `NotVisible` and `ThreadNotFound` clauses at the four sites above, re-raising `AuthFailed` before the general clause. In `_pull_conversation`, a pull that is not the item's first re-reads `item.retry_threads` (inside the item's range) with reason `"retry"` before paging history.
 
-- [ ] **Step 4: Update the spec and architecture text**
+- [x] **Step 4: Update the spec and architecture text**
 
 - **tracked_item row:** add `retry_threads (threads whose read failed, re-read first on the next pull)`.
 - **run row:** add `retry` to the `threads_read` reasons.
 - **`docs/architecture.md` pull steps:** say that a failed read warns and skips one thread or item.
 
-- [ ] **Step 5: Run `just check`**
+- [x] **Step 5: Run `just check`**
 
 Expected: PASS, including the existing pull tests unchanged.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git commit -m "Skip one thread or item when a read fails, and retry failed threads next pull"

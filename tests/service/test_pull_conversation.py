@@ -5,13 +5,15 @@ from itertools import pairwise
 
 import pytest
 
-from slarc.ports import ThreadNotFound
+from slarc.ports import AuthFailed, SlarcError, ThreadNotFound
 from slarc.service.pull import PullOptions, date_to_ts
 from tests.service.pull_harness import (
     BASE,
     CHANNEL,
     ME,
     PARENT_TS,
+    REPLY_TS,
+    TEAM,
     THREAD_TS,
     Harness,
     channel_messages,
@@ -21,6 +23,9 @@ from tests.service.pull_harness import (
 )
 
 BROADCAST_TS = "1792422700.000100"
+SECOND_CHANNEL = "C0SECOND001"
+SECOND_LINK = f"https://naleidworkspace.slack.com/archives/{SECOND_CHANNEL}"
+UNREACHABLE = "Could not reach Slack to call conversations.replies."
 
 
 def history_calls(h: Harness) -> list[tuple[str | None, ...]]:
@@ -313,3 +318,79 @@ def test_thread_missing_during_pull_is_skipped(h: Harness, monkeypatch: pytest.M
     assert report.skipped == [f"Slack returns no message at {BASE}/p1792410693663869; skipping it."]
     [item] = h.tracked()
     assert (item.status, item.backfill_complete) == ("ok", True)
+
+
+def test_failed_thread_read_warns_and_is_retried_next_pull(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+):
+    served = h.gateway.replies
+
+    def unreachable(channel: str, ts: str) -> list[dict]:
+        raise SlarcError(UNREACHABLE)
+
+    monkeypatch.setattr(h.gateway, "replies", unreachable)
+    report = h.pull(BASE)
+
+    link = f"{BASE}/p1792410693663869"
+    assert report.skipped == [
+        f"Could not read the thread at {link}, so it is retried on the next pull: {UNREACHABLE}"
+    ]
+    assert report.items_pulled == 1
+    [item] = h.tracked()
+    assert (item.backfill_complete, item.retry_threads) == (True, [PARENT_TS])
+    assert REPLY_TS not in {env.meta.ts for env in h.lines("message")}
+
+    monkeypatch.setattr(h.gateway, "replies", served)
+    h.pull()
+
+    assert REPLY_TS in {env.meta.ts for env in h.lines("message")}
+    threads_read = h.last_run().counts["threads_read"]
+    assert isinstance(threads_read, dict)
+    assert threads_read["retry"] == 1
+    [item] = h.tracked()
+    assert item.retry_threads == []
+
+
+def test_failed_history_page_skips_the_conversation_and_pulls_the_rest(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+):
+    second_ts = ts_on(18, 9)
+    h.gateway.conversations[SECOND_CHANNEL] = [message(second_ts)]
+    h.serve([ts_on(18, hour) for hour in range(3)], page_size=2)
+    served = h.gateway.history
+    error = "Could not reach Slack to call conversations.history."
+
+    def failing_on_page_2(
+        channel: str, oldest: str | None, latest: str | None
+    ) -> Iterator[list[dict]]:
+        for number, page in enumerate(served(channel, oldest, latest), start=1):
+            if channel == CHANNEL and number == 2:
+                raise SlarcError(error)
+            yield page
+
+    monkeypatch.setattr(h.gateway, "history", failing_on_page_2)
+    report = h.pull(BASE, SECOND_LINK)
+
+    assert report.items_pulled == 1
+    assert report.skipped == [
+        f"Could not finish pulling conversation {CHANNEL}; the next pull resumes it: {error}"
+    ]
+    assert second_ts in {
+        env.meta.ts for env in h.lines("message") if env.meta.channel == SECOND_CHANNEL
+    }
+    tracked = {item.channel: item for item in h.tracked()}
+    assert tracked[CHANNEL].backfill_complete is False
+    assert tracked[SECOND_CHANNEL].backfill_complete is True
+
+
+def test_auth_failure_on_a_thread_read_still_skips_the_workspace(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+):
+    def rejected(channel: str, ts: str) -> list[dict]:
+        raise AuthFailed("desktop", "naleidworkspace")
+
+    monkeypatch.setattr(h.gateway, "replies", rejected)
+    report = h.pull(BASE)
+
+    assert report.failed is True
+    assert h.last_run().errors[0]["team_id"] == TEAM
