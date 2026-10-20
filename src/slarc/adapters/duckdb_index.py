@@ -1,5 +1,5 @@
-# ABOUTME: QueryIndex over an archive's JSONL files: an in-memory DuckDB with one view per entity.
-# ABOUTME: Current-state views take the latest line per key by (fetched_at, run).
+# ABOUTME: QueryIndex over an archive's lake: the lake attached read-only plus one view per entity.
+# ABOUTME: Current-state views take the latest row per key by (fetched_at, run).
 import json
 from pathlib import Path
 from types import TracebackType
@@ -7,87 +7,59 @@ from typing import Any
 
 import duckdb
 
+from slarc.adapters.lake import connect_lake
 from slarc.domain.links import message_link
 from slarc.domain.plain import snippet
 from slarc.ports import SearchHit, SlarcError
 
-MAXIMUM_OBJECT_SIZE = 67108864
-
-META_TYPE = (
-    "STRUCT(schema INTEGER, kind VARCHAR, team VARCHAR, channel VARCHAR, ts VARCHAR, "
-    "id VARCHAR, source_team VARCHAR, fetched_at VARCHAR, run VARCHAR, api VARCHAR, "
-    "slarc VARCHAR, hash VARCHAR, plain VARCHAR, blob VARCHAR)"
-)
-
-# Each source view reads the lines of one file kind; the glob is relative to the archive root.
-SOURCES = {
-    "raw_line": "raw/*/*/*.jsonl",
-    "user_line": "directory/*/users.jsonl",
-    "emoji_line": "directory/*/emoji.jsonl",
-    "conversation_line": "directory/*/conversations.jsonl",
-    "bot_line": "directory/*/bots.jsonl",
-    "usergroup_line": "directory/*/usergroups.jsonl",
-    "file_line": "directory/*/files.jsonl",
-    "image_line": "directory/*/images.jsonl",
-    "run_line": "runs.jsonl",
-}
-
 # Slack ts strings ordered as numbers.
 TS_ORDER = "TRY_CAST({} AS DECIMAL(18, 6))"
 
-# Directory lines reduced to the latest line per (team, id). A blob is only ever added to an
-# object, so on a (fetched_at, run) tie the line with a blob is the later one.
-LATEST_DIRECTORY_LINE = """
-    SELECT meta.team AS team_id, meta.id AS id, meta.blob AS blob, object
-    FROM {source}
-    WHERE meta.team IS NOT NULL AND meta.id IS NOT NULL AND meta.hash IS NOT NULL
+# Directory entries of one kind reduced to the latest row per (team, id). A blob is only ever
+# added to an object, so on a (fetched_at, run) tie the row with a blob is the later one.
+LATEST_DIRECTORY_ROW = """
+    SELECT team AS team_id, id, blob, object
+    FROM lake.main.directory_entry
+    WHERE kind = '{kind}' AND team IS NOT NULL AND id IS NOT NULL AND hash IS NOT NULL
     QUALIFY row_number() OVER (
-        PARTITION BY meta.team, meta.id
-        ORDER BY meta.fetched_at DESC, meta.run DESC, meta.blob NULLS LAST, meta.hash
+        PARTITION BY team, id ORDER BY fetched_at DESC, run DESC, blob NULLS LAST, hash
     ) = 1
 """
 
+# The message views read the lake only through message_row, which messages() and thread()
+# replace with a query over one conversation's rows.
 ENTITY_VIEWS = {
-    "message_line": """
-        SELECT meta.team AS team_id, meta.channel AS channel_id, meta.ts AS ts,
-            meta.kind AS kind, meta.fetched_at AS fetched_at, meta.run AS run,
-            meta.source_team AS source_team, meta.hash AS hash, meta.plain AS plain, object
-        FROM raw_line
-        WHERE meta.kind IN ('message', 'deleted')
-            AND meta.team IS NOT NULL AND meta.channel IS NOT NULL AND meta.ts IS NOT NULL
-        QUALIFY row_number() OVER (
-            PARTITION BY meta.team, meta.channel, meta.ts, meta.fetched_at, meta.run
-            ORDER BY meta.kind, meta.hash
-        ) = 1
-    """,
+    "message_row": "SELECT * FROM lake.main.message_version",
     "message_version": """
-        SELECT team_id, channel_id, ts, fetched_at, run, hash,
+        SELECT team AS team_id, channel AS channel_id, ts, fetched_at, run, hash,
             object -> 'edited' ->> 'ts' AS edited_ts
-        FROM message_line
+        FROM message_row
     """,
+    # One pass per key: the latest row decides deleted_at, and the latest message row gives
+    # the content, so a deleted message keeps its last content.
     "message_current": """
         WITH latest AS (
-            SELECT team_id, channel_id, ts, kind, fetched_at
-            FROM message_line
-            QUALIFY row_number() OVER (
-                PARTITION BY team_id, channel_id, ts ORDER BY fetched_at DESC, run DESC, kind
-            ) = 1
-        ),
-        content AS (
-            SELECT * FROM message_line
-            WHERE kind = 'message'
-            QUALIFY row_number() OVER (
-                PARTITION BY team_id, channel_id, ts ORDER BY fetched_at DESC, run DESC, hash
-            ) = 1
-        ),
-        seen AS (
-            SELECT team_id, channel_id, ts,
-                min(fetched_at) AS first_seen_at, max(fetched_at) AS last_seen_at
-            FROM message_line
-            WHERE kind = 'message'
-            GROUP BY ALL
+            SELECT team AS team_id, channel AS channel_id, ts, kind, fetched_at,
+                first_value(
+                    CASE WHEN kind = 'message' THEN {
+                        'source_team': source_team, 'plain': plain, 'hash': hash,
+                        'object': object
+                    } END IGNORE NULLS
+                ) OVER newest AS content,
+                min(fetched_at) FILTER (WHERE kind = 'message') OVER message_key
+                    AS first_seen_at,
+                max(fetched_at) FILTER (WHERE kind = 'message') OVER message_key
+                    AS last_seen_at
+            FROM message_row
+            WINDOW message_key AS (PARTITION BY team, channel, ts),
+                newest AS (
+                    PARTITION BY team, channel, ts
+                    ORDER BY fetched_at DESC, run DESC, kind, hash
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                )
+            QUALIFY row_number() OVER newest = 1
         )
-        SELECT latest.team_id, latest.channel_id, latest.ts,
+        SELECT team_id, channel_id, ts,
             content.source_team,
             content.object ->> 'thread_ts' AS thread_ts,
             content.object ->> 'user' AS user_id,
@@ -99,12 +71,10 @@ ENTITY_VIEWS = {
             content.object -> 'edited' ->> 'ts' AS edited_ts,
             content.object -> 'edited' ->> 'user' AS edited_by,
             content.plain, content.hash,
-            seen.first_seen_at, seen.last_seen_at,
-            CASE WHEN latest.kind = 'deleted' THEN latest.fetched_at END AS deleted_at,
+            first_seen_at, last_seen_at,
+            CASE WHEN kind = 'deleted' THEN fetched_at END AS deleted_at,
             content.object
         FROM latest
-        LEFT JOIN content USING (team_id, channel_id, ts)
-        LEFT JOIN seen USING (team_id, channel_id, ts)
     """,
     "message": f"""
         WITH replies AS (
@@ -173,14 +143,14 @@ ENTITY_VIEWS = {
             object ->> 'preview' AS preview_text,
             CAST(object -> 'original_w' AS INTEGER) AS width,
             CAST(object -> 'original_h' AS INTEGER) AS height
-        FROM ({LATEST_DIRECTORY_LINE.format(source="file_line")})
+        FROM ({LATEST_DIRECTORY_ROW.format(kind="file")})
     """,
     "image": f"""
         SELECT team_id, id AS url,
             object ->> 'content_type' AS content_type,
             CAST(object -> 'size' AS BIGINT) AS size,
             blob
-        FROM ({LATEST_DIRECTORY_LINE.format(source="image_line")})
+        FROM ({LATEST_DIRECTORY_ROW.format(kind="image")})
     """,
     "user": f"""
         SELECT team_id, id,
@@ -202,15 +172,14 @@ ENTITY_VIEWS = {
             CAST(object -> 'deleted' AS BOOLEAN) AS deleted,
             object ->> 'team_id' AS home_team_id,
             blob AS avatar_blob
-        FROM ({LATEST_DIRECTORY_LINE.format(source="user_line")})
+        FROM ({LATEST_DIRECTORY_ROW.format(kind="user")})
     """,
     "user_snapshot": """
-        SELECT meta.team AS team_id, meta.id AS id, meta.fetched_at AS fetched_at,
-            meta.hash AS hash, object -> 'profile' AS profile_json
-        FROM user_line
-        WHERE meta.team IS NOT NULL AND meta.id IS NOT NULL AND meta.hash IS NOT NULL
+        SELECT team AS team_id, id, fetched_at, hash, object -> 'profile' AS profile_json
+        FROM lake.main.directory_entry
+        WHERE kind = 'user' AND team IS NOT NULL AND id IS NOT NULL AND hash IS NOT NULL
         QUALIFY row_number() OVER (
-            PARTITION BY meta.team, meta.id, meta.fetched_at ORDER BY meta.run DESC, meta.hash
+            PARTITION BY team, id, fetched_at ORDER BY run DESC, hash
         ) = 1
     """,
     "bot": f"""
@@ -218,14 +187,14 @@ ENTITY_VIEWS = {
             object ->> 'app_id' AS app_id,
             object ->> 'name' AS name,
             blob AS icon_blob
-        FROM ({LATEST_DIRECTORY_LINE.format(source="bot_line")})
+        FROM ({LATEST_DIRECTORY_ROW.format(kind="bot")})
     """,
     "emoji": f"""
         WITH seen AS (
-            SELECT meta.team AS team_id, meta.id AS id,
-                min(meta.fetched_at) AS first_seen, max(meta.fetched_at) AS last_seen_in_list
-            FROM emoji_line
-            WHERE meta.team IS NOT NULL AND meta.id IS NOT NULL AND meta.hash IS NOT NULL
+            SELECT team AS team_id, id,
+                min(fetched_at) AS first_seen, max(fetched_at) AS last_seen_in_list
+            FROM lake.main.directory_entry
+            WHERE kind = 'emoji' AND team IS NOT NULL AND id IS NOT NULL AND hash IS NOT NULL
             GROUP BY ALL
         )
         SELECT latest.team_id, latest.id AS name,
@@ -234,7 +203,7 @@ ENTITY_VIEWS = {
                 THEN substr(object ->> 'url', length('alias:') + 1) END AS alias_of,
             coalesce(lower(object ->> 'url') LIKE '%.gif', false) AS is_animated,
             latest.blob, seen.first_seen, seen.last_seen_in_list
-        FROM ({LATEST_DIRECTORY_LINE.format(source="emoji_line")}) latest
+        FROM ({LATEST_DIRECTORY_ROW.format(kind="emoji")}) latest
         JOIN seen USING (team_id, id)
     """,
     "usergroup": f"""
@@ -242,7 +211,7 @@ ENTITY_VIEWS = {
             object ->> 'handle' AS handle,
             object ->> 'name' AS name,
             CAST(object -> 'users' AS VARCHAR[]) AS user_ids
-        FROM ({LATEST_DIRECTORY_LINE.format(source="usergroup_line")})
+        FROM ({LATEST_DIRECTORY_ROW.format(kind="usergroup")})
     """,
     "conversation": f"""
         SELECT team_id, id,
@@ -262,10 +231,10 @@ ENTITY_VIEWS = {
             object -> 'topic' ->> 'value' AS topic,
             object -> 'purpose' ->> 'value' AS purpose,
             CAST(object -> 'members' AS VARCHAR[]) AS member_ids
-        FROM ({LATEST_DIRECTORY_LINE.format(source="conversation_line")})
+        FROM ({LATEST_DIRECTORY_ROW.format(kind="conversation")})
     """,
     "run": """
-        SELECT meta.run AS run,
+        SELECT run,
             object ->> 'command' AS command,
             CAST(object -> 'args' AS VARCHAR[]) AS args,
             object ->> 'started' AS started,
@@ -280,10 +249,10 @@ ENTITY_VIEWS = {
             object -> 'errors' AS errors,
             object -> 'tracked' AS tracked,
             object -> 'downloads' AS downloads
-        FROM run_line
-        WHERE meta.kind = 'run' AND meta.run IS NOT NULL
+        FROM lake.main.run
+        WHERE run IS NOT NULL
         QUALIFY row_number() OVER (
-            PARTITION BY meta.run ORDER BY meta.fetched_at DESC, md5(CAST(object AS VARCHAR))
+            PARTITION BY run ORDER BY fetched_at DESC, md5(CAST(object AS VARCHAR))
         ) = 1
     """,
     "workspace": """
@@ -312,6 +281,16 @@ ENTITY_VIEWS = {
             ORDER BY latest.auth_test_at DESC NULLS LAST, latest.domain, latest.credential_source,
                 latest.user_id
         ) = 1
+    """,
+    "tracked_item": """
+        SELECT team AS team_id, kind, channel AS channel_id, nullif(ts, '') AS ts,
+            since, until, newest_ts, oldest_ts, backfill_complete, last_search_at, last_pull_at,
+            status, archived, last_read, retry_threads
+        FROM lake.main.tracked_item
+    """,
+    "download": """
+        SELECT team AS team_id, target_kind, target, url, status, attempts, last_error
+        FROM lake.main.download_state
     """,
 }
 
@@ -355,29 +334,6 @@ MESSAGE_COLUMNS = """
 """
 
 
-def _sql_string(text: str) -> str:
-    return "'" + text.replace("'", "''") + "'"
-
-
-def _source_query(root: Path, pattern: str) -> str:
-    return _read_query(sorted(str(path) for path in root.glob(pattern)))
-
-
-def _read_query(paths: list[str]) -> str:
-    """read_ndjson over paths, or no rows when there are none.
-
-    Truncated lines from a crash read as rows with a null meta, which every view filters out.
-    """
-    if not paths:
-        return f"SELECT CAST(NULL AS {META_TYPE}) AS meta, CAST(NULL AS JSON) AS object WHERE false"
-    files = "[" + ", ".join(_sql_string(path) for path in paths) + "]"
-    return (
-        f"SELECT meta, object FROM read_ndjson({files}, "
-        f"columns = {{'meta': '{META_TYPE}', 'object': 'JSON'}}, "
-        f"ignore_errors = true, maximum_object_size = {MAXIMUM_OBJECT_SIZE})"
-    )
-
-
 def _like_pattern(text: str) -> str:
     """An ILIKE pattern matching text anywhere, with its wildcard characters taken literally."""
     escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -391,19 +347,21 @@ def _error_message(error: duckdb.Error) -> str:
 
 
 class DuckDbQueryIndex:
-    """Views over the JSONL files present under root when the index is created."""
+    """Views over the archive's lake, which is attached read-only as `lake`.
 
-    def __init__(self, root: Path) -> None:
-        self._db = duckdb.connect(":memory:")
-        self._channel_files: dict[tuple[str, str], list[str]] = {}
-        for path in sorted(root.glob(SOURCES["raw_line"])):
-            channel_dir = path.parent
-            key = (channel_dir.parent.name, channel_dir.name)
-            self._channel_files.setdefault(key, []).append(str(path))
-        for name, pattern in SOURCES.items():
-            self._db.execute(f"CREATE VIEW {name} AS {_source_query(root, pattern)}")
-        for name, query in ENTITY_VIEWS.items():
-            self._db.execute(f'CREATE VIEW "{name}" AS {query}')
+    The views live in the in-memory database, which queries use by default, so a view and the
+    lake table it reads can share a name. The lake's catalog must exist.
+    """
+
+    def __init__(self, root: Path, ext_dir: Path) -> None:
+        self._db = connect_lake(root, ext_dir, read_only=True)
+        try:
+            self._db.execute("USE memory")
+            for name, query in ENTITY_VIEWS.items():
+                self._db.execute(f'CREATE VIEW "{name}" AS {query}')
+        except BaseException:
+            self._db.close()
+            raise
 
     def __enter__(self) -> DuckDbQueryIndex:
         return self
@@ -479,24 +437,36 @@ class DuckDbQueryIndex:
         )
 
     def thread(self, team: str, channel: str, thread_ts: str, include_deleted: bool) -> list[dict]:
-        """The thread's parent and replies; a message outside any thread comes back alone."""
+        """The thread's parent and replies; a message outside any thread comes back alone.
+
+        The rows read are every version of each message whose ts or thread_ts names the thread
+        in any version, so a deleted reply's marker, which has no thread_ts, comes along.
+        """
         return self._messages(
             "(ts = $thread_ts OR thread_ts = $thread_ts)",
             {"team": team, "channel": channel, "thread_ts": thread_ts},
             include_deleted,
+            in_thread="""
+                AND ts IN (
+                    SELECT ts FROM lake.main.message_version
+                    WHERE team = $team AND channel = $channel
+                        AND (ts = $thread_ts OR thread_ts = $thread_ts)
+                )
+            """,
         )
 
     def _messages(
-        self, condition: str, params: dict[str, Any], include_deleted: bool
+        self, condition: str, params: dict[str, Any], include_deleted: bool, in_thread: str = ""
     ) -> list[dict]:
-        """Runs the message view over the channel's own month files only, so a loop over
-        conversations reads each file once instead of the whole archive per conversation."""
+        """Runs the message views over the channel's own rows only, so a loop over
+        conversations reads each conversation once instead of the whole archive each time."""
         deleted = "" if include_deleted else "AND deleted_at IS NULL"
-        source = _read_query(self._channel_files.get((params["team"], params["channel"]), []))
         cursor = self._db.execute(
             f"""
-            WITH raw_line AS ({source}),
-                message_line AS ({ENTITY_VIEWS["message_line"]}),
+            WITH message_row AS (
+                    SELECT * FROM lake.main.message_version
+                    WHERE team = $team AND channel = $channel {in_thread}
+                ),
                 message_current AS ({ENTITY_VIEWS["message_current"]}),
                 message AS ({ENTITY_VIEWS["message"]})
             SELECT {MESSAGE_COLUMNS} FROM message

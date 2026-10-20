@@ -9,7 +9,8 @@
 # slarc = { path = "..", editable = true }
 # ///
 # ABOUTME: Developer-only script that pulls the naleidworkspace test workspace with slarc's pull
-# ABOUTME: service into tests/fixtures/workspace/, scrubbing emails and dropping large blobs.
+# ABOUTME: service into tests/fixtures/workspace/ as JSONL, scrubbing emails and dropping big blobs.
+import os
 import re
 import shutil
 import sys
@@ -20,9 +21,11 @@ import msgspec
 
 from slarc import __version__
 from slarc.adapters.desktop_session import DesktopSessionSource
+from slarc.adapters.jsonl_import import export_jsonl
+from slarc.adapters.lake import extension_directory
 from slarc.adapters.slack_gateway import SessionConnector
 from slarc.bootstrap import SystemClock, archive_stores, http_downloader
-from slarc.config import create_archive
+from slarc.config import ARCHIVE_FILE, create_archive
 from slarc.domain.envelope import decode_line, encode_line
 from slarc.domain.hashing import content_hash
 from slarc.domain.links import ConversationSel, Selector
@@ -82,6 +85,14 @@ def record(root: Path) -> None:
     print(f"pulled {report.items_pulled} items, {report.lines_appended} lines")
 
 
+def export(root: Path, target: Path) -> None:
+    """Writes the lake at root to target as a JSONL archive, with its slarc.toml and blobs."""
+    export_jsonl(root, extension_directory(os.environ, Path.home()), target)
+    shutil.copyfile(root / ARCHIVE_FILE, target / ARCHIVE_FILE)
+    if (root / "blobs").is_dir():
+        shutil.copytree(root / "blobs", target / "blobs")
+
+
 def scrub_line(line: bytes) -> bytes:
     """The line with emails moved to example.invalid and its content hash recomputed."""
     text = line.decode()
@@ -134,8 +145,10 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "archive"
         record(root)
+        exported = Path(tmp) / "exported"
+        export(root, exported)
         clear(TARGET)
-        dropped = copy_scrubbed(root, TARGET)
+        dropped = copy_scrubbed(exported, TARGET)
     for relative in dropped:
         print(f"left out blob over 1 MB: {relative}")
     marked = files_with_secret_mark(TARGET)

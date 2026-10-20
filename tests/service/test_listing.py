@@ -1,6 +1,5 @@
-# ABOUTME: Tests for the list use cases: tracked items in a copy of the recorded archive, and the
+# ABOUTME: Tests for the list use cases: tracked items in a lake of the recorded archive, and the
 # ABOUTME: conversations a fake Slack session can see, marked tracked or not.
-import json
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Literal
@@ -8,12 +7,12 @@ from typing import Literal
 import pytest
 
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
-from slarc.adapters.jsonl_store import JsonlArchiveStore
+from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.config import load_settings, read_global_config
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
 from slarc.service.listing import ArchiveListing, ListRow, list_archive, list_remote
 from tests.fakes import FakeConnector, FakeSlackGateway
-from tests.recorded_fixtures import RECORDED_TEAM, copy_recorded
+from tests.recorded_fixtures import RECORDED_TEAM, recorded_lake
 from tests.service.pull_harness import NALEID, spike
 
 WAVE_PARENT = "1792410693.663869"
@@ -33,24 +32,24 @@ LATER = "2026-10-20T00:00:00Z"
 
 @pytest.fixture
 def archive(tmp_path: Path) -> Path:
-    return copy_recorded(tmp_path / "archive")
+    return recorded_lake(tmp_path / "archive")
 
 
 @pytest.fixture
-def store(archive: Path) -> Iterator[JsonlArchiveStore]:
-    store = JsonlArchiveStore(archive)
+def store(archive: Path, ext_dir: Path) -> Iterator[DuckLakeArchiveStore]:
+    store = DuckLakeArchiveStore(archive, ext_dir)
     yield store
     store.close()
 
 
-def listing_of(archive: Path, store: JsonlArchiveStore) -> ArchiveListing:
+def listing_of(archive: Path, ext_dir: Path, store: DuckLakeArchiveStore) -> ArchiveListing:
     settings = load_settings(archive, {}, {}, {})
-    with DuckDbQueryIndex(archive) as index:
+    with DuckDbQueryIndex(archive, ext_dir) as index:
         return list_archive(settings, store, index)
 
 
 def append_run(
-    store: JsonlArchiveStore,
+    store: DuckLakeArchiveStore,
     tracked: list[TrackedItem],
     downloads: list[DownloadState] | None = None,
 ) -> None:
@@ -63,13 +62,6 @@ def append_run(
         downloads=downloads or [],
     )
     store.append_run(run, "0.1.0")
-
-
-def drop_directory_lines(archive: Path, name: str, ids: set[str]) -> None:
-    """Removes the lines of ids, leaving those targets without a downloaded blob."""
-    path = archive / "directory" / RECORDED_TEAM / name
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    path.write_text("".join(line for line in lines if json.loads(line)["meta"]["id"] not in ids))
 
 
 def rows_by_item(listing: ArchiveListing) -> dict[tuple[str, str], ListRow]:
@@ -88,21 +80,23 @@ def download(
 
 
 def test_list_shows_archive_path_and_config_sources(
-    archive: Path, store: JsonlArchiveStore, tmp_path: Path
+    archive: Path, ext_dir: Path, store: DuckLakeArchiveStore, tmp_path: Path
 ) -> None:
     config = tmp_path / "home" / ".config" / "slarc" / "config.toml"
     config.parent.mkdir(parents=True)
     config.write_text("[pull]\ndownloads = 2\n", encoding="utf-8")
     settings = load_settings(archive, read_global_config({}, tmp_path / "home"), {}, {})
-    with DuckDbQueryIndex(archive) as index:
+    with DuckDbQueryIndex(archive, ext_dir) as index:
         listing = list_archive(settings, store, index)
     assert listing.archive == archive
     assert listing.config_files == [archive / "slarc.toml", config]
 
 
-def test_list_counts_messages_and_pending(archive: Path, store: JsonlArchiveStore) -> None:
-    drop_directory_lines(archive, "files.jsonl", {VIDEO, PDF})
-    drop_directory_lines(archive, "images.jsonl", {GIPHY, AVATAR})
+def test_list_counts_messages_and_pending(
+    archive: Path, ext_dir: Path, store: DuckLakeArchiveStore
+) -> None:
+    store.drop_directory_lines(RECORDED_TEAM, "file", {VIDEO, PDF})
+    store.drop_directory_lines(RECORDED_TEAM, "image", {GIPHY, AVATAR})
     thread = TrackedItem(
         team_id=RECORDED_TEAM,
         kind="thread",
@@ -118,7 +112,7 @@ def test_list_counts_messages_and_pending(archive: Path, store: JsonlArchiveStor
     ]
     append_run(store, tracked=[thread], downloads=downloads)
 
-    listing = listing_of(archive, store)
+    listing = listing_of(archive, ext_dir, store)
 
     rows = rows_by_item(listing)
     assert sorted(rows) == [
@@ -149,7 +143,7 @@ def test_list_counts_messages_and_pending(archive: Path, store: JsonlArchiveStor
 
 
 def test_list_tells_apart_two_threads_in_one_conversation(
-    archive: Path, store: JsonlArchiveStore
+    archive: Path, ext_dir: Path, store: DuckLakeArchiveStore
 ) -> None:
     threads = [
         TrackedItem(team_id=RECORDED_TEAM, kind="thread", channel="C0CA5396G03", ts=ts)
@@ -157,19 +151,20 @@ def test_list_tells_apart_two_threads_in_one_conversation(
     ]
     append_run(store, tracked=threads)
 
-    labels = [row.conversation for row in listing_of(archive, store).rows if row.kind == "thread"]
+    rows = listing_of(archive, ext_dir, store).rows
+    labels = [row.conversation for row in rows if row.kind == "thread"]
 
     assert labels == [f"#all-naleid thread {WAVE_PARENT}", f"#all-naleid thread {LONE_TS}"]
 
 
-def test_list_marks_not_visible(archive: Path, store: JsonlArchiveStore) -> None:
+def test_list_marks_not_visible(archive: Path, ext_dir: Path, store: DuckLakeArchiveStore) -> None:
     hidden = [
         TrackedItem(team_id=RECORDED_TEAM, kind="conversation", channel=channel, status=status)
         for channel, status in (("C0CA7SNHTSP", "not_visible"), ("C0CAGONE001", "not_visible"))
     ]
     append_run(store, tracked=hidden)
 
-    rows = rows_by_item(listing_of(archive, store))
+    rows = rows_by_item(listing_of(archive, ext_dir, store))
 
     assert rows[("#slarc-fixtures", "conversation")].status == "not_visible"
     gone = rows[("C0CAGONE001", "conversation")]
@@ -177,7 +172,7 @@ def test_list_marks_not_visible(archive: Path, store: JsonlArchiveStore) -> None
     assert rows[("#all-naleid", "conversation")].status == "ok"
 
 
-def test_list_remote_marks_tracked(store: JsonlArchiveStore) -> None:
+def test_list_remote_marks_tracked(store: DuckLakeArchiveStore) -> None:
     infos = {c["id"]: c for c in spike("conversations.list")["channels"]}
     visible = ["C0CA5396G03", "C0CA53DLVJP", "D0CAD7JE1QR"]
     gateway = FakeSlackGateway({channel: [] for channel in visible}, infos=infos)

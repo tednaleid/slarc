@@ -1,9 +1,15 @@
 # ABOUTME: Readers for the archive recorded from the test workspace in tests/fixtures/workspace/.
-# ABOUTME: Returns raw lines, the newest directory object per id, a DirectoryView, blobs or a copy.
+# ABOUTME: Returns raw lines, newest directory objects, a DirectoryView, blobs, a copy or a lake.
+import atexit
 import json
+import os
 import shutil
+import tempfile
+from functools import cache
 from pathlib import Path
 
+from slarc.adapters.jsonl_import import import_jsonl
+from slarc.adapters.lake import extension_directory
 from slarc.domain.directory import DirectoryView
 from tests.fakes import InMemoryBlobStore
 
@@ -35,6 +41,22 @@ def copy_recorded(target: Path) -> Path:
     """A copy of the recorded archive, without its blobs, at target."""
     shutil.copytree(RECORDED, target, ignore=shutil.ignore_patterns("blobs"))
     return target
+
+
+def recorded_lake(target: Path) -> Path:
+    """A copy of the recorded archive, without its blobs, imported into a lake at target."""
+    shutil.copytree(_recorded_lake_template(), target)
+    return target
+
+
+@cache
+def _recorded_lake_template() -> Path:
+    """The recorded archive imported once per test session, for recorded_lake to copy."""
+    parent = Path(tempfile.mkdtemp(prefix="slarc-recorded-lake-"))
+    atexit.register(shutil.rmtree, parent, ignore_errors=True)
+    root = copy_recorded(parent / "archive")
+    import_jsonl(root, extension_directory(os.environ, Path.home()))
+    return root
 
 
 def recorded_blobs() -> InMemoryBlobStore:

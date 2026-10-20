@@ -1,6 +1,7 @@
-# ABOUTME: Tests for the export use case over a copy of the recorded archive and its blobs.
+# ABOUTME: Tests for the export use case over a lake of the recorded archive and its blobs.
 # ABOUTME: Pages and assets land in an in-memory export writer, keyed by their output path.
 import base64
+import os
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -8,14 +9,15 @@ from pathlib import Path
 import pytest
 
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
-from slarc.adapters.jsonl_store import JsonlArchiveStore
+from slarc.adapters.lake import extension_directory
+from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.domain.envelope import Envelope, Kind, Meta
 from slarc.domain.links import parse_selector
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
 from slarc.ports import SlarcError
 from slarc.service.export import export
 from tests.fakes import InMemoryBlobStore, InMemoryExportWriter
-from tests.recorded_fixtures import RECORDED_TEAM, copy_recorded, recorded_blobs
+from tests.recorded_fixtures import RECORDED_TEAM, recorded_blobs, recorded_lake
 
 OUT = Path("exported")
 ALL_NALEID = "C0CA5396G03"
@@ -60,12 +62,12 @@ THREADS = {
 
 @pytest.fixture
 def archive(tmp_path: Path) -> Path:
-    return copy_recorded(tmp_path / "archive")
+    return recorded_lake(tmp_path / "archive")
 
 
 @pytest.fixture
-def store(archive: Path) -> Iterator[JsonlArchiveStore]:
-    store = JsonlArchiveStore(archive)
+def store(archive: Path, ext_dir: Path) -> Iterator[DuckLakeArchiveStore]:
+    store = DuckLakeArchiveStore(archive, ext_dir)
     yield store
     store.close()
 
@@ -77,7 +79,7 @@ def blobs() -> InMemoryBlobStore:
 
 def run_export(
     archive: Path,
-    store: JsonlArchiveStore,
+    store: DuckLakeArchiveStore,
     blobs: InMemoryBlobStore,
     *selectors: str,
     out: Path | None = OUT,
@@ -87,13 +89,13 @@ def run_export(
 ) -> tuple[Path, InMemoryExportWriter]:
     writer = InMemoryExportWriter()
     parsed = [parse_selector(text) for text in selectors]
-    with DuckDbQueryIndex(archive) as index:
+    with DuckDbQueryIndex(archive, extension_directory(os.environ, Path.home())) as index:
         written = export(parsed, out, single_file, include_deleted, tz, index, blobs, store, writer)
     return written, writer
 
 
 def append_line(
-    store: JsonlArchiveStore,
+    store: DuckLakeArchiveStore,
     kind: Kind,
     obj: dict,
     *,
@@ -114,10 +116,18 @@ def append_line(
         blob=blob,
     )
     store.append(Envelope(meta=meta, object=obj))
-    store.flush()
+    commit(store)
 
 
-def append_message(store: JsonlArchiveStore, obj: dict) -> None:
+def commit(store: DuckLakeArchiveStore, *tracked: TrackedItem) -> None:
+    """Commits the store's open batch with a run that records the tracked items."""
+    run = RunRecord(
+        run=LATER_RUN, command="pull", started=LATER, finished=LATER, tracked=list(tracked)
+    )
+    store.append_run(run, "0.1.0")
+
+
+def append_message(store: DuckLakeArchiveStore, obj: dict) -> None:
     append_line(
         store,
         "message",
@@ -288,7 +298,7 @@ def test_deleted_hidden_unless_flag(archive, store, blobs) -> None:
             )
         )
     )
-    store.flush()
+    commit(store)
     _, hidden = run_export(archive, store, blobs, "#slarc-fixtures")
     page = hidden.text(OUT / f"{FIXTURES}.html")
     assert "seed: pinned message" not in page
@@ -550,15 +560,6 @@ def test_file_placeholders_and_unsafe_chrome(archive, store, blobs) -> None:
     assert f'src="assets/{SEED_RED}.bin"' in message
 
 
-def track(store: JsonlArchiveStore, *items: TrackedItem) -> None:
-    store.append_run(
-        RunRecord(
-            run=LATER_RUN, command="pull", started=LATER, finished=LATER, tracked=list(items)
-        ),
-        "0.1.0",
-    )
-
-
 def html_pages(writer: InMemoryExportWriter) -> set[str]:
     return {p.name for p in writer.files if p.suffix == ".html" and p.name != "index.html"}
 
@@ -573,7 +574,7 @@ def test_workspace_exports_one_page_per_tracked_conversation(archive, store, blo
 def test_workspace_export_adds_no_page_for_a_thread_in_a_tracked_conversation(
     archive, store, blobs
 ) -> None:
-    track(
+    commit(
         store,
         TrackedItem(
             team_id=RECORDED_TEAM, kind="thread", channel=ALL_NALEID, ts="1792427542.806979"
@@ -594,7 +595,7 @@ def test_workspace_export_adds_a_page_for_a_thread_in_an_untracked_conversation(
         channel="C0THREADONLY",
         ts=thread_ts,
     )
-    track(
+    commit(
         store,
         TrackedItem(team_id=RECORDED_TEAM, kind="thread", channel="C0THREADONLY", ts=thread_ts),
     )
@@ -603,7 +604,7 @@ def test_workspace_export_adds_a_page_for_a_thread_in_an_untracked_conversation(
 
 
 def test_workspace_export_skips_an_item_without_messages(archive, store, blobs) -> None:
-    track(store, TrackedItem(team_id=RECORDED_TEAM, kind="conversation", channel="C0NOMESSAGE"))
+    commit(store, TrackedItem(team_id=RECORDED_TEAM, kind="conversation", channel="C0NOMESSAGE"))
     _, writer = run_export(archive, store, blobs, "naleidworkspace")
     assert "C0NOMESSAGE.html" not in html_pages(writer)
     assert len(html_pages(writer)) == 5
@@ -624,8 +625,10 @@ def test_unknown_workspace_lists_the_workspaces_the_archive_holds(archive, store
 
 
 def test_workspace_holding_nothing_exportable_says_to_pull(archive, store, blobs) -> None:
-    for path in (archive / "raw").rglob("*.jsonl"):
-        path.unlink()
+    for channel in store.channels(RECORDED_TEAM):
+        store.drop_messages(
+            RECORDED_TEAM, channel, set(store.stored_messages(RECORDED_TEAM, channel))
+        )
     with pytest.raises(SlarcError) as caught:
         run_export(archive, store, blobs, "naleidworkspace")
     assert str(caught.value) == (

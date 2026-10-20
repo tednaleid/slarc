@@ -17,7 +17,9 @@ from slarc.adapters.desktop_session import DesktopSessionSource
 from slarc.adapters.downloader import HttpDownloader
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
 from slarc.adapters.export_writer import FsExportWriter
-from slarc.adapters.jsonl_store import JsonlArchiveStore
+from slarc.adapters.jsonl_import import ImportReport, has_jsonl, import_jsonl
+from slarc.adapters.lake import CATALOG, connect_lake, extension_directory
+from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.adapters.slack_gateway import USER_AGENT, SessionConnector, session_gateway
 from slarc.ports import (
     BlobStore,
@@ -49,10 +51,26 @@ def http_downloader(blobs: BlobStore, sessions: dict[str, Session]) -> Generator
         yield HttpDownloader(blobs, sessions, client)
 
 
+def _extension_directory() -> Path:
+    return extension_directory(os.environ, Path.home())
+
+
+def ensure_lake(root: Path) -> ImportReport | None:
+    """Gives the archive a lake if it has none: imports its JSONL files when it has any, and
+    otherwise creates an empty lake. Returns the import's report when it imported."""
+    if (root / CATALOG).exists():
+        return None
+    if has_jsonl(root):
+        return import_jsonl(root, _extension_directory())
+    connect_lake(root, _extension_directory()).close()
+    return None
+
+
 @contextmanager
-def archive_stores(root: Path) -> Generator[tuple[JsonlArchiveStore, FsBlobStore]]:
-    """The archive's JSONL and blob stores; the JSONL store's files are closed on exit."""
-    archive = JsonlArchiveStore(root)
+def archive_stores(root: Path) -> Generator[tuple[DuckLakeArchiveStore, FsBlobStore]]:
+    """The archive's lake and blob stores, with ensure_lake run first; closed on exit."""
+    ensure_lake(root)
+    archive = DuckLakeArchiveStore(root, _extension_directory())
     try:
         yield archive, FsBlobStore(root)
     finally:
@@ -61,8 +79,9 @@ def archive_stores(root: Path) -> Generator[tuple[JsonlArchiveStore, FsBlobStore
 
 @contextmanager
 def query_index(root: Path) -> Generator[QueryIndex]:
-    """Views over the archive's JSONL files, closed on exit."""
-    with DuckDbQueryIndex(root) as index:
+    """Views over the archive's lake, with ensure_lake run first; closed on exit."""
+    ensure_lake(root)
+    with DuckDbQueryIndex(root, _extension_directory()) as index:
         yield index
 
 

@@ -52,12 +52,16 @@ IMPORTED_TRACKED_COLUMNS = {**TRACKED_COLUMNS, "revision": "INTEGER"}
 
 @dataclass(frozen=True)
 class ImportReport:
-    """The rows the import wrote per table, and the duplicate message lines it dropped."""
+    """The rows the import wrote per table, and the duplicate message lines it dropped.
+
+    tracked counts the tracked items that are not removed, and removed the ones that are.
+    """
 
     messages: int
     directory: int
     runs: int
     tracked: int
+    removed: int
     downloads: int
     duplicates: int
 
@@ -113,7 +117,8 @@ def import_jsonl(root: Path, ext_dir: Path) -> ImportReport:
         messages=len(archive.messages),
         directory=len(archive.directory),
         runs=len(archive.runs),
-        tracked=len(archive.tracked),
+        tracked=sum(1 for item in archive.tracked if item.status != "removed"),
+        removed=sum(1 for item in archive.tracked if item.status == "removed"),
         downloads=len(archive.downloads),
         duplicates=archive.duplicates,
     )

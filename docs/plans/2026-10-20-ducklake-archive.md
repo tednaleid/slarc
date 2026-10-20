@@ -127,7 +127,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
 - [x] **Step 4: Run `just check` and watch it pass.**
 - [x] **Step 5: Commit:** `Add a DuckLake archive store with commit-at-end semantics`.
 
-### Task 3: DuckDbQueryIndex over the lake
+### Task 3: DuckDbQueryIndex over the lake [done]
 
 **Files:**
 - Modify: `src/slarc/adapters/duckdb_index.py`, `tests/contract/test_duckdb_index.py`
@@ -146,11 +146,11 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
   - `message_current` becomes one `QUALIFY row_number() OVER (PARTITION BY team, channel, ts ORDER BY fetched_at DESC, run DESC, kind) = 1` over `message_version`, keeping the deleted-content, `first_seen_at`/`last_seen_at` and thread-parent rules.
   - `messages()` and `thread()` filter `message_version` by team and channel at the source, and `thread()` also by `thread_ts`.
 
-- [ ] **Step 1: Rebuild the index contract tests' data through `DuckLakeArchiveStore`** (`append` then `append_run`) instead of JSONL files. Add `test_tracked_item_and_download_views` and `test_run_view_keeps_tracked_and_downloads_columns`.
-- [ ] **Step 2: Run them and watch them fail.**
-- [ ] **Step 3: Implement the views,** keeping every existing contract test's expectations.
-- [ ] **Step 4: Run `just check` and watch it pass.**
-- [ ] **Step 5: Commit:** `Query the lake: views over its tables, one QUALIFY for the current message`.
+- [x] **Step 1: Rebuild the index contract tests' data through `DuckLakeArchiveStore`** (`append` then `append_run`) instead of JSONL files. Add `test_tracked_item_and_download_views` and `test_run_view_keeps_tracked_and_downloads_columns`.
+- [x] **Step 2: Run them and watch them fail.**
+- [x] **Step 3: Implement the views,** keeping every existing contract test's expectations.
+- [x] **Step 4: Run `just check` and watch it pass.**
+- [x] **Step 5: Commit:** `Query the lake: views over its tables, one QUALIFY for the current message`.
 
 ### Task 4: JSONL import and JSONL export [done]
 
@@ -185,7 +185,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
 - [x] **Step 4: Run `just check` and watch it pass.**
 - [x] **Step 5: Commit:** `Import JSONL archives into the lake, and export a lake back to JSONL`.
 
-### Task 5: Switch to the lake
+### Task 5: Switch to the lake [done]
 
 **Files:**
 - Modify:
@@ -207,13 +207,13 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
     - criterion (a) becomes `"(a) pulling the same channels twice adds no message or directory rows"`, checked by comparing row counts of `message_version` and `directory_entry`.
   - **`scripts/record-fixtures.py`** pulls into a temp lake, then runs `export_jsonl` into a temp directory before its existing scrub and copy. The fixture archive stays JSONL.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `test_first_command_imports_once`: a JSONL archive is imported by `slarc list` with the message printed, and a second `slarc list` prints no import message.
   - `test_new_archive_creates_a_lake`: `slarc pull --yes` in an empty directory creates `catalog.sqlite`.
-- [ ] **Step 2: Run them and watch them fail.**
-- [ ] **Step 3: Implement the bootstrap switch, the fixture helper and the test updates.** Update both scripts. Neither runs in `just check`, so `just acceptance` is run in Task 16.
-- [ ] **Step 4: Run `just check` and watch it pass.**
-- [ ] **Step 5: Commit:** `Open archives as DuckLakes, importing JSONL archives on first use`.
+- [x] **Step 2: Run them and watch them fail.**
+- [x] **Step 3: Implement the bootstrap switch, the fixture helper and the test updates.** Update both scripts. Neither runs in `just check`, so `just acceptance` is run in Task 16.
+- [x] **Step 4: Run `just check` and watch it pass.**
+- [x] **Step 5: Commit:** `Open archives as DuckLakes, importing JSONL archives on first use`.
 
 ### Task 6: Delete the JSONL store
 

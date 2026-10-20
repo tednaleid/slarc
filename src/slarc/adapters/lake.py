@@ -5,7 +5,7 @@ from pathlib import Path
 
 import duckdb
 
-from slarc.ports import SlarcError
+from slarc.ports import ArchiveWriteFailed, SlarcError
 
 CATALOG = "catalog.sqlite"
 DATA_DIR = "data"
@@ -83,9 +83,10 @@ def connect_lake(
 ) -> duckdb.DuckDBPyConnection:
     """Attach the archive's lake as `lake` and make it the default catalog.
 
-    A writable connection creates the catalog, tables and options when they are missing.
-    `autoinstall=False` skips the download and exists for tests. `catalog` and `data_dir`
-    name the catalog file and data directory inside root.
+    A writable connection creates the catalog, tables and options when they are missing, and
+    raises ArchiveWriteFailed when it cannot open the catalog. `autoinstall=False` skips the
+    download and exists for tests. `catalog` and `data_dir` name the catalog file and data
+    directory inside root.
     """
     con = duckdb.connect(":memory:")
     try:
@@ -99,9 +100,16 @@ def connect_lake(
         ]
         if read_only:
             attach_options.append("READ_ONLY")
-        con.execute(
-            f"ATTACH 'ducklake:sqlite:{root / catalog}' AS lake ({', '.join(attach_options)})"
-        )
+        try:
+            con.execute(
+                f"ATTACH 'ducklake:sqlite:{root / catalog}' AS lake ({', '.join(attach_options)})"
+            )
+        except duckdb.Error as error:
+            if read_only:
+                raise
+            # DuckDB's message ends with the cause, after the catalog path it already names.
+            reason = str(error).splitlines()[0].rsplit(": ", 1)[-1]
+            raise ArchiveWriteFailed(root / catalog, reason) from None
         con.execute("USE lake")
         if not read_only:
             _create_missing(con)

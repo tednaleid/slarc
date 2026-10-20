@@ -1,4 +1,4 @@
-# ABOUTME: Tests for the `slarc export` command over a copy of the recorded archive with its blobs.
+# ABOUTME: Tests for the `slarc export` command over a lake of the recorded archive with its blobs.
 # ABOUTME: The command writes real files under a temp directory and never connects to Slack.
 import shutil
 from pathlib import Path
@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from slarc import bootstrap, cli
 from slarc.cli import app
-from tests.recorded_fixtures import RECORDED, copy_recorded
+from tests.recorded_fixtures import RECORDED, recorded_lake
 from tests.test_cli_list_search import services
 
 runner = CliRunner()
@@ -17,7 +17,7 @@ SCREENSHOT = "ca3f1d09a38b3f0dc102411b3c732a8cabc6cdb275e88457417ae32d098578fd"
 
 @pytest.fixture
 def archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    root = copy_recorded(tmp_path / "archive")
+    root = recorded_lake(tmp_path / "archive")
     shutil.copytree(RECORDED / "blobs", root / "blobs")
     work = tmp_path / "work"
     work.mkdir()

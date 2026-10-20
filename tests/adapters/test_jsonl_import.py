@@ -3,6 +3,7 @@
 import hashlib
 from pathlib import Path
 
+import msgspec
 import pytest
 
 from slarc.adapters import jsonl_import
@@ -104,10 +105,25 @@ def test_import_of_recorded_fixture_matches_jsonl_reads(tmp_path: Path, ext_dir:
     assert_same_reads(lake, expected, teams_of(root))
     assert lake.downloads() == outstanding_without_removed(expected)
     assert report == ImportReport(
-        messages=44, directory=65, runs=1, tracked=5, downloads=len(lake.downloads()), duplicates=0
+        messages=44,
+        directory=65,
+        runs=1,
+        tracked=5,
+        removed=0,
+        downloads=len(lake.downloads()),
+        duplicates=0,
     )
     lake.close()
     expected.close()
+
+
+def test_import_report_counts_removed_items_apart(tmp_path: Path, ext_dir: Path) -> None:
+    removed = msgspec.structs.replace(tracked("200.000000", "C0OTHER0001"), status="removed")
+    write_jsonl(tmp_path, runs=[run_record(R1, T1, tracked=[tracked("100.000000"), removed])])
+
+    report = import_jsonl(tmp_path, ext_dir)
+
+    assert (report.tracked, report.removed) == (1, 1)
 
 
 def test_import_drops_exact_duplicates_and_counts_them(tmp_path: Path, ext_dir: Path) -> None:

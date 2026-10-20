@@ -238,7 +238,9 @@ def test_duplicate_and_out_of_order_lines_tolerated(store_and_reopen):
         assert current.directory_state(TEAM, "file")["F1"].blob == "cd" * 32
 
 
-def test_same_second_blob_line_wins_in_store_and_index(store_and_reopen, tmp_path: Path):
+def test_same_second_blob_line_wins_in_store_and_index(
+    store_and_reopen, tmp_path: Path, ext_dir: Path
+):
     """A blob line appended in the same second and run as the line without it is current,
     in the store's fold and in the DuckDB file view."""
     store, reopen = store_and_reopen
@@ -249,8 +251,8 @@ def test_same_second_blob_line_wins_in_store_and_index(store_and_reopen, tmp_pat
     expected = DirectoryState(hash=without_blob.meta.hash or "", blob="cd" * 32)
     for current in (store, reopen()):
         assert current.directory_state(TEAM, "file")["F1"] == expected
-    if isinstance(store, JsonlArchiveStore):
-        with DuckDbQueryIndex(tmp_path) as index:
+    if isinstance(store, DuckLakeArchiveStore):
+        with DuckDbQueryIndex(tmp_path, ext_dir) as index:
             assert index.sql("SELECT blob FROM file WHERE id = 'F1'")[1] == [("cd" * 32,)]
 
 

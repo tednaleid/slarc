@@ -1,5 +1,6 @@
 # ABOUTME: Tests for the `slarc list` and `slarc search` commands over a copy of the recorded data.
 # ABOUTME: Credentials and Slack are fakes swapped in through bootstrap; only --remote uses them.
+import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from slarc.adapters.credentials import CompositeSource, KeyringSource
 from slarc.cli import app
 from slarc.ports import Session
 from tests.fakes import FakeCredentialSource, FakeKeyring, FakeSlackGateway
-from tests.recorded_fixtures import copy_recorded
+from tests.recorded_fixtures import copy_recorded, recorded_lake
 from tests.service.pull_harness import NALEID, spike
 
 runner = CliRunner()
@@ -20,7 +21,7 @@ SEED_LINK = "https://naleidworkspace.slack.com/archives/C0CA7SNHTSP/p17924370619
 
 @pytest.fixture
 def archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    root = copy_recorded(tmp_path / "archive")
+    root = recorded_lake(tmp_path / "archive")
     monkeypatch.chdir(root / "raw")
     monkeypatch.setattr(cli.out, "width", 200)
     return root
@@ -103,3 +104,46 @@ def test_cli_list_and_search_without_archive_fail(
     assert result.exit_code == 1
     assert "No slarc archive found" in result.output
     assert "Traceback" not in result.output
+
+
+def jsonl_hashes(root: Path) -> dict[Path, str]:
+    return {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in root.rglob("*.jsonl")}
+
+
+def test_first_command_imports_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = copy_recorded(tmp_path / "archive")
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(cli.out, "width", 200)
+    before = jsonl_hashes(root)
+
+    first = invoke(tmp_path, "list")
+    second = invoke(tmp_path, "list")
+
+    assert first.exit_code == 0, first.output
+    assert (
+        "Imported this archive into the new storage format: 44 message versions, "
+        "65 directory entries, 1 runs and 5 tracked items. raw/, directory/ and runs.jsonl "
+        "are no longer used and can be deleted once you have checked the archive."
+    ) in first.output
+    assert (root / "catalog.sqlite").is_file()
+    assert second.exit_code == 0, second.output
+    assert "Imported" not in second.output
+    assert "#all-naleid" in second.output
+    assert jsonl_hashes(root) == before
+
+
+def test_cli_search_and_sql_in_an_empty_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "archive"
+    root.mkdir()
+    (root / "slarc.toml").write_text("")
+    monkeypatch.chdir(root)
+
+    searched = invoke(tmp_path, "search", "seed")
+    queried = invoke(tmp_path, "sql", "SELECT count(*) AS n FROM message")
+
+    assert searched.exit_code == 0, searched.output
+    assert searched.output.strip() == "No messages match."
+    assert queried.exit_code == 0, queried.output
+    assert "0" in queried.output

@@ -1,4 +1,4 @@
-# ABOUTME: Tests for the search use case over DuckDB views of a copy of the recorded archive.
+# ABOUTME: Tests for the search use case over DuckDB views of a lake of the recorded archive.
 # ABOUTME: Covers case-insensitive matching, the --in and --from filters, ordering and permalinks.
 from collections.abc import Iterator
 from pathlib import Path
@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
-from slarc.domain.envelope import Envelope, Meta, encode_line
 from slarc.ports import SearchHit, SlarcError
 from slarc.service.search import search
-from tests.recorded_fixtures import RECORDED_TEAM, copy_recorded
+from tests.contract.test_duckdb_index import commit, deleted
+from tests.recorded_fixtures import recorded_lake
 
 ALL_NALEID = "C0CA5396G03"
 FIXTURES = "C0CA7SNHTSP"
@@ -19,12 +19,12 @@ DOMAIN = "naleidworkspace"
 
 @pytest.fixture
 def archive(tmp_path: Path) -> Path:
-    return copy_recorded(tmp_path / "archive")
+    return recorded_lake(tmp_path / "archive")
 
 
 @pytest.fixture
-def index(archive: Path) -> Iterator[DuckDbQueryIndex]:
-    with DuckDbQueryIndex(archive) as idx:
+def index(archive: Path, ext_dir: Path) -> Iterator[DuckDbQueryIndex]:
+    with DuckDbQueryIndex(archive, ext_dir) as idx:
         yield idx
 
 
@@ -54,19 +54,9 @@ def test_search_treats_wildcards_literally(index: DuckDbQueryIndex) -> None:
     assert search(index, "seed_ archived", None, None) == []
 
 
-def test_search_skips_deleted_messages(archive: Path) -> None:
-    meta = Meta(
-        kind="deleted",
-        team=RECORDED_TEAM,
-        channel=ARCHIVED,
-        ts="1792437061.341469",
-        fetched_at="2026-10-20T00:00:00Z",
-        run="r_20261020T000000Z",
-        slarc="0.1.0",
-    )
-    with (archive / "raw" / RECORDED_TEAM / ARCHIVED / "2026-10.jsonl").open("ab") as f:
-        f.write(encode_line(Envelope(meta=meta)))
-    with DuckDbQueryIndex(archive) as index:
+def test_search_skips_deleted_messages(archive: Path, ext_dir: Path) -> None:
+    commit(archive, ext_dir, deleted(ARCHIVED, "1792437061.341469", "2026-10-20T00:00:00Z"))
+    with DuckDbQueryIndex(archive, ext_dir) as index:
         hits = search(index, "seed: archived channel", None, None)
     assert [hit.ts for hit in hits] == ["1792437061.072929", "1792437060.771479"]
 

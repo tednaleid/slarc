@@ -62,6 +62,11 @@ NOTHING_REMOVED = "Nothing removed."
 CANNOT_PULL_AGAIN = "Messages deleted from Slack since they were pulled cannot be pulled again."
 LEFTOVERS = "what is left of removed items"
 RUN_RM_AGAIN = "Run the same slarc rm again to finish it."
+IMPORTED = (
+    "Imported this archive into the new storage format: {messages} message versions, "
+    "{directory} directory entries, {runs} runs and {tracked} tracked items. raw/, directory/ "
+    "and runs.jsonl are no longer used and can be deleted once you have checked the archive."
+)
 
 
 def _print_version(value: bool) -> None:
@@ -275,6 +280,19 @@ def _archive_for_pull(
     return target
 
 
+def _ensure_lake(root: Path) -> None:
+    """Gives the archive a lake on first use, saying so when that imported its JSONL files."""
+    report = bootstrap.ensure_lake(root)
+    if report is not None:
+        message = IMPORTED.format(
+            messages=report.messages,
+            directory=report.directory,
+            runs=report.runs,
+            tracked=report.tracked,
+        )
+        err.print(message, markup=False)
+
+
 def _run_args(
     selectors: list[str], since: str | None, until: str | None, flags: dict[str, object]
 ) -> list[str]:
@@ -351,6 +369,7 @@ def pull_command(
         if archive_root is None:
             out.print(NO_TRACKED_ITEMS, markup=False)
             return
+        _ensure_lake(archive_root)
         overrides = {"downloads": downloads, "max_file_size_mb": max_file_size}
         settings = load_settings(archive_root, global_config, services.env, overrides)
         options = PullOptions(
@@ -389,10 +408,14 @@ def pull_command(
 
 
 def _existing_archive(root: Path | None, env: Mapping[str, str], home: Path) -> Path:
-    """The archive found from the current directory, --root or the config; raises NoArchive."""
+    """The archive found from the current directory, --root or the config, with its lake.
+
+    Raises NoArchive when there is none.
+    """
     found = find_archive(Path.cwd(), root, env, read_global_config(env, home))
     if found is None or not (found / ARCHIVE_FILE).is_file():
         raise NoArchive()
+    _ensure_lake(found)
     return found
 
 

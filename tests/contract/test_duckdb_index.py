@@ -1,21 +1,24 @@
-# ABOUTME: Tests for the DuckDB query index over a copy of the recorded test workspace archive.
-# ABOUTME: Covers latest-wins views, deleted, duplicate and garbage lines, and `slarc sql`.
+# ABOUTME: Tests for the DuckDB query index over a lake imported from the recorded test workspace.
+# ABOUTME: Covers latest-wins views, deleted messages, imported duplicates, and `slarc sql`.
 import json
-import shutil
 from collections.abc import Iterator
 from pathlib import Path
 
+import msgspec
 import pytest
 from typer.testing import CliRunner
 
 from slarc import bootstrap
 from slarc.adapters.credentials import CompositeSource, KeyringSource
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
+from slarc.adapters.jsonl_import import import_jsonl
+from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.cli import app
-from slarc.domain.envelope import Envelope, Meta, encode_line
+from slarc.domain.envelope import Envelope, Meta
+from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
 from slarc.ports import SlarcError
 from tests.fakes import FakeKeyring
-from tests.recorded_fixtures import RECORDED, RECORDED_TEAM, recorded_lines
+from tests.recorded_fixtures import RECORDED_TEAM, copy_recorded, recorded_lake, recorded_lines
 
 ALL_NALEID = "C0CA5396G03"
 FIXTURES = "C0CA7SNHTSP"
@@ -24,6 +27,7 @@ FIXTURES_TOP = "1792437061.952039"  # #slarc-fixtures top-level message
 LATER = "2026-10-20T00:00:00Z"
 EARLIER = "2026-10-01T00:00:00Z"
 LATER_RUN = "r_20261020T000000Z"
+VERSION = "0.1.0"
 
 VIEWS = [
     "message",
@@ -40,6 +44,8 @@ VIEWS = [
     "conversation",
     "run",
     "workspace",
+    "tracked_item",
+    "download",
 ]
 
 runner = CliRunner()
@@ -47,24 +53,32 @@ runner = CliRunner()
 
 @pytest.fixture
 def archive(tmp_path: Path) -> Path:
-    root = tmp_path / "archive"
-    shutil.copytree(RECORDED, root, ignore=shutil.ignore_patterns("blobs"))
-    return root
+    return recorded_lake(tmp_path / "archive")
 
 
 @pytest.fixture
-def index(archive: Path) -> Iterator[DuckDbQueryIndex]:
-    with DuckDbQueryIndex(archive) as idx:
+def index(archive: Path, ext_dir: Path) -> Iterator[DuckDbQueryIndex]:
+    with DuckDbQueryIndex(archive, ext_dir) as idx:
         yield idx
 
 
-def month_file(root: Path, channel: str) -> Path:
-    return root / "raw" / RECORDED_TEAM / channel / "2026-10.jsonl"
+def later_run(**fields) -> RunRecord:
+    return RunRecord(run=LATER_RUN, command="pull", started=LATER, finished=LATER, **fields)
 
 
-def append_line(path: Path, line: dict) -> None:
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(line, separators=(",", ":"), ensure_ascii=False) + "\n")
+def commit(root: Path, ext_dir: Path, *lines: Envelope, run: RunRecord | None = None) -> None:
+    """Appends lines to the archive's lake and commits them with a run."""
+    store = DuckLakeArchiveStore(root, ext_dir)
+    try:
+        for env in lines:
+            store.append(env)
+        store.append_run(run or later_run(), VERSION)
+    finally:
+        store.close()
+
+
+def envelope(line: dict) -> Envelope:
+    return msgspec.convert(line, Envelope)
 
 
 def stored_line(channel: str, ts: str) -> dict:
@@ -72,14 +86,14 @@ def stored_line(channel: str, ts: str) -> dict:
     return next(line for line in lines if line["meta"]["ts"] == ts)
 
 
-def append_edit(root: Path, channel: str, ts: str, text: str, fetched_at: str = LATER) -> None:
+def edit(channel: str, ts: str, text: str, fetched_at: str = LATER) -> Envelope:
     line = stored_line(channel, ts)
     line["meta"] |= {"fetched_at": fetched_at, "run": LATER_RUN, "hash": "e" * 64, "plain": text}
     line["object"] |= {"text": text, "edited": {"user": "U0CA538UEN7", "ts": "1792500000.000000"}}
-    append_line(month_file(root, channel), line)
+    return envelope(line)
 
 
-def append_deleted(root: Path, channel: str, ts: str, fetched_at: str) -> None:
+def deleted(channel: str, ts: str, fetched_at: str) -> Envelope:
     meta = Meta(
         kind="deleted",
         team=RECORDED_TEAM,
@@ -87,10 +101,9 @@ def append_deleted(root: Path, channel: str, ts: str, fetched_at: str) -> None:
         ts=ts,
         fetched_at=fetched_at,
         run=LATER_RUN,
-        slarc="0.1.0",
+        slarc=VERSION,
     )
-    with month_file(root, channel).open("ab") as f:
-        f.write(encode_line(Envelope(meta=meta)))
+    return Envelope(meta=meta)
 
 
 def scalar(index: DuckDbQueryIndex, query: str):
@@ -102,9 +115,9 @@ def recorded_message_keys() -> set[tuple[str, str]]:
     return {(line["meta"]["channel"], line["meta"]["ts"]) for line in lines}
 
 
-def test_message_view_one_row_per_key(archive: Path) -> None:
-    append_edit(archive, ALL_NALEID, WAVE_PARENT, "edited text")
-    with DuckDbQueryIndex(archive) as index:
+def test_message_view_one_row_per_key(archive: Path, ext_dir: Path) -> None:
+    commit(archive, ext_dir, edit(ALL_NALEID, WAVE_PARENT, "edited text"))
+    with DuckDbQueryIndex(archive, ext_dir) as index:
         columns, rows = index.sql("SELECT channel_id, ts FROM message")
         assert columns == ["channel_id", "ts"]
         assert sorted(rows) == sorted(recorded_message_keys())
@@ -112,10 +125,10 @@ def test_message_view_one_row_per_key(archive: Path) -> None:
         assert index.sql(query)[1] == [("edited text", "1792500000.000000")]
 
 
-def test_message_version_counts_lines(archive: Path) -> None:
+def test_message_version_counts_lines(archive: Path, ext_dir: Path) -> None:
     raw_lines = recorded_lines(f"raw/{RECORDED_TEAM}/*/*.jsonl")
-    append_edit(archive, ALL_NALEID, WAVE_PARENT, "edited text")
-    with DuckDbQueryIndex(archive) as index:
+    commit(archive, ext_dir, edit(ALL_NALEID, WAVE_PARENT, "edited text"))
+    with DuckDbQueryIndex(archive, ext_dir) as index:
         assert scalar(index, "SELECT count(*) FROM message_version") == len(raw_lines) + 1
         query = (
             "SELECT fetched_at, hash IS NOT NULL, edited_ts FROM message_version "
@@ -128,12 +141,16 @@ def test_message_version_counts_lines(archive: Path) -> None:
         ]
 
 
-def test_deleted_at_set_from_deleted_line(archive: Path) -> None:
-    with DuckDbQueryIndex(archive) as index:
+def test_deleted_at_set_from_deleted_line(archive: Path, ext_dir: Path) -> None:
+    with DuckDbQueryIndex(archive, ext_dir) as index:
         before = index.conversation_counts()
-    append_deleted(archive, ALL_NALEID, WAVE_PARENT, LATER)
-    append_deleted(archive, FIXTURES, FIXTURES_TOP, EARLIER)
-    with DuckDbQueryIndex(archive) as index:
+    commit(
+        archive,
+        ext_dir,
+        deleted(ALL_NALEID, WAVE_PARENT, LATER),
+        deleted(FIXTURES, FIXTURES_TOP, EARLIER),
+    )
+    with DuckDbQueryIndex(archive, ext_dir) as index:
         query = f"SELECT deleted_at, plain FROM message WHERE ts = '{WAVE_PARENT}'"
         plain = stored_line(ALL_NALEID, WAVE_PARENT)["meta"]["plain"]
         assert index.sql(query)[1] == [(LATER, plain)]
@@ -163,8 +180,7 @@ def test_reaction_base_name(index: DuckDbQueryIndex) -> None:
     assert all(len(user_ids) == 1 for *_, user_ids in rows)
 
 
-def test_user_display_fallback(archive: Path) -> None:
-    users = archive / "directory" / RECORDED_TEAM / "users.jsonl"
+def test_user_display_fallback(archive: Path, ext_dir: Path) -> None:
     bare = {
         "meta": {
             "schema": 1,
@@ -179,8 +195,8 @@ def test_user_display_fallback(archive: Path) -> None:
         },
         "object": {"id": "U0BARE", "name": "bare", "profile": {"display_name": ""}},
     }
-    append_line(users, bare)
-    with DuckDbQueryIndex(archive) as index:
+    commit(archive, ext_dir, envelope(bare))
+    with DuckDbQueryIndex(archive, ext_dir) as index:
         rows = index.sql("SELECT id, display FROM user ORDER BY id")[1]
         assert dict(rows) == {
             "U0BARE": "bare",
@@ -195,29 +211,35 @@ def snapshot(index: DuckDbQueryIndex) -> dict[str, list[tuple]]:
     return {view: index.sql(f"SELECT * FROM {view} ORDER BY ALL")[1] for view in VIEWS}
 
 
-def test_views_identical_after_duplicate_lines(archive: Path) -> None:
-    with DuckDbQueryIndex(archive) as index:
-        before = snapshot(index)
-    for path in archive.rglob("*.jsonl"):
+def test_views_identical_after_importing_duplicate_lines(
+    index: DuckDbQueryIndex, tmp_path: Path, ext_dir: Path
+) -> None:
+    before = snapshot(index)
+    doubled = copy_recorded(tmp_path / "doubled")
+    for path in doubled.rglob("*.jsonl"):
         lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
         with path.open("a", encoding="utf-8") as f:
             f.writelines(reversed(lines))
-    with DuckDbQueryIndex(archive) as index:
+    import_jsonl(doubled, ext_dir)
+    with DuckDbQueryIndex(doubled, ext_dir) as index:
         assert snapshot(index) == before
-    assert all(before[view] for view in VIEWS if view != "usergroup")
+    assert all(before[view] for view in VIEWS if view not in ("usergroup", "download"))
 
 
-def test_garbage_line_in_month_file_is_skipped(archive: Path) -> None:
-    with month_file(archive, ALL_NALEID).open("a", encoding="utf-8") as f:
+def test_garbage_line_in_month_file_is_not_imported(tmp_path: Path, ext_dir: Path) -> None:
+    root = copy_recorded(tmp_path / "archive")
+    with (root / "raw" / RECORDED_TEAM / ALL_NALEID / "2026-10.jsonl").open("a") as f:
         f.write('{"meta":{"schema":1,"kind":"mess\n')
-    with DuckDbQueryIndex(archive) as index:
+    import_jsonl(root, ext_dir)
+    with DuckDbQueryIndex(root, ext_dir) as index:
         assert sorted(index.sql("SELECT channel_id, ts FROM message")[1]) == sorted(
             recorded_message_keys()
         )
 
 
-def test_views_exist_without_any_files(tmp_path: Path) -> None:
-    with DuckDbQueryIndex(tmp_path) as index:
+def test_views_exist_over_an_empty_lake(tmp_path: Path, ext_dir: Path) -> None:
+    DuckLakeArchiveStore(tmp_path, ext_dir).close()
+    with DuckDbQueryIndex(tmp_path, ext_dir) as index:
         for view in VIEWS:
             columns, rows = index.sql(f"SELECT * FROM {view}")
             assert columns
@@ -236,13 +258,7 @@ def test_conversation_view_kinds(index: DuckDbQueryIndex) -> None:
     ]
 
 
-def auth_run(run: str, finished: str, auth: list[dict]) -> dict:
-    meta = {"schema": 1, "kind": "run", "fetched_at": finished, "run": run, "slarc": "0.1.0"}
-    obj = {"run": run, "command": "pull", "started": finished, "finished": finished, "auth": auth}
-    return {"meta": meta, "object": obj}
-
-
-def test_workspace_view_takes_latest_auth_per_team(archive: Path) -> None:
+def test_workspace_view_takes_latest_auth_per_team(archive: Path, ext_dir: Path) -> None:
     later = {
         "team_id": RECORDED_TEAM,
         "user_id": "U0OTHER",
@@ -251,8 +267,8 @@ def test_workspace_view_takes_latest_auth_per_team(archive: Path) -> None:
         "auth_test_at": LATER,
     }
     other = later | {"team_id": "T0OTHER", "user_id": "U0X", "domain": "other"}
-    append_line(archive / "runs.jsonl", auth_run(LATER_RUN, LATER, [later, other]))
-    with DuckDbQueryIndex(archive) as index:
+    commit(archive, ext_dir, run=later_run(auth=[later, other]))
+    with DuckDbQueryIndex(archive, ext_dir) as index:
         query = (
             "SELECT team_id, domain, user_ids, credential_source, last_auth_test "
             "FROM workspace ORDER BY team_id"
@@ -264,15 +280,14 @@ def test_workspace_view_takes_latest_auth_per_team(archive: Path) -> None:
         assert index.sql("SELECT name FROM workspace")[0] == ["name"]
 
 
-def test_run_view_exposes_api_calls_and_threads_read_as_json(archive: Path) -> None:
-    line = auth_run(LATER_RUN, LATER, [])
-    line["object"]["counts"] = {
+def test_run_view_exposes_api_calls_and_threads_read_as_json(archive: Path, ext_dir: Path) -> None:
+    counts = {
         "messages_seen": 3,
         "api_calls": {"auth.test": 1, "conversations.replies": 2},
         "threads_read": {"search": 1},
     }
-    append_line(archive / "runs.jsonl", line)
-    with DuckDbQueryIndex(archive) as index:
+    commit(archive, ext_dir, run=later_run(counts=counts))
+    with DuckDbQueryIndex(archive, ext_dir) as index:
         query = (
             "SELECT messages_seen, CAST(api_calls ->> 'conversations.replies' AS BIGINT), "
             "CAST(threads_read ->> 'search' AS BIGINT), json_keys(api_calls) "
@@ -289,16 +304,14 @@ def test_reply_count_computed_from_stored_replies(index: DuckDbQueryIndex) -> No
     assert index.sql(query)[1] == [(True, 3, "1792422623.464629")]
 
 
-def test_parent_stored_before_its_replies_is_thread_parent(archive: Path) -> None:
-    path = month_file(archive, ALL_NALEID)
-    lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    for line in lines:
-        if line["meta"]["ts"] == WAVE_PARENT:
-            del line["object"]["thread_ts"]
-    path.write_text("")
-    for line in lines:
-        append_line(path, line)
-    with DuckDbQueryIndex(archive) as index:
+def test_parent_stored_before_its_replies_is_thread_parent(archive: Path, ext_dir: Path) -> None:
+    parent = stored_line(ALL_NALEID, WAVE_PARENT)
+    del parent["object"]["thread_ts"]
+    store = DuckLakeArchiveStore(archive, ext_dir)
+    store.drop_messages(RECORDED_TEAM, ALL_NALEID, {WAVE_PARENT})
+    store.close()
+    commit(archive, ext_dir, envelope(parent))
+    with DuckDbQueryIndex(archive, ext_dir) as index:
         query = (
             "SELECT is_thread_parent, thread_ts, reply_count FROM message "
             f"WHERE ts = '{WAVE_PARENT}'"
@@ -323,11 +336,9 @@ def file_lines_differing_in_blob() -> list[dict]:
 
 
 @pytest.mark.parametrize("order", [1, -1])
-def test_directory_tie_prefers_line_with_blob(archive: Path, order: int) -> None:
-    files = archive / "directory" / RECORDED_TEAM / "files.jsonl"
-    for line in file_lines_differing_in_blob()[::order]:
-        append_line(files, line)
-    with DuckDbQueryIndex(archive) as index:
+def test_directory_tie_prefers_line_with_blob(archive: Path, ext_dir: Path, order: int) -> None:
+    commit(archive, ext_dir, *map(envelope, file_lines_differing_in_blob()[::order]))
+    with DuckDbQueryIndex(archive, ext_dir) as index:
         assert index.sql("SELECT blob FROM file WHERE id = 'F0BLOB'")[1] == [("a" * 64,)]
 
 
@@ -364,16 +375,94 @@ def test_thread_returns_parent_then_replies(index: DuckDbQueryIndex) -> None:
     assert messages[0]["reply_count"] == 3
 
 
-def test_messages_and_thread_read_only_their_channels_files(archive: Path) -> None:
-    with DuckDbQueryIndex(archive) as index:
+def message_view_rows(index: DuckDbQueryIndex, condition: str) -> list[tuple[str, str | None]]:
+    query = f"SELECT ts, deleted_at FROM message WHERE {condition} ORDER BY ts"
+    return [tuple(row) for row in index.sql(query)[1]]
+
+
+def test_messages_and_thread_match_the_message_view(archive: Path, ext_dir: Path) -> None:
+    reply = "1792411464.844209"
+    commit(
+        archive,
+        ext_dir,
+        edit(ALL_NALEID, WAVE_PARENT, "edited text"),
+        deleted(ALL_NALEID, reply, LATER),
+    )
+    in_channel = f"team_id = '{RECORDED_TEAM}' AND channel_id = '{ALL_NALEID}'"
+    in_thread = f"{in_channel} AND (ts = '{WAVE_PARENT}' OR thread_ts = '{WAVE_PARENT}')"
+    with DuckDbQueryIndex(archive, ext_dir) as index:
         every = index.messages(RECORDED_TEAM, ALL_NALEID, None, None, include_deleted=True)
         thread = index.thread(RECORDED_TEAM, ALL_NALEID, WAVE_PARENT, include_deleted=True)
-        for channel in (archive / "raw" / RECORDED_TEAM).iterdir():
-            if channel.name != ALL_NALEID:
-                shutil.rmtree(channel)
+        shown = index.thread(RECORDED_TEAM, ALL_NALEID, WAVE_PARENT, include_deleted=False)
 
-        assert index.messages(RECORDED_TEAM, ALL_NALEID, None, None, include_deleted=True) == every
-        assert index.thread(RECORDED_TEAM, ALL_NALEID, WAVE_PARENT, include_deleted=True) == thread
+        assert [(m["ts"], m["deleted_at"]) for m in every] == message_view_rows(index, in_channel)
+        assert [(m["ts"], m["deleted_at"]) for m in thread] == message_view_rows(index, in_thread)
+        assert (reply, LATER) in [(m["ts"], m["deleted_at"]) for m in thread]
+        assert reply not in [m["ts"] for m in shown]
+        assert thread[0]["plain"] == "edited text"
+
+
+def test_tracked_item_and_download_views(tmp_path: Path, ext_dir: Path) -> None:
+    item = TrackedItem(
+        team_id=RECORDED_TEAM,
+        kind="conversation",
+        channel=ALL_NALEID,
+        newest_ts=WAVE_PARENT,
+        last_read={"U0CA538UEN7": WAVE_PARENT},
+    )
+    removed = TrackedItem(
+        team_id=RECORDED_TEAM, kind="thread", channel=FIXTURES, ts=FIXTURES_TOP, status="removed"
+    )
+    state = DownloadState(
+        team_id=RECORDED_TEAM, target_kind="file", target="F0PDF", status="failed", attempts=2
+    )
+    commit(tmp_path, ext_dir, run=later_run(tracked=[item, removed], downloads=[state]))
+    with DuckDbQueryIndex(tmp_path, ext_dir) as index:
+        rows = index.sql(
+            "SELECT team_id, kind, channel_id, ts, newest_ts, status, "
+            "last_read ->> 'U0CA538UEN7', json_array_length(retry_threads) "
+            "FROM tracked_item ORDER BY kind"
+        )[1]
+        assert rows == [
+            (RECORDED_TEAM, "conversation", ALL_NALEID, None, WAVE_PARENT, "ok", WAVE_PARENT, 0),
+            (RECORDED_TEAM, "thread", FIXTURES, FIXTURES_TOP, None, "removed", None, 0),
+        ]
+        assert index.sql("SELECT * FROM tracked_item")[0] == [
+            "team_id",
+            "kind",
+            "channel_id",
+            "ts",
+            "since",
+            "until",
+            "newest_ts",
+            "oldest_ts",
+            "backfill_complete",
+            "last_search_at",
+            "last_pull_at",
+            "status",
+            "archived",
+            "last_read",
+            "retry_threads",
+        ]
+        assert index.sql("SELECT * FROM download") == (
+            ["team_id", "target_kind", "target", "url", "status", "attempts", "last_error"],
+            [(RECORDED_TEAM, "file", "F0PDF", None, "failed", 2, None)],
+        )
+
+
+def test_run_view_keeps_tracked_and_downloads_columns(archive: Path, ext_dir: Path) -> None:
+    recorded_run = recorded_lines("runs.jsonl")[0]["object"]
+    state = DownloadState(
+        team_id=RECORDED_TEAM, target_kind="file", target="F0PDF", status="pending"
+    )
+    commit(archive, ext_dir, run=later_run(downloads=[state]))
+    with DuckDbQueryIndex(archive, ext_dir) as index:
+        rows = index.sql("SELECT run, tracked, downloads FROM run ORDER BY run")[1]
+        (imported, imported_tracked, _), (later, _, later_downloads) = rows
+        assert imported == recorded_run["run"]
+        assert json.loads(imported_tracked) == recorded_run["tracked"]
+        assert later == LATER_RUN
+        assert [d["target"] for d in json.loads(later_downloads)] == ["F0PDF"]
 
 
 def test_bad_sql_raises_one_line_slarc_error(index: DuckDbQueryIndex) -> None:

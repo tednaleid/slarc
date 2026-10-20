@@ -5,16 +5,18 @@ from collections.abc import Iterator
 from contextlib import nullcontext
 from pathlib import Path
 
+import msgspec
 import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
 from slarc import bootstrap
 from slarc.adapters.credentials import CompositeSource, KeyringSource
+from slarc.adapters.lake import CATALOG, connect_lake
+from slarc.adapters.lake_store import VERSION_ORDER
 from slarc.cli import RichReporter, _summary, app
 from slarc.config import create_archive
-from slarc.domain.envelope import decode_line
-from slarc.domain.tracking import RunRecord, run_from_envelope
+from slarc.domain.tracking import RunRecord
 from slarc.ports import AuthFailed, BlobStore, CredentialReadError, Session
 from slarc.service.downloads import QUEUED_STATUSES
 from slarc.service.pull import PullReport
@@ -41,10 +43,24 @@ runner = CliRunner()
 PROMPT = "No archive here. Create one in"
 
 
+def lake_rows(root: Path, ext_dir: Path, query: str) -> list[tuple]:
+    """The rows of a query over the archive's lake tables."""
+    con = connect_lake(root, ext_dir, read_only=True)
+    try:
+        return con.execute(query).fetchall()
+    finally:
+        con.close()
+
+
+def lake_count(root: Path, ext_dir: Path, table: str) -> int:
+    return lake_rows(root, ext_dir, f"SELECT count(*) FROM {table}")[0][0]
+
+
 class Fixture:
-    def __init__(self, work: Path, home: Path) -> None:
+    def __init__(self, work: Path, home: Path, ext_dir: Path) -> None:
         self.work = work
         self.home = home
+        self.ext_dir = ext_dir
         self.env: dict[str, str] = {}
         self.sessions: list[Session] = [NALEID]
         self.credential_error: CredentialReadError | None = None
@@ -79,20 +95,26 @@ class Fixture:
             self.clock.advance(3600)
 
     def runs(self) -> list[RunRecord]:
-        lines = (self.work / "runs.jsonl").read_bytes().splitlines()
-        return [run_from_envelope(decode_line(line)) for line in lines]
+        query = f"SELECT object FROM run ORDER BY {VERSION_ORDER}"
+        rows = lake_rows(self.work, self.ext_dir, query)
+        return [msgspec.json.decode(obj, type=RunRecord) for (obj,) in rows]
 
-    def archive_lines(self) -> int:
-        files = [*self.work.glob("raw/**/*.jsonl"), *self.work.glob("directory/**/*.jsonl")]
-        return sum(len(path.read_bytes().splitlines()) for path in files)
+    def messages(self, channel: str | None = None) -> int:
+        if channel is None:
+            return lake_count(self.work, self.ext_dir, "message_version")
+        query = f"SELECT count(*) FROM message_version WHERE channel = '{channel}'"
+        return lake_rows(self.work, self.ext_dir, query)[0][0]
+
+    def directory_entries(self) -> int:
+        return lake_count(self.work, self.ext_dir, "directory_entry")
 
 
 @pytest.fixture
-def f(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Fixture]:
+def f(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ext_dir: Path) -> Iterator[Fixture]:
     work = tmp_path / "work"
     work.mkdir()
     monkeypatch.chdir(work)
-    yield Fixture(work, tmp_path / "home")
+    yield Fixture(work, tmp_path / "home", ext_dir)
 
 
 def test_pull_creates_archive_after_confirmation(f: Fixture):
@@ -100,7 +122,14 @@ def test_pull_creates_archive_after_confirmation(f: Fixture):
     assert result.exit_code == 0, result.output
     assert f"{PROMPT} {f.work}? [Y/n]" in result.output
     assert (f.work / "slarc.toml").is_file()
-    assert list((f.work / "raw" / TEAM / CHANNEL).glob("*.jsonl"))
+    assert f.messages(CHANNEL) > 0
+
+
+def test_new_archive_creates_a_lake(f: Fixture):
+    result = f.pull("--yes", BASE)
+    assert result.exit_code == 0, result.output
+    assert (f.work / "catalog.sqlite").is_file()
+    assert "Imported" not in result.output
 
 
 def test_pull_declined_creates_nothing(f: Fixture):
@@ -158,8 +187,8 @@ def test_pull_uses_existing_archive_in_a_parent_directory(f: Fixture, monkeypatc
     result = f.pull(BASE)
     assert result.exit_code == 0, result.output
     assert PROMPT not in result.output
-    assert (f.work / "runs.jsonl").is_file()
-    assert not (nested / "runs.jsonl").exists()
+    assert len(f.runs()) == 1
+    assert not (nested / CATALOG).exists()
 
 
 def test_pull_root_without_slarc_toml_creates_archive_after_confirmation(f: Fixture, tmp_path):
@@ -169,7 +198,7 @@ def test_pull_root_without_slarc_toml_creates_archive_after_confirmation(f: Fixt
     assert result.exit_code == 0, result.output
     assert f"No archive at {other}. Create one? [Y/n]" in result.output
     assert (other / "slarc.toml").is_file()
-    assert (other / "runs.jsonl").is_file()
+    assert lake_count(other, f.ext_dir, "run") == 1
     assert list(f.work.iterdir()) == []
 
 
@@ -200,7 +229,7 @@ def test_pull_root_with_archive_skips_prompt(f: Fixture, tmp_path):
     result = f.pull("--root", str(other), BASE)
     assert result.exit_code == 0, result.output
     assert "Create one" not in result.output
-    assert (other / "runs.jsonl").is_file()
+    assert lake_count(other, f.ext_dir, "run") == 1
 
 
 def test_pull_without_selectors_refreshes_tracked(f: Fixture):
@@ -225,8 +254,8 @@ def test_pull_reports_summary(f: Fixture):
     downloads = f.runs()[-1].downloads
     pending = sum(1 for state in downloads if state.status in QUEUED_STATUSES)
     assert pending > 0
-    messages = sum(len(path.read_bytes().splitlines()) for path in f.work.glob("raw/**/*.jsonl"))
-    directory = f.archive_lines() - messages
+    messages = f.messages()
+    directory = f.directory_entries()
     assert result.stdout.splitlines() == [
         f"Pulled 1 item: {messages} new messages, {directory} new directory lines "
         "(users, emoji, files).",
