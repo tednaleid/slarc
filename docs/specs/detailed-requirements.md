@@ -213,7 +213,7 @@ Items marked (spike) were confirmed against the test workspace; the rest come fr
 
 ## Storage
 
-The archive is append-only JSONL files plus a content-addressed blob store, and nothing else (ADR 0001). DuckDB queries the JSONL directly. The files are readable with `cat`, `rg`, `jq`, or an agent.
+The archive is append-only JSONL files plus a content-addressed blob store, and nothing else (ADR 0001). Only `slarc rm` rewrites a file, to delete the lines it removes. DuckDB queries the JSONL directly. The files are readable with `cat`, `rg`, `jq`, or an agent.
 
 **Layout of one archive**
 
@@ -241,7 +241,7 @@ Every line is a `meta` header followed by the verbatim Slack object. `meta` come
 
 **Append rules**
 
-Files are appended to and never rewritten. The current state of a message is its last line for `(team, channel, ts)` ordered by `(fetched_at, run)`; earlier lines are its versions.
+Files are appended to, except that `slarc rm` rewrites the files that lose lines. The current state of a message is its last line for `(team, channel, ts)` ordered by `(fetched_at, run)`; earlier lines are its versions.
 
 1. A never-seen message is appended to the month file of its own `ts`.
 2. A re-read message whose `hash` differs from its last stored line is appended to the same month file. An edit to a 2024 message adds one line to `2024-03.jsonl`.
@@ -296,7 +296,7 @@ DuckDB reads the globs directly with `read_ndjson`, with the `meta` columns give
 - file: everything except `shares` and fields that change on every read.
 - image: the URL plus `Content-Type` and size from the download.
 
-**Versioning**: additive changes to `meta` do not bump `schema`; readers ignore unknown keys. A breaking change bumps it, and readers keep supporting every prior version because files are never rewritten.
+**Versioning**: additive changes to `meta` do not bump `schema`; readers ignore unknown keys. A breaking change bumps it, and readers keep supporting every prior version because only `slarc rm` rewrites files, and it keeps each remaining line as it was.
 
 ## Data model
 

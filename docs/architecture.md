@@ -8,7 +8,7 @@ Dependencies point inward: `cli.py` and `bootstrap.py` know everything, adapters
 
 - **Domain** (`domain/`): pure functions and value types. `links.py` (`MessageTs`, selectors, permalinks), `envelope.py` (the JSONL line), `hashing.py` (hashed subsets), `tracking.py` (`TrackedItem`, `DownloadState`, `RunRecord`), `directory.py` (`DirectoryView`, the name fallback rules), `plain.py` (`meta.plain`), `emoji.py`, and the HTML renderers in `render/`.
 - **Ports** (`ports.py`): one `Protocol` per outside dependency, the value types they pass, and `SlarcError` with its subclasses, whose `str()` is the message the user sees.
-- **Service layer** (`service/`): one module per use case (`pull`, `downloads`, `threads`, `selectors`, `appends`, `auth`, `listing`, `search`, `export`). Each takes its ports as arguments. `pull` is supported by `workspaces` (one connection per workspace), `held_conversation` (what the archive holds for one conversation) and `directory_refresh`.
+- **Service layer** (`service/`): one module per use case (`pull`, `downloads`, `threads`, `selectors`, `appends`, `auth`, `listing`, `search`, `export`, `remove`). Each takes its ports as arguments. `pull` is supported by `workspaces` (one connection per workspace), `held_conversation` (what the archive holds for one conversation) and `directory_refresh`.
 - **Unit of work** (`unit_of_work.py`): scopes one pull run; see below.
 - **Shared state fold** (`archive_state.py`): turns archive lines into current state, latest `(fetched_at, run)` line winning. `JsonlArchiveStore` and the in-memory fake both use it, so duplicate and out-of-order lines read the same in tests and on disk.
 - **Adapters** (`adapters/`): the real implementations of the ports, plus the credential readers (`chromium.py`, `leveldb.py`, `snappy.py`) and the rate limiter (`rate_limit.py`).
@@ -47,7 +47,7 @@ The run line records the command and args, the teams touched, an `auth` entry pe
 
 ## Archive layout
 
-An archive is a directory with `slarc.toml`, month-partitioned message files under `raw/`, one file per directory kind under `directory/`, `runs.jsonl`, and content-addressed blobs under `blobs/sha256/`. Lines are only ever appended. ADR 0001 explains why; the spec's Storage and JSONL schema sections define the layout, the envelope, the append rules and the hashed subsets.
+An archive is a directory with `slarc.toml`, month-partitioned message files under `raw/`, one file per directory kind under `directory/`, `runs.jsonl`, and content-addressed blobs under `blobs/sha256/`. Every write appends lines except `slarc rm`, which rewrites the files that lose lines. ADR 0001 explains why; the spec's Storage and JSONL schema sections define the layout, the envelope, the append rules and the hashed subsets.
 
 ## How a pull flows
 
