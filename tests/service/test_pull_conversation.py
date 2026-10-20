@@ -532,3 +532,14 @@ def test_workspace_selector_with_nothing_tracked_there_fails(h: Harness):
         "Nothing is tracked in workspace naleidworkspace. "
         "Pull a Slack link from it to start tracking it."
     )
+
+
+def test_workspace_selector_keeps_an_item_an_earlier_selector_widened(h: Harness):
+    h.pull(BASE, options=PullOptions(since="2026-10-18"))
+    [narrow] = h.tracked()
+
+    h.pull(BASE, "naleidworkspace", options=PullOptions(since="2026-10-01"))
+
+    [widened] = h.tracked()
+    assert narrow.since is not None
+    assert widened.since == date_to_ts("2026-10-01", end_of_day=False)

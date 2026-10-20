@@ -208,7 +208,7 @@ def _archive_for_pull(
     """The archive to pull into, created after confirmation when it has no slarc.toml.
 
     With no archive found, the archive goes in the current directory. A bare pull never creates
-    one, since an empty archive tracks nothing, and gets None.
+    one, since an empty archive tracks nothing, and gets None; so does a pull of only workspaces.
     """
     found = find_archive(Path.cwd(), root, env, global_config)
     if found is not None and (found / ARCHIVE_FILE).is_file():
@@ -295,12 +295,13 @@ def pull_command(
         _fail(RANGE_NOT_FOR_WORKSPACE)
     _check_date("--since", since)
     _check_date("--until", until)
+    all_workspaces = all(isinstance(selector, WorkspaceSel) for selector in parsed)
     services = bootstrap.current_services()
     flags = {"--channel": channel, "--full": full, "--downloads": downloads}
     args = _run_args(texts, since, until, flags | {"--max-file-size": max_file_size})
     try:
         global_config = read_global_config(services.env, services.home)
-        archive_root = _archive_for_pull(root, services.env, global_config, yes, not parsed)
+        archive_root = _archive_for_pull(root, services.env, global_config, yes, all_workspaces)
         if archive_root is None:
             out.print(NO_TRACKED_ITEMS, markup=False)
             return

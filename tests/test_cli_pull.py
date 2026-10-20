@@ -116,6 +116,14 @@ def test_bare_pull_without_an_archive_says_nothing_is_tracked(f: Fixture):
     assert f.gateway.calls == []
 
 
+def test_workspace_only_pull_without_an_archive_says_nothing_is_tracked(f: Fixture):
+    result = f.pull("--yes", "acme")
+    assert result.exit_code == 0, result.output
+    assert "No tracked items yet. Pull a Slack link to start tracking it." in result.output
+    assert list(f.work.iterdir()) == []
+    assert f.gateway.calls == []
+
+
 def test_bare_pull_with_nothing_tracked_says_so(f: Fixture):
     create_archive(f.work)
     result = f.pull()

@@ -187,7 +187,8 @@ class _PullRun:
                         f"Nothing is tracked in workspace {selector.domain}. "
                         "Pull a Slack link from it to start tracking it."
                     )
-                items.update((item.key, item) for item in held)
+                for item in held:
+                    items.setdefault(item.key, item)
                 continue
             if isinstance(selector, ConversationSel):
                 channel = resolve_conversation(
