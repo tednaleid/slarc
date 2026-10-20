@@ -128,7 +128,7 @@ A commit is one DuckDB transaction against the lake, made while holding the writ
 - each workspace's directory refresh;
 - each tracked item, when it finishes or is skipped (Slack-archived or not visible);
 - each history page while an item backfills, with the cursor moved past that page;
-- the download drain, every N results (the builder picks N, around 50), plus the final avatar and emoji linking.
+- the download drain, one commit per download result, plus one for the final avatar and emoji linking. A result commits its directory row and state change only if the target's download state still exists; otherwise that result is dropped and its blob is left for idle maintenance.
 
 **Batch boundaries in rm:** one commit records the whole removal.
 
@@ -156,7 +156,7 @@ The same check covers the other two kinds of commit:
 3. rm of C1 commits first. Its plan can't see B's uncommitted message, so it deletes F's directory rows and download state.
 4. B's revision check passes, and its message would commit pointing at a file with no metadata and no blob. Incremental pulls don't re-read that message, so nothing would repair it.
 
-So a pull's commit also checks, inside its transaction, that every file and image the batch's messages reference has a directory row. For any that don't, the commit adds the directory row from the message it holds and queues the download, as a first sighting would.
+So a pull's batch records each file and image it assumed was stored, and its commit checks, inside the transaction, that each still has a directory row. If one doesn't, the commit rolls back like a revision conflict. The rolled-back batch held the cursor moves too, so the next pull reads those messages again, finds the file missing, and stores and queues it as a first sighting.
 
 DuckLake has no primary keys or unique constraints. These checks are reads inside the transaction, and they are safe only because the write lock serializes every transaction.
 
@@ -217,7 +217,7 @@ An archive is opened by one machine at a time, and slarc enforces it.
 From the user's side, rm is unchanged except for the result message:
 - the prompt and confirmation are as today;
 - the plan shown before the prompt is computed as today: the messages no remaining tracked item covers, the files and images only they reference, and the download states no kept message references. Avatars and custom emoji stay while anything in the workspace is tracked, as today;
-- on confirmation, rm recomputes the plan inside its own transaction, under the write lock, as today's sweep re-reads the tracked items. A pull may have committed more messages for the item while the prompt was open, and those must go too;
+- on confirmation, rm recomputes the plan from fresh reads, as today's sweep does, and commits it with a revision check on every tracked item in the affected workspaces: the removed ones and the kept ones. A pull that committed in between changes a revision, so the commit fails and rm recomputes and tries again, up to three times. A pull may have committed more messages for the item while the prompt was open, and those must go too;
 - that one commit deletes the `message_version`, `directory_entry` and `download_state` rows in the recomputed plan, and sets each removed item's status to `removed` with its revision bumped;
 - if the recomputed counts differ from the ones shown, the result message reports the actual counts;
 - rm then runs maintenance.
@@ -329,8 +329,9 @@ Importing 1M lines took 4.5 s in spike 3.
 - The run row is written only at the end, as today. A killed run leaves no row.
 - `serve` holds the read lock per request.
 - The owning host is identified by a stable machine id, and taking ownership is a global `--take-ownership` option.
-- rm recomputes its plan inside its commit and reports the actual counts if they changed.
-- A pull's commit restores any file or image row its messages need that a concurrent rm deleted.
+- rm recomputes its plan on confirmation and commits it with revision checks on every tracked item in the affected workspaces, retrying up to three times. It reports the actual counts if they changed.
+- A pull's commit fails if a file or image row it assumed was stored has been deleted by a concurrent rm, and the next pull repairs it.
+- The download drain commits once per result.
 - The directory-refresh guard is "any item not removed".
 - Migration imports only outstanding download states.
 - The `run` view keeps empty `tracked` and `downloads` columns for new runs.
@@ -340,7 +341,6 @@ Importing 1M lines took 4.5 s in spike 3.
 ## Left to the builder
 
 - The exact shape of the commit operation on `ArchiveStore`, and how the open batch is merged into reads.
-- N for download batches.
 - The SQLite VACUUM threshold.
 - The DDL, column types and sort mechanism, within the rules above.
 - Task order. A reasonable order is:
