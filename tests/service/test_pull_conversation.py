@@ -272,38 +272,6 @@ def test_interrupted_run_line_records_api_calls_and_thread_reads(
     assert (api_calls["auth.test"], api_calls["conversations.replies"]) == (1, 1)
 
 
-def test_interrupted_backfill_resumes_from_oldest_ts(h: Harness, monkeypatch: pytest.MonkeyPatch):
-    stamps = [ts_on(18, hour) for hour in range(7)]
-    h.serve(stamps, page_size=2)
-    served = h.gateway.history
-
-    def interrupted_on_page_3(
-        channel: str, oldest: str | None, latest: str | None
-    ) -> Iterator[list[dict]]:
-        for number, page in enumerate(served(channel, oldest, latest), start=1):
-            if number == 3:
-                raise KeyboardInterrupt
-            yield page
-
-    monkeypatch.setattr(h.gateway, "history", interrupted_on_page_3)
-    with pytest.raises(KeyboardInterrupt):
-        h.pull(BASE)
-
-    [partial] = h.last_run().tracked
-    assert (partial.newest_ts, partial.oldest_ts) == (stamps[6], stamps[3])
-    assert partial.backfill_complete is False
-    assert message_ts_since(h, 0) == stamps[3:][::-1]
-
-    monkeypatch.undo()
-    h.gateway.calls.clear()
-    h.pull()
-
-    assert sorted(message_ts_since(h, 0)) == stamps
-    assert history_calls(h) == [(None, stamps[3]), (None, stamps[3]), (stamps[6], None)]
-    [item] = h.tracked()
-    assert (item.newest_ts, item.oldest_ts, item.backfill_complete) == (stamps[6], stamps[0], True)
-
-
 def interrupt_history(h: Harness, monkeypatch: pytest.MonkeyPatch, on_page: int) -> None:
     """Raises KeyboardInterrupt when history reaches the given page."""
     served = h.gateway.history
@@ -321,7 +289,7 @@ def test_interrupted_first_pull_keeps_the_new_item(h: Harness, monkeypatch: pyte
     interrupt_history(h, monkeypatch, on_page=1)
     with pytest.raises(KeyboardInterrupt):
         h.pull(BASE)
-    [item] = h.last_run().tracked
+    [item] = h.tracked()
     assert (item.channel, item.backfill_complete, item.oldest_ts) == (CHANNEL, False, None)
 
     monkeypatch.undo()
@@ -643,7 +611,7 @@ def test_workspace_selector_keeps_an_item_an_earlier_selector_widened(h: Harness
     assert widened.since == date_to_ts("2026-10-01", end_of_day=False)
 
 
-def test_interrupted_thread_read_keeps_lines_appended_before_it(
+def test_interrupted_thread_read_keeps_the_pages_committed_before_it(
     h: Harness, monkeypatch: pytest.MonkeyPatch
 ):
     first, second = ts_on(18, 1), ts_on(18, 3)
@@ -654,6 +622,7 @@ def test_interrupted_thread_read_keeps_lines_appended_before_it(
         message(second, thread_ts=second, reply_count=1),
         message(stamps[3], thread_ts=second),
     ]
+    h.gateway.page_size = 1
     served = h.gateway.replies
 
     def interrupted_on_first(channel: str, ts: str) -> list[dict]:
@@ -665,9 +634,9 @@ def test_interrupted_thread_read_keeps_lines_appended_before_it(
     with pytest.raises(KeyboardInterrupt):
         h.pull(BASE)
 
-    assert sorted(message_ts_since(h, 0)) == [first, second, stamps[3]]
-    [item] = h.last_run().tracked
-    assert (item.oldest_ts, item.backfill_complete) == (None, False)
+    assert sorted(message_ts_since(h, 0)) == [second, stamps[3]]
+    [item] = h.tracked()
+    assert (item.oldest_ts, item.backfill_complete) == (second, False)
 
     monkeypatch.undo()
     h.pull()

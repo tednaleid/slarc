@@ -116,13 +116,16 @@ class UnitOfWork:
         tb: TracebackType | None,
     ) -> None:
         try:
-            # Commits what is left open, however the run ended, so an interrupted run keeps
-            # what it read. Item changes not committed by the service arrive in run.tracked.
-            self.commit(self.run.tracked)
+            # A run that ends normally commits what is left open, with the item changes the
+            # service left in run.tracked; a run that raised keeps only what it committed.
+            if exc_type is None:
+                self.commit(self.run.tracked)
         except CommitConflict as error:
             self.run.errors.append({"error": str(error)})
-        self.run.finished = fetched_at(self.clock.now())
-        self.archive.append_run(self.run, self.slarc_version)
+        finally:
+            self.discard()
+            self.run.finished = fetched_at(self.clock.now())
+            self.archive.append_run(self.run, self.slarc_version)
 
     def _current(self, item: TrackedItem) -> TrackedItem:
         revision = self._revisions.get(item.key)

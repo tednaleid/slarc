@@ -8,7 +8,7 @@ from slarc import __version__
 from slarc.domain.directory import DirectoryView
 from slarc.domain.hashing import content_hash
 from slarc.domain.tracking import DownloadState
-from slarc.ports import AuthFailed, DownloadJob
+from slarc.ports import AuthFailed, CommitConflict, DirectoryState, DownloadJob
 from slarc.service.downloads import (
     drain_downloads,
     image_urls,
@@ -348,6 +348,34 @@ def test_removed_prior_state_queues_afresh(h: Harness):
 
     assert {job.target for job in jobs} == {SNIPPET, GIPHY_URL}
     assert [(s.status, s.attempts) for s in states] == [("pending", 0)] * 2
+
+
+@pytest.mark.parametrize(
+    "shown",
+    [
+        {"files": [{"id": SNIPPET, "url_private_download": SNIPPET_URL, "size": 10}]},
+        {"attachments": [{"image_url": GIPHY_URL}]},
+    ],
+)
+def test_targets_found_downloaded_must_still_be_stored_at_the_next_commit(h: Harness, shown: dict):
+    blob, _ = h.blobs.write([b"stored bytes"])
+    stored = DirectoryState(hash="h1", blob=blob)
+    message = {"ts": SNIPPET_TS, **shown}
+
+    with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
+        jobs = queue_downloads(
+            message,
+            TEAM,
+            uow,
+            PullOptions().max_file_bytes,
+            files={SNIPPET: stored},
+            images={GIPHY_URL: stored},
+            known={},
+        )
+        with pytest.raises(CommitConflict):
+            uow.commit()
+
+    assert jobs == []
 
 
 def test_drain_retries_earlier_runs_queue(h: Harness):

@@ -24,9 +24,9 @@ def append_directory(
     """Appends each object whose hash or blob differs from its stored line; returns their state.
 
     keep_blob keeps the stored blob of an object whose hash is unchanged, so it is not
-    appended again without it; a changed object's line has no blob, so its bytes are
-    downloaded again. A user or emoji line carries the blob of its image once that image is
-    downloaded.
+    appended again without it, and the next commit requires that stored line to still exist;
+    a changed object's line has no blob, so its bytes are downloaded again. A user or emoji
+    line carries the blob of its image once that image is downloaded.
     """
     appended: dict[str, DirectoryState] = {}
     if not objects:
@@ -42,6 +42,8 @@ def append_directory(
             image = images.get(directory_image_url(kind, obj) or "")
             blob = image.blob if image is not None else None
         if held is not None and (held.hash, held.blob) == (digest, blob):
+            if keep_blob:
+                uow.require((team_id, kind, id_))
             continue
         meta = stamped_meta(uow, kind, team=team_id, id=id_, api=api, hash=digest, blob=blob)
         append_line(uow, Envelope(meta=meta, object=obj))

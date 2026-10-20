@@ -342,7 +342,8 @@ def test_bare_pull_skips_a_workspace_that_cannot_connect(h: Harness, failure: st
 
     run = h.last_run()
     assert run.teams == [TEAM]
-    assert [(item.team_id, item.status) for item in run.tracked] == [(TEAM, "ok")]
+    [pulled] = [item for item in h.tracked() if item.team_id == TEAM]
+    assert pulled.last_pull_at != before[pulled.key].last_pull_at
     [other_item] = [item for item in h.tracked() if item.team_id == OTHER_TEAM]
     assert other_item == before[other_item.key]
     [warning] = h.reporter.warnings

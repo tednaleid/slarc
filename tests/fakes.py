@@ -2,7 +2,8 @@
 # ABOUTME: The archive fake commits like the lake store; the Slack fake pages and fails like Slack.
 import hashlib
 from collections import Counter
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
@@ -67,6 +68,17 @@ class InMemoryArchiveStore:
         self._batch.clear()
         self._line_drops.clear()
         self._download_drops.clear()
+
+    @contextmanager
+    def elsewhere(self) -> Generator[InMemoryArchiveStore]:
+        """Yields the store with an empty open batch, as another command would see it, and puts
+        this command's open batch back afterwards."""
+        held = (self._batch, self._line_drops, self._download_drops)
+        self._batch, self._line_drops, self._download_drops = [], [], set()
+        try:
+            yield self
+        finally:
+            self._batch, self._line_drops, self._download_drops = held
 
     def stored_messages(self, team: str, channel: str) -> dict[str, StoredMessage]:
         latest = LatestMessages()
@@ -289,6 +301,7 @@ class FakeSlackGateway:
         self.calls: list[tuple[str | None, ...]] = []
         self.rate_limit_wait_s = 0.0
         self._authenticated = False
+        self._history_hooks: dict[int, Callable[[], None]] = {}
 
     @property
     def api_calls(self) -> dict[str, int]:
@@ -313,6 +326,11 @@ class FakeSlackGateway:
         for channel in self.conversations:
             yield self.infos.get(channel, {"id": channel})
 
+    def before_history_page(self, number: int, callback: Callable[[], None]) -> None:
+        """Runs callback once, the first time a history call is about to serve its page number,
+        counting from 1."""
+        self._history_hooks[number] = callback
+
     def history(self, channel: str, oldest: str | None, latest: str | None) -> Iterator[list[dict]]:
         self._require_visible(channel)
 
@@ -326,7 +344,10 @@ class FakeSlackGateway:
 
         selected = [m for m in self.conversations[channel] if in_history(m) and in_range(m)]
         newest_first = sorted(selected, key=lambda m: MessageTs(m["ts"]), reverse=True)
-        for page in _pages(newest_first, self.page_size):
+        for number, page in enumerate(_pages(newest_first, self.page_size), start=1):
+            hook = self._history_hooks.pop(number, None)
+            if hook is not None:
+                hook()
             self.calls.append(("conversations.history", channel, oldest, latest))
             yield page
 

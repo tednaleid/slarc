@@ -192,19 +192,19 @@ def test_conflict_restores_downloads_and_reraises():
     assert archive.downloads() == {(TEAM, "F1"): download("F1")}
 
 
-def test_exit_after_an_exception_commits_what_is_left_open_then_writes_the_run_row():
+def test_exit_after_an_exception_discards_the_open_batch_then_writes_the_run_row():
     uow, archive = recording_uow()
     with pytest.raises(RuntimeError), uow:
+        uow.run.downloads.append(download("F1"))
         uow.commit([ITEM])
         archive.append(message_line(TS))
-        uow.run.tracked.extend([ITEM, OTHER_ITEM])
-        uow.run.downloads.append(download("F1"))
+        uow.run.tracked.append(OTHER_ITEM)
+        uow.run.downloads.append(download("F2"))
         raise RuntimeError("boom")
 
-    assert len(archive.commits) == 2
-    assert set(archive.stored_messages(TEAM, CHANNEL)) == {TS}
-    assert archive.tracked_items()[ITEM.key].revision == 2
-    assert archive.tracked_items()[OTHER_ITEM.key].revision == 1
+    assert len(archive.commits) == 1
+    assert archive.stored_messages(TEAM, CHANNEL) == {}
+    assert list(archive.tracked_items()) == [ITEM.key]
     assert archive.downloads() == {(TEAM, "F1"): download("F1")}
     assert archive.lines[-1].meta.kind == "run"
 
@@ -217,11 +217,35 @@ def test_exit_commits_what_is_left_open():
         uow.run.tracked.append(ITEM)
         uow.run.downloads.append(download("F1"))
 
+    [left_open] = archive.commits
+    assert left_open.items == [ITEM]
+    assert left_open.downloads == [download("F1")]
     assert archive.tracked_items()[ITEM.key].revision == 1
     assert list(archive.directory_state(TEAM, "file")) == ["F1"]
     assert set(archive.stored_messages(TEAM, CHANNEL)) == {TS}
-    assert archive.downloads() == {(TEAM, "F1"): download("F1")}
     assert archive.lines[-1].meta.kind == "run"
+
+
+class FailingArchiveStore(InMemoryArchiveStore):
+    """Raises the given error from every commit, writing nothing."""
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__()
+        self.error = error
+
+    def commit(self, change: Commit) -> Committed:
+        raise self.error
+
+
+@pytest.mark.parametrize("error", [RuntimeError("disk full"), KeyboardInterrupt()])
+def test_exit_commit_failure_discards_writes_the_run_row_and_raises(error: BaseException):
+    archive = FailingArchiveStore(error)
+    uow = UnitOfWork(archive, InMemoryBlobStore(), FakeClock(START), "pull", [], "0.1.0")
+    with pytest.raises(type(error)), uow:
+        archive.append(message_line(TS))
+
+    assert archive.stored_messages(TEAM, CHANNEL) == {}
+    assert len(run_lines(archive)) == 1
 
 
 def test_exit_records_a_conflict_in_the_run_errors():

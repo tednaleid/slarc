@@ -78,7 +78,8 @@ def queue_downloads(
 ) -> list[DownloadJob]:
     """Queues the message's files and images that are neither downloaded nor settled.
 
-    The custom emoji and author avatars it shows are found through view. files, images and
+    The next commit requires each file and image found downloaded to still be stored. The
+    custom emoji and author avatars it shows are found through view. files, images and
     known, the archive's file, image and download state, are read here when not given.
     retry_skipped queues forbidden and gave_up outside-site images afresh.
     """
@@ -91,16 +92,17 @@ def queue_downloads(
         images = uow.archive.directory_state(team_id, "image")
     known = uow.archive.downloads() if known is None else known
     queued = {(d.team_id, d.target) for d in uow.run.downloads}
-    states = [
-        _file_state(file, team_id, max_bytes, known.get((team_id, file["id"])))
-        for file in referenced
-        if not _downloaded(uow, stored.get(file["id"]))
-    ]
-    states += [
-        _image_state(url, team_id, known.get((team_id, url)), retry_skipped)
-        for url in urls
-        if not _downloaded(uow, images.get(url))
-    ]
+    states = []
+    for file in referenced:
+        if _downloaded(uow, stored.get(file["id"])):
+            uow.require((team_id, "file", file["id"]))
+        else:
+            states.append(_file_state(file, team_id, max_bytes, known.get((team_id, file["id"]))))
+    for url in urls:
+        if _downloaded(uow, images.get(url)):
+            uow.require((team_id, "image", url))
+        else:
+            states.append(_image_state(url, team_id, known.get((team_id, url)), retry_skipped))
     jobs = []
     for state in states:
         if state is None or (state.team_id, state.target) in queued:

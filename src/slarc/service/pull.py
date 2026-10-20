@@ -22,6 +22,7 @@ from slarc.domain.tracking import ItemKey, TrackedItem, item_label
 from slarc.ports import (
     ArchiveWriteFailed,
     AuthFailed,
+    CommitConflict,
     Downloader,
     NoSession,
     NotVisible,
@@ -190,7 +191,8 @@ class _PullRun:
         self._threads_counted: set[tuple[str, str, str]] = set()
 
     def resolve(self, selectors: list[Selector]) -> list[TrackedItem]:
-        """The items to pull, recorded before they are read; a thread read for its kind is kept."""
+        """The items to pull, each committed before it is read; a thread read for its kind is
+        kept. An item whose commit conflicts is left out with a warning."""
         tracked = self.uow.archive.tracked_items()
         if not selectors:
             return list(tracked.values())
@@ -219,7 +221,12 @@ class _PullRun:
             known = tracked.get(item.key)
             item = self._ranged(item, known) if item.kind == "conversation" else known or item
             if item != known:
-                self._record(item)
+                try:
+                    self._record(item)
+                except CommitConflict as error:
+                    name = _item_name(connection, item)
+                    self._warn(f"Could not track {name}, so it was not pulled: {error}")
+                    continue
             items.setdefault(item.key, item)
         return list(items.values())
 
@@ -275,25 +282,46 @@ class _PullRun:
         return item
 
     def pull_workspace(self, team_id: str, items: list[TrackedItem]) -> None:
+        """Reads the thread items, commits the directory refresh, then pulls each item.
+
+        A refresh commit that conflicts means the workspace was removed meanwhile, so its
+        items are skipped with a warning. A thread item whose commit conflicts is skipped.
+        """
         connection = self.workspaces.connection_to(team_id)
         conversations = [item for item in items if item.kind == "conversation"]
         threads = [item for item in items if item.kind != "conversation"]
         reads: dict[ItemKey, list[dict]] = {}
         for item in threads:
-            messages = self._read_thread(connection, item)
+            try:
+                messages = self._read_thread(connection, item)
+            except CommitConflict as error:
+                self._unfinished(_item_name(connection, item), error)
+                continue
             if messages is not None:
                 reads[item.key] = messages
         bot_ids = {m["bot_id"] for messages in reads.values() for m in messages if m.get("bot_id")}
         channels = {item.channel for item in threads if item.key in reads}
         channels |= {item.channel for item in conversations}
         view = refresh_directory(connection.gateway, team_id, channels, self.uow, bot_ids)
+        try:
+            self.uow.commit()
+        except CommitConflict:
+            self._warn(
+                f"Workspace {team_id} was removed while this pull was running, so its tracked "
+                "items were not pulled."
+            )
+            return
         for item in threads:
             if item.key not in reads:
                 continue
             held = HeldConversation(self.uow.archive, team_id, item.channel)
-            self.progress = _ItemProgress(self.reporter, item_label(item, view), report_start=False)
-            self._append_thread(held, item.ts or "", reads[item.key], view)
-            self._finish(connection, held, item, view)
+            label = item_label(item, view)
+            self.progress = _ItemProgress(self.reporter, label, report_start=False)
+            try:
+                self._append_thread(held, item.ts or "", reads[item.key], view)
+                self._finish(connection, held, item, view)
+            except CommitConflict as error:
+                self._unfinished(label, error)
         for item in conversations:
             self._pull_conversation(connection, item, view)
 
@@ -355,20 +383,33 @@ class _PullRun:
     def _pull_conversation(
         self, connection: Connection, item: TrackedItem, view: DirectoryView
     ) -> None:
+        """Pulls the conversation item. When the pull fails, including a commit that conflicts,
+        what it has not committed is discarded with a warning, and the next pull resumes it."""
+        held = HeldConversation(self.uow.archive, item.team_id, item.channel)
+        self.progress = _ItemProgress(self.reporter, item_label(item, view))
+        try:
+            self._read_conversation(connection, held, item, view)
+        except AuthFailed, ArchiveWriteFailed:
+            raise
+        except SlarcError as error:
+            self.uow.discard()
+            self._unfinished(f"conversation {item.channel}", error)
+
+    def _read_conversation(
+        self, connection: Connection, held: HeldConversation, item: TrackedItem, view: DirectoryView
+    ) -> None:
         """Pulls new history and new replies under older parents, then re-reads active threads.
 
         Threads whose read failed in an earlier pull are re-read first. --full re-reads the
         whole range instead of history and search. A first pull's history covers every reply, so
         it skips search and later pulls search from its start. Any read failing with NotVisible
         skips the item without deletes; a history page that fails otherwise leaves the item
-        unfinished, keeping the progress already recorded.
+        unfinished, keeping the pages already committed.
 
         An item recorded as archived whose conversation is still archived and whose backfill is
         complete has had its final refresh, so it is recorded as pulled without reading
         anything, unless --full is set.
         """
-        held = HeldConversation(self.uow.archive, item.team_id, item.channel)
-        self.progress = _ItemProgress(self.reporter, item_label(item, view))
         if (
             item.archived
             and item.backfill_complete
@@ -394,15 +435,6 @@ class _PullRun:
             self._reread_threads(connection, held, _within(item, active), view, "active")
         except NotVisible as error:
             self._skip(item, str(error), held)
-            return
-        except AuthFailed, ArchiveWriteFailed:
-            raise
-        except SlarcError as error:
-            self._warn(
-                f"Could not finish pulling conversation {item.channel}; the next pull resumes it: "
-                f"{error}"
-            )
-            self._end_progress()
             return
         self._finish(connection, held, item, view)
 
@@ -441,7 +473,7 @@ class _PullRun:
     ) -> TrackedItem:
         """Pages history from oldest up to latest, reading each parent's thread for reason.
 
-        The item is recorded after every page with oldest_ts moved. With newest_each_page, the
+        The item is committed after every page with oldest_ts moved. With newest_each_page, the
         backfill, newest_ts moves with each page, so an interrupted pull resumes below it, and
         the backfill is marked complete at the end. Otherwise pages come newest first, so
         newest_ts moves only once paging ends; an interrupted pull then pages the same range
@@ -676,7 +708,9 @@ class _PullRun:
             self.progress.new += 1
 
     def skip_workspace(self, team_id: str, error: SlarcError) -> None:
-        """Leaves the workspace's tracked items as they were and records why in the run line."""
+        """Discards what the workspace's pull has not committed, leaves its tracked items as the
+        last commit left them, and records why in the run row."""
+        self.uow.discard()
         self._end_progress()
         self._warn(
             f"Could not connect to workspace {team_id}, so its tracked items were not pulled: "
@@ -687,6 +721,10 @@ class _PullRun:
     def _warn(self, message: str) -> None:
         self.reporter.warn(message)
         self.skipped.append(message)
+
+    def _unfinished(self, name: str, error: SlarcError) -> None:
+        self._warn(f"Could not finish pulling {name}; the next pull resumes it: {error}")
+        self._end_progress()
 
     def _skip(self, item: TrackedItem, message: str, held: HeldConversation | None = None) -> None:
         if item.status == "ok":
@@ -710,12 +748,11 @@ class _PullRun:
             self.threads_read[reason] = self.threads_read.get(reason, 0) + 1
 
     def _record(self, item: TrackedItem, held: HeldConversation | None = None) -> None:
-        """Records the item in the run; with its held conversation, also the threads to retry."""
+        """Commits the open batch with the item; with its held conversation, the item also
+        takes the threads to retry."""
         if held is not None:
             item = msgspec.structs.replace(item, retry_threads=held.retry_threads(item))
-        tracked = self.uow.run.tracked
-        tracked[:] = [recorded for recorded in tracked if recorded.key != item.key]
-        tracked.append(item)
+        self.uow.commit([item])
 
 
 class _ItemProgress:
@@ -735,6 +772,14 @@ class _ItemProgress:
 
     def end(self) -> None:
         self.reporter.progress(self.label, self.seen, self.new, self.seen)
+
+
+def _item_name(connection: Connection, item: TrackedItem) -> str:
+    """How a warning names an item before the directory is read: a conversation by its id, a
+    thread or message by its link."""
+    if item.kind == "conversation":
+        return f"conversation {item.channel}"
+    return message_link(connection.domain, item.channel, item.ts or "")
 
 
 def _within(item: TrackedItem, stamps: set[str]) -> set[str]:

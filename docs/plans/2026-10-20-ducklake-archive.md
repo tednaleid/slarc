@@ -313,7 +313,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
 - [x] **Step 4: Run `just check` and watch it pass.**
 - [x] **Step 5: Commit:** `Commit batches through the unit of work`.
 
-### Task 9: Pull commits per batch
+### Task 9: Pull commits per batch [done]
 
 **Files:**
 - Modify: `src/slarc/service/pull.py`, `src/slarc/service/appends.py`, `src/slarc/service/downloads.py` (`queue_downloads` only), `src/slarc/service/held_conversation.py` (only if `flush` callers remain)
@@ -330,16 +330,16 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
   - **`append_directory(..., keep_blob=True)`** calls `uow.require((team_id, kind, id_))` for each object it skips as unchanged. When `queue_downloads` treats a file or image as downloaded, it calls `uow.require((team_id, target_kind, target))`.
   - **Every `uow.archive.flush()` call is removed.**
 
-- [ ] **Step 1: Write the failing tests,** using the fake store and a `FakeSlackGateway` hook that runs a callback before a given history page. Add that small optional hook to the fake.
+- [x] **Step 1: Write the failing tests,** using the fake store and a `FakeSlackGateway` hook that runs a callback before a given history page. Add that small optional hook to the fake.
   - `test_interrupted_backfill_keeps_committed_pages_and_resumes`: raise `KeyboardInterrupt` on page 3. Pages 1 and 2 are stored, `oldest_ts` is page 2's, and a second pull fetches from there.
   - `test_pull_commit_after_rm_of_its_item_rolls_back`: the callback commits the item as `removed` with its revision bumped. No messages from later pages are stored, the item stays removed, and other items finish.
   - `test_second_pull_of_one_item_rolls_back`: the callback commits a newer revision.
   - `test_missing_required_file_rolls_back_and_next_pull_restores_it`: the callback drops file F's directory row. The batch rolls back, and the next pull stores F and queues its download.
   - `test_directory_refresh_after_workspace_removal_skips_the_workspace`.
-- [ ] **Step 2: Run them and watch them fail.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run `just check` and watch it pass.**
-- [ ] **Step 5: Commit:** `Commit pull work per item and per page, rolling back stale batches`.
+- [x] **Step 2: Run them and watch them fail.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run `just check` and watch it pass.**
+- [x] **Step 5: Commit:** `Commit pull work per item and per page, rolling back stale batches`.
 
 ### Task 10: The download drain commits per result
 
