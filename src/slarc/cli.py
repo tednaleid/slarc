@@ -205,7 +205,7 @@ def _plural(count: int, noun: str) -> str:
 
 
 def _summary(report: PullReport) -> str:
-    """The items pulled and lines appended, then this run's downloads when there were any."""
+    """The items pulled and lines appended, then this run's downloads and not-visible items."""
     directory = report.lines_appended - report.messages_new
     pulled = (
         f"Pulled {_plural(report.items_pulled, 'item')}: "
@@ -225,6 +225,10 @@ def _summary(report: PullReport) -> str:
         parts.append(f"{report.downloads_skipped} skipped")
     if parts:
         lines.append(f"Downloads: {', '.join(parts)}.")
+    if report.not_visible:
+        lines.append(
+            f"{_plural(report.not_visible, 'item')} not visible to this account; see slarc list."
+        )
     return "\n".join(lines)
 
 

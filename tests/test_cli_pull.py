@@ -243,6 +243,7 @@ def report(**counts: int) -> PullReport:
         "images_saved": 0,
         "downloads_pending": 0,
         "downloads_skipped": 0,
+        "not_visible": 0,
     }
     fields.update(counts)
     return PullReport(
@@ -285,6 +286,20 @@ def report(**counts: int) -> PullReport:
             [
                 "Pulled 1 item: 0 new messages, 0 new directory lines.",
                 "Downloads: 1 file saved, 1 skipped.",
+            ],
+        ),
+        (
+            {"not_visible": 1},
+            [
+                "Pulled 1 item: 0 new messages, 0 new directory lines.",
+                "1 item not visible to this account; see slarc list.",
+            ],
+        ),
+        (
+            {"not_visible": 2},
+            [
+                "Pulled 1 item: 0 new messages, 0 new directory lines.",
+                "2 items not visible to this account; see slarc list.",
             ],
         ),
         (

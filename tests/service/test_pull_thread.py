@@ -392,6 +392,18 @@ def test_not_visible_item_is_skipped_with_warning(h: Harness):
     assert report.skipped == h.reporter.warnings
 
 
+def test_not_visible_thread_warns_once(h: Harness):
+    h.pull(THREAD_LINK)
+    del h.gateway.conversations[CHANNEL]
+    h.pull()
+    h.reporter.warnings.clear()
+
+    report = h.pull()
+
+    assert h.reporter.warnings == []
+    assert (report.skipped, report.not_visible) == ([], 1)
+
+
 def test_connects_once_per_workspace(h: Harness):
     h.pull(THREAD_LINK, LONE_LINK)
 

@@ -77,7 +77,8 @@ class PullReport:
     """unreachable holds why each workspace that could not connect was skipped.
 
     messages_new counts the message and deleted lines appended; files_saved and images_saved
-    count this run's downloads, and downloads_skipped those too large or forbidden.
+    count this run's downloads, and downloads_skipped those too large or forbidden. not_visible
+    counts the items this run recorded as not visible, whether or not it warned about them.
     """
 
     items_selected: int
@@ -90,6 +91,7 @@ class PullReport:
     images_saved: int
     downloads_pending: int
     downloads_skipped: int
+    not_visible: int
     unreachable: list[SlarcError]
     workspaces_pulled: int
 
@@ -145,6 +147,7 @@ def pull(
         images_saved=drained.images_saved,
         downloads_pending=drained.pending,
         downloads_skipped=drained.skipped,
+        not_visible=run.not_visible,
         unreachable=unreachable,
         workspaces_pulled=len(teams) - len(unreachable),
     )
@@ -183,6 +186,7 @@ class _PullRun:
         self.threads_read: dict[str, int] = {}
         self.pulled = 0
         self.messages_new = 0
+        self.not_visible = 0
         self._threads_counted: set[tuple[str, str, str]] = set()
 
     def resolve(self, selectors: list[Selector]) -> list[TrackedItem]:
@@ -677,7 +681,9 @@ class _PullRun:
         self.skipped.append(message)
 
     def _skip(self, item: TrackedItem, message: str, held: HeldConversation | None = None) -> None:
-        self._warn(message)
+        if item.status == "ok":
+            self._warn(message)
+        self.not_visible += 1
         self._record(msgspec.structs.replace(item, status="not_visible"), held)
         self._end_progress()
 

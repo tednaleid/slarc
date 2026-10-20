@@ -428,6 +428,38 @@ def test_not_visible_conversation_is_skipped_with_warning(h: Harness):
     assert report.skipped == h.reporter.warnings
 
 
+def test_not_visible_warns_only_when_it_turns_not_visible(h: Harness):
+    h.pull(BASE)
+    del h.gateway.conversations[CHANNEL]
+    first = h.pull()
+    h.reporter.warnings.clear()
+
+    second = h.pull()
+
+    [item] = h.tracked()
+    assert item.status == "not_visible"
+    assert (first.not_visible, first.skipped) == (
+        1,
+        [f"Conversation {CHANNEL} is not visible to this account."],
+    )
+    assert h.reporter.warnings == []
+    assert (second.not_visible, second.skipped) == (1, [])
+
+
+def test_not_visible_conversation_returns_to_ok_when_visible(h: Harness):
+    h.pull(BASE)
+    visible = h.gateway.conversations[CHANNEL]
+    del h.gateway.conversations[CHANNEL]
+    h.pull()
+    h.gateway.conversations[CHANNEL] = visible
+
+    report = h.pull()
+
+    [item] = h.tracked()
+    assert item.status == "ok"
+    assert report.not_visible == 0
+
+
 def test_thread_missing_during_pull_is_skipped(h: Harness, monkeypatch: pytest.MonkeyPatch):
     def missing(channel: str, ts: str) -> list[dict]:
         raise ThreadNotFound(channel, ts)
