@@ -37,6 +37,8 @@ Dependencies point inward: `cli.py` and `bootstrap.py` know everything, adapters
 
 `SessionTokenGateway` calls only methods in `READ_METHODS`, sends every call through a per-method token bucket, and maps Slack error codes to `NotVisible`, `ThreadNotFound`, `FileDeleted` and `AuthFailed`. `HttpDownloader` follows redirects itself and sends the token and cookie only to Slack's file host.
 
+Every archive write appends, except the removal methods: `JsonlArchiveStore`'s `drop_messages`, `drop_directory_lines` and `drop_workspace`, and `FsBlobStore.delete`. They are the only code that rewrites or deletes archive files. A rewrite closes the file's append handle, writes the kept lines to a temp file in the same directory, fsyncs it and renames it over the original, so an interrupt leaves the old file or the new one. Lines that do not decode are kept, and a file left with no lines is deleted.
+
 ## Unit of work and the run line
 
 `UnitOfWork` holds the `ArchiveStore`, `BlobStore` and `Clock` for one `pull`. Entering it starts a `RunRecord`; leaving it, however the run ends (success, `SlarcError`, Ctrl-C), stamps `finished` and appends one run line to `runs.jsonl`. There is one class for production and tests; tests hand it the in-memory stores. The pull flushes the store after every page of history and every thread, so an interrupted pull keeps what it read, and the next pull writes no duplicates because unchanged messages hash the same.

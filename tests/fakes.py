@@ -66,8 +66,44 @@ class InMemoryArchiveStore:
     def append_run(self, run: RunRecord, slarc_version: str) -> None:
         self.append(run_envelope(run, slarc_version))
 
+    def channels(self, team: str) -> list[str]:
+        return sorted({env.meta.channel or "" for env in self._team_message_lines(team)})
+
+    def message_lines(self, team: str, channel: str) -> Iterator[Envelope]:
+        return iter([env for env in self._team_message_lines(team) if env.meta.channel == channel])
+
+    def drop_messages(self, team: str, channel: str, stamps: set[str]) -> int:
+        dropped = [env for env in self.message_lines(team, channel) if env.meta.ts in stamps]
+        return self._drop(dropped)
+
+    def drop_directory_lines(self, team: str, kind: Kind, ids: set[str]) -> int:
+        return self._drop([env for env in self._directory_lines(team, kind) if env.meta.id in ids])
+
+    def drop_workspace(self, team: str) -> None:
+        self._drop([env for env in self.lines if env.meta.team == team and env.meta.kind != "run"])
+
+    def blob_references(self) -> list[tuple[str, Kind, str, str]]:
+        references = [
+            (env.meta.team or "", env.meta.kind, env.meta.id or "", env.meta.blob)
+            for env in self.lines
+            if env.meta.blob is not None
+        ]
+        return list(dict.fromkeys(references))
+
     def _directory_lines(self, team: str, kind: Kind) -> list[Envelope]:
         return [env for env in self.lines if (env.meta.team, env.meta.kind) == (team, kind)]
+
+    def _team_message_lines(self, team: str) -> list[Envelope]:
+        return [
+            env
+            for env in self.lines
+            if env.meta.kind in ("message", "deleted") and env.meta.team == team
+        ]
+
+    def _drop(self, dropped: list[Envelope]) -> int:
+        ids = {id(env) for env in dropped}
+        self.lines = [env for env in self.lines if id(env) not in ids]
+        return len(dropped)
 
 
 class InMemoryBlobStore:
@@ -85,6 +121,12 @@ class InMemoryBlobStore:
 
     def read(self, sha256: str) -> bytes:
         return self.blobs[sha256]
+
+    def ids(self) -> Iterator[str]:
+        return iter(list(self.blobs))
+
+    def delete(self, sha256: str) -> None:
+        self.blobs.pop(sha256, None)
 
 
 class InMemoryExportWriter:

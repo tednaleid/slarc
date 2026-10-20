@@ -1,5 +1,5 @@
 # ABOUTME: Contract tests every ArchiveStore implementation must pass, run over the fake and JSONL.
-# ABOUTME: Covers file layout, latest-wins reads, deleted lines, directory state and run-line state.
+# ABOUTME: Covers file layout, latest-wins reads, directory and run-line state, and dropping lines.
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Literal
@@ -18,13 +18,16 @@ from slarc.domain.tracking import (
     run_envelope,
     run_from_envelope,
 )
-from slarc.ports import ArchiveStore, DirectoryState, SlarcError, StoredMessage
+from slarc.ports import ArchiveStore, ArchiveWriteFailed, DirectoryState, SlarcError, StoredMessage
 from tests.fakes import InMemoryArchiveStore
 
 TEAM = "T0CB5LYPVFA"
 CHANNEL = "C0CA5396G03"
 TS = "1792410693.663869"  # 2026-10-19 UTC
 OLD_TS = "1709300000.000100"  # 2024-03-01 UTC
+LATER_TS = "1792410800.000200"  # 2026-10-19 UTC
+OTHER_TEAM = "T0OTHER0001"
+OTHER_CHANNEL = "C0OTHER0002"
 VERSION = "0.1.0"
 
 T1 = "2026-10-19T13:40:11Z"
@@ -35,14 +38,22 @@ R2 = "r_20261019T140000Z"
 R3 = "r_20261019T150000Z"
 
 
-def message(ts: str, text: str, fetched: str, run: str, thread_ts: str | None = None) -> Envelope:
+def message(
+    ts: str,
+    text: str,
+    fetched: str,
+    run: str,
+    thread_ts: str | None = None,
+    channel: str = CHANNEL,
+    team: str = TEAM,
+) -> Envelope:
     obj = {"type": "message", "user": "U1", "text": text, "ts": ts}
     if thread_ts is not None:
         obj["thread_ts"] = thread_ts
     meta = Meta(
         kind="message",
-        team=TEAM,
-        channel=CHANNEL,
+        team=team,
+        channel=channel,
         ts=ts,
         source_team=TEAM,
         fetched_at=fetched,
@@ -68,17 +79,24 @@ def deleted(ts: str, fetched: str, run: str) -> Envelope:
     return Envelope(meta=meta)
 
 
-def file_line(file_id: str, fetched: str, run: str, blob: str | None) -> Envelope:
+def file_line(
+    file_id: str,
+    fetched: str,
+    run: str,
+    blob: str | None,
+    team: str = TEAM,
+    kind: Literal["file", "image"] = "file",
+) -> Envelope:
     obj = {"id": file_id, "name": "notes.txt", "size": 5}
     meta = Meta(
-        kind="file",
-        team=TEAM,
+        kind=kind,
+        team=team,
         id=file_id,
         fetched_at=fetched,
         run=run,
         api="files.info",
         slarc=VERSION,
-        hash=content_hash("file", obj),
+        hash=content_hash(kind, obj),
         blob=blob,
     )
     return Envelope(meta=meta, object=obj)
@@ -337,3 +355,171 @@ def test_jsonl_store_in_a_read_only_archive_raises_slarc_error(tmp_path: Path):
     finally:
         store.close()
         tmp_path.chmod(0o755)
+
+
+def stamps(store: ArchiveStore, team: str = TEAM, channel: str = CHANNEL) -> list[str | None]:
+    return [env.meta.ts for env in store.message_lines(team, channel)]
+
+
+def test_drop_messages_removes_every_version_and_only_those(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.append(message(OLD_TS, "old", T1, R1))
+    store.append(message(TS, "Hello", T1, R1))
+    store.append(message(TS, "Hello!", T2, R2))
+    store.append(message(LATER_TS, "kept", T1, R1))
+    store.append(deleted(TS, T3, R3))
+    store.append(message(TS, "elsewhere", T1, R1, channel=OTHER_CHANNEL))
+
+    assert store.drop_messages(TEAM, CHANNEL, {TS}) == 3
+
+    for current in (store, reopen()):
+        assert stamps(current) == [OLD_TS, LATER_TS]
+        assert stamps(current, channel=OTHER_CHANNEL) == [TS]
+
+
+def test_drop_messages_deletes_empty_month_files_and_channel_dir(
+    jsonl_store: JsonlArchiveStore, tmp_path: Path
+):
+    channel_dir = tmp_path / "raw" / TEAM / CHANNEL
+    jsonl_store.append(message(OLD_TS, "old", T1, R1))
+    jsonl_store.append(message(TS, "new", T1, R1))
+
+    assert jsonl_store.drop_messages(TEAM, CHANNEL, {OLD_TS}) == 1
+    assert sorted(p.name for p in channel_dir.iterdir()) == ["2026-10.jsonl"]
+
+    assert jsonl_store.drop_messages(TEAM, CHANNEL, {TS}) == 1
+    assert not channel_dir.exists()
+    assert jsonl_store.channels(TEAM) == []
+
+
+def test_drop_messages_refreshes_stored_messages(store_and_reopen):
+    store, reopen = store_and_reopen
+    kept = message(LATER_TS, "kept", T1, R1)
+    store.append(message(TS, "gone", T1, R1))
+    store.append(kept)
+    assert set(store.stored_messages(TEAM, CHANNEL)) == {TS, LATER_TS}
+
+    store.drop_messages(TEAM, CHANNEL, {TS})
+
+    expected = {LATER_TS: StoredMessage(hash=kept.meta.hash, thread_ts=None, fetched_at=T1)}
+    for current in (store, reopen()):
+        assert current.stored_messages(TEAM, CHANNEL) == expected
+
+
+def test_append_after_drop_messages_still_lands(store_and_reopen):
+    store, reopen = store_and_reopen
+    third = "1792410900.000300"
+    fourth = "1792411000.000400"
+    store.append(message(TS, "first", T1, R1))
+    store.append(message(LATER_TS, "second", T1, R1))
+    store.stored_messages(TEAM, CHANNEL)
+
+    store.drop_messages(TEAM, CHANNEL, {TS})
+    store.append(message(third, "third", T2, R2))
+    assert set(reopen().stored_messages(TEAM, CHANNEL)) == {LATER_TS, third}
+
+    store.drop_messages(TEAM, CHANNEL, {LATER_TS, third})
+    store.append(message(fourth, "fourth", T3, R3))
+    assert set(store.stored_messages(TEAM, CHANNEL)) == {fourth}
+    assert set(reopen().stored_messages(TEAM, CHANNEL)) == {fourth}
+
+
+def test_drop_directory_lines_removes_every_version(store_and_reopen):
+    store, reopen = store_and_reopen
+    kept = file_line("F2", T1, R1, None)
+    store.append(file_line("F1", T1, R1, None))
+    store.append(kept)
+    store.append(file_line("F1", T2, R2, "ab" * 32))
+    store.append(file_line("F1", T1, R1, "cd" * 32, kind="image"))
+
+    assert store.drop_directory_lines(TEAM, "file", {"F1"}) == 2
+
+    for current in (store, reopen()):
+        assert current.directory_state(TEAM, "file") == {
+            "F2": DirectoryState(hash=kept.meta.hash or "", blob=None)
+        }
+        assert list(current.directory_state(TEAM, "image")) == ["F1"]
+
+
+def test_drop_workspace_removes_raw_and_directory(store_and_reopen, tmp_path: Path):
+    store, reopen = store_and_reopen
+    store.append(message(TS, "gone", T1, R1))
+    store.append(file_line("F1", T1, R1, "ab" * 32))
+    store.append(message(TS, "kept", T1, R1, team=OTHER_TEAM))
+    store.append(file_line("F2", T1, R1, None, team=OTHER_TEAM))
+    store.append_run(run_record(R1, T1, tracked=[tracked("100.000000")]), VERSION)
+    store.stored_messages(TEAM, CHANNEL)
+
+    store.drop_workspace(TEAM)
+
+    for current in (store, reopen()):
+        assert current.stored_messages(TEAM, CHANNEL) == {}
+        assert current.channels(TEAM) == []
+        assert current.directory_state(TEAM, "file") == {}
+        assert set(current.stored_messages(OTHER_TEAM, CHANNEL)) == {TS}
+        assert list(current.directory_state(OTHER_TEAM, "file")) == ["F2"]
+        assert len(current.tracked_items()) == 1
+    if isinstance(store, JsonlArchiveStore):
+        assert not (tmp_path / "raw" / TEAM).exists()
+        assert not (tmp_path / "directory" / TEAM).exists()
+
+    store.append(message(LATER_TS, "again", T2, R2))
+    store.flush()
+    assert set(reopen().stored_messages(TEAM, CHANNEL)) == {LATER_TS}
+
+
+def test_blob_references_lists_every_directory_blob(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.append(file_line("F1", T1, R1, None))
+    store.append(file_line("F1", T2, R2, "ab" * 32))
+    store.append(file_line("I1", T1, R1, "cd" * 32, team=OTHER_TEAM, kind="image"))
+    store.append(message(TS, "no blob", T1, R1))
+
+    expected = [
+        (TEAM, "file", "F1", "ab" * 32),
+        (OTHER_TEAM, "image", "I1", "cd" * 32),
+    ]
+    for current in (store, reopen()):
+        assert sorted(current.blob_references()) == expected
+
+
+def test_channels_lists_channels_with_lines(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.append(message(TS, "here", T1, R1, channel=OTHER_CHANNEL))
+    store.append(message(TS, "there", T1, R1))
+    store.append(file_line("F1", T1, R1, None))
+
+    for current in (store, reopen()):
+        assert current.channels(TEAM) == [CHANNEL, OTHER_CHANNEL]
+        assert current.channels(OTHER_TEAM) == []
+
+
+def test_rewrite_keeps_lines_that_do_not_decode(jsonl_store: JsonlArchiveStore, tmp_path: Path):
+    month = tmp_path / "raw" / TEAM / CHANNEL / "2026-10.jsonl"
+    month.parent.mkdir(parents=True)
+    unknown = b'{"meta":{"schema":1,"kind":"huddle","team":"T","ts":"1.0"},"object":{}}\n'
+    kept = encode_line(message(LATER_TS, "kept", T1, R1))
+    month.write_bytes(unknown + encode_line(message(TS, "gone", T1, R1)) + kept)
+
+    assert jsonl_store.drop_messages(TEAM, CHANNEL, {TS}) == 1
+    assert month.read_bytes() == unknown + kept
+
+
+def test_failed_rewrite_leaves_original_intact(
+    jsonl_store: JsonlArchiveStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    month = tmp_path / "raw" / TEAM / CHANNEL / "2026-10.jsonl"
+    jsonl_store.append(message(TS, "first", T1, R1))
+    jsonl_store.append(message(LATER_TS, "second", T1, R1))
+    jsonl_store.flush()
+    original = month.read_bytes()
+
+    def fail(fd: int) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("slarc.adapters.jsonl_store.os.fsync", fail)
+    with pytest.raises(ArchiveWriteFailed, match="No space left on device"):
+        jsonl_store.drop_messages(TEAM, CHANNEL, {TS})
+
+    assert month.read_bytes() == original
+    assert list(month.parent.iterdir()) == [month]

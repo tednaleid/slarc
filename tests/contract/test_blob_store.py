@@ -1,5 +1,5 @@
 # ABOUTME: Contract tests every BlobStore implementation must pass, over the fake and filesystem.
-# ABOUTME: Covers content addressing, idempotent writes and the on-disk blob path.
+# ABOUTME: Covers content addressing, idempotent writes, listing, deleting and the on-disk path.
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -50,3 +50,25 @@ def test_fs_concurrent_writes_of_the_same_content_leave_one_blob(tmp_path: Path)
     assert set(results) == {(digest, len(data))}
     files = [p for p in (tmp_path / "blobs").rglob("*") if p.is_file()]
     assert files == [tmp_path / "blobs" / "sha256" / digest[:2] / digest[2:4] / digest]
+
+
+def test_blob_ids_and_delete(blobs: BlobStore):
+    hello, _ = blobs.write([b"hello"])
+    world, _ = blobs.write([b"world"])
+    assert sorted(blobs.ids()) == sorted([hello, world])
+
+    blobs.delete(hello)
+    blobs.delete(hello)
+
+    assert list(blobs.ids()) == [world]
+    assert not blobs.exists(hello)
+    assert blobs.read(world) == b"world"
+
+
+def test_fs_blob_delete_removes_emptied_directories(tmp_path: Path):
+    blobs = FsBlobStore(tmp_path)
+    digest, _ = blobs.write([b"hello"])
+
+    blobs.delete(digest)
+
+    assert list((tmp_path / "blobs" / "sha256").iterdir()) == []

@@ -3,7 +3,7 @@
 import hashlib
 import os
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 
@@ -39,6 +39,18 @@ class FsBlobStore:
 
     def read(self, sha256: str) -> bytes:
         return self._path(sha256).read_bytes()
+
+    def ids(self) -> Iterator[str]:
+        for path in self._dir.glob("*/*/*"):
+            if path.is_file():
+                yield path.name
+
+    def delete(self, sha256: str) -> None:
+        path = self._path(sha256)
+        path.unlink(missing_ok=True)
+        for parent in (path.parent, path.parent.parent):
+            if parent.exists() and not any(parent.iterdir()):
+                parent.rmdir()
 
     def _path(self, sha256: str) -> Path:
         return self._dir / sha256[:2] / sha256[2:4] / sha256
