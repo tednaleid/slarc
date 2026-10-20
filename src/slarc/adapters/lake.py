@@ -78,11 +78,14 @@ def connect_lake(
     *,
     read_only: bool = False,
     autoinstall: bool = True,
+    catalog: str = CATALOG,
+    data_dir: str = DATA_DIR,
 ) -> duckdb.DuckDBPyConnection:
     """Attach the archive's lake as `lake` and make it the default catalog.
 
     A writable connection creates the catalog, tables and options when they are missing.
-    `autoinstall=False` skips the download and exists for tests.
+    `autoinstall=False` skips the download and exists for tests. `catalog` and `data_dir`
+    name the catalog file and data directory inside root.
     """
     con = duckdb.connect(":memory:")
     try:
@@ -90,14 +93,14 @@ def connect_lake(
         if not read_only:
             root.mkdir(parents=True, exist_ok=True)
         attach_options = [
-            f"DATA_PATH '{root / DATA_DIR}/'",
+            f"DATA_PATH '{root / data_dir}/'",
             "OVERRIDE_DATA_PATH true",
             "METADATA_PARAMETERS MAP {'journal_mode': 'wal'}",
         ]
         if read_only:
             attach_options.append("READ_ONLY")
         con.execute(
-            f"ATTACH 'ducklake:sqlite:{root / CATALOG}' AS lake ({', '.join(attach_options)})"
+            f"ATTACH 'ducklake:sqlite:{root / catalog}' AS lake ({', '.join(attach_options)})"
         )
         con.execute("USE lake")
         if not read_only:

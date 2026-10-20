@@ -10,20 +10,11 @@ from typing import BinaryIO
 import msgspec
 
 from slarc import archive_state
+from slarc.adapters.jsonl_import import DIRECTORY_FILES
 from slarc.archive_state import LatestMessages, LatestRuns
 from slarc.domain.envelope import Envelope, Kind, Meta, decode_line, encode_line, month_of
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem, run_envelope
 from slarc.ports import ArchiveWriteFailed, DirectoryState, StoredMessage
-
-DIRECTORY_FILES: dict[str, str] = {
-    "user": "users.jsonl",
-    "emoji": "emoji.jsonl",
-    "conversation": "conversations.jsonl",
-    "bot": "bots.jsonl",
-    "usergroup": "usergroups.jsonl",
-    "file": "files.jsonl",
-    "image": "images.jsonl",
-}
 
 
 class JsonlArchiveStore:

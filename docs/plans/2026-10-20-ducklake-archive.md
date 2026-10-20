@@ -152,7 +152,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
 - [ ] **Step 4: Run `just check` and watch it pass.**
 - [ ] **Step 5: Commit:** `Query the lake: views over its tables, one QUALIFY for the current message`.
 
-### Task 4: JSONL import and JSONL export
+### Task 4: JSONL import and JSONL export [done]
 
 **Files:**
 - Create: `src/slarc/adapters/jsonl_import.py`
@@ -173,17 +173,17 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
   - `export_jsonl(root: Path, ext_dir: Path, target: Path) -> None`. It writes today's layout: `raw/<team>/<channel>/<YYYY-MM>.jsonl`, `directory/<team>/<kind file>`, and `runs.jsonl` with one run line per run row. The last run line's `tracked` and `downloads` are replaced with the current tables, so importing the export reproduces the state. `scripts/record-fixtures.py` uses this in Task 5.
   - Neither function holds locks; Task 12 adds them at the call site.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `test_import_of_recorded_fixture_matches_jsonl_reads`: copy `tests/fixtures/workspace`, import it, and compare the lake store with `JsonlArchiveStore` on the copy. The comparison covers `tracked_items`, `removed_items`, `stored_messages` and `directory_objects` per channel and kind, and the lake's `downloads()` against `outstanding_downloads`.
   - `test_import_drops_exact_duplicates_and_counts_them`.
   - `test_import_reads_conflicted_month_copies`.
   - `test_interrupted_import_is_redone`: leave a `catalog.sqlite.importing` and `data.importing/`, run the import, and both are replaced.
   - `test_jsonl_files_are_untouched`, checked by hashing them before and after.
   - `test_export_then_import_round_trips`.
-- [ ] **Step 2: Run them and watch them fail.**
-- [ ] **Step 3: Implement both functions.**
-- [ ] **Step 4: Run `just check` and watch it pass.**
-- [ ] **Step 5: Commit:** `Import JSONL archives into the lake, and export a lake back to JSONL`.
+- [x] **Step 2: Run them and watch them fail.**
+- [x] **Step 3: Implement both functions.**
+- [x] **Step 4: Run `just check` and watch it pass.**
+- [x] **Step 5: Commit:** `Import JSONL archives into the lake, and export a lake back to JSONL`.
 
 ### Task 5: Switch to the lake
 

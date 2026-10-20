@@ -4,10 +4,11 @@ from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import duckdb
 import msgspec
 
 from slarc import archive_state
-from slarc.adapters.lake import connect_lake
+from slarc.adapters.lake import CATALOG, DATA_DIR, connect_lake
 from slarc.archive_state import LatestMessages
 from slarc.domain.envelope import Envelope, Kind, Meta
 from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem, run_envelope
@@ -89,8 +90,10 @@ _decode = msgspec.json.Decoder()
 
 
 class DuckLakeArchiveStore:
-    def __init__(self, root: Path, ext_dir: Path) -> None:
-        self._con = connect_lake(root, ext_dir)
+    def __init__(
+        self, root: Path, ext_dir: Path, *, catalog: str = CATALOG, data_dir: str = DATA_DIR
+    ) -> None:
+        self._con = connect_lake(root, ext_dir, catalog=catalog, data_dir=data_dir)
         self._batch: list[Envelope] = []
 
     def append(self, env: Envelope) -> None:
@@ -140,18 +143,8 @@ class DuckLakeArchiveStore:
         rows = self._con.execute(
             f"SELECT {names} FROM download_state ORDER BY team, target"
         ).fetchall()
-        states = {}
-        for team, target_kind, target, url, status, attempts, last_error in rows:
-            states[(team, target)] = DownloadState(
-                team_id=team,
-                target_kind=target_kind,
-                target=target,
-                url=url,
-                status=status,
-                attempts=attempts,
-                last_error=last_error,
-            )
-        return states
+        states = [download_state(dict(zip(DOWNLOAD_COLUMNS, row, strict=True))) for row in rows]
+        return {(state.team_id, state.target): state for state in states}
 
     def append_run(self, run: RunRecord, slarc_version: str) -> None:
         """Commits the open batch, the run, and its tracked items and download states together.
@@ -159,24 +152,9 @@ class DuckLakeArchiveStore:
         Commits are serialized, so the last commit's tracked items and download states win.
         On failure nothing is written and the open batch is kept.
         """
-        env = run_envelope(run, slarc_version)
         with self._transaction():
             self._insert_batch()
-            self._insert(
-                "run",
-                RUN_COLUMNS,
-                [
-                    {
-                        "run": run.run,
-                        "command": run.command,
-                        "started": run.started,
-                        "finished": run.finished,
-                        "fetched_at": env.meta.fetched_at,
-                        "slarc": slarc_version,
-                        "object": env.object,
-                    }
-                ],
-            )
+            insert_rows(self._con, "run", RUN_COLUMNS, [run_row(run_envelope(run, slarc_version))])
             self._upsert_tracked(run.tracked)
             self._upsert_downloads(run.downloads)
         self._batch.clear()
@@ -195,7 +173,7 @@ class DuckLakeArchiveStore:
             f"ORDER BY ts, {VERSION_ORDER}",
             [team, channel],
         ).fetchall()
-        lines = [_message_envelope(dict(zip(MESSAGE_COLUMNS, row, strict=True))) for row in rows]
+        lines = [message_envelope(dict(zip(MESSAGE_COLUMNS, row, strict=True))) for row in rows]
         return iter(lines + self._batch_messages(team, channel))
 
     def drop_messages(self, team: str, channel: str, stamps: set[str]) -> int:
@@ -261,7 +239,7 @@ class DuckLakeArchiveStore:
         ).fetchall()
         items = {}
         for row in rows:
-            item = _tracked_item(dict(zip(TRACKED_COLUMNS, row, strict=True)))
+            item = tracked_item(dict(zip(TRACKED_COLUMNS, row, strict=True)))
             items[item.key] = item
         return items
 
@@ -270,29 +248,20 @@ class DuckLakeArchiveStore:
         entries = [env for env in self._batch if env.meta.kind not in MESSAGE_KINDS]
         messages.sort(key=lambda env: (env.meta.team, env.meta.channel, env.meta.ts))
         entries.sort(key=lambda env: (env.meta.team, env.meta.kind, env.meta.id or ""))
-        self._insert("message_version", MESSAGE_COLUMNS, [_message_row(env) for env in messages])
-        self._insert("directory_entry", DIRECTORY_COLUMNS, [_directory_row(env) for env in entries])
+        message_rows = [message_row(env) for env in messages]
+        directory_rows = [directory_row(env) for env in entries]
+        insert_rows(self._con, "message_version", MESSAGE_COLUMNS, message_rows)
+        insert_rows(self._con, "directory_entry", DIRECTORY_COLUMNS, directory_rows)
 
     def _upsert_tracked(self, items: list[TrackedItem]) -> None:
-        rows = [_tracked_row(item) for item in items]
+        rows = [tracked_row(item) for item in items]
         self._delete_keys("tracked_item", TRACKED_KEY, rows)
-        self._insert("tracked_item", TRACKED_COLUMNS, rows)
+        insert_rows(self._con, "tracked_item", TRACKED_COLUMNS, rows)
 
     def _upsert_downloads(self, states: list[DownloadState]) -> None:
-        rows = [_download_row(state) for state in states]
+        rows = [download_row(state) for state in states]
         self._delete_keys("download_state", DOWNLOAD_KEY, rows)
-        self._insert("download_state", DOWNLOAD_COLUMNS, rows)
-
-    def _insert(self, table: str, columns: dict[str, str], rows: list[dict]) -> None:
-        """Inserts rows in order, passed as one JSON parameter."""
-        if not rows:
-            return
-        names = ", ".join(f'"{name}"' for name in columns)
-        self._con.execute(
-            f"INSERT INTO {table} ({names}) SELECT unnest(r) FROM "
-            f"(SELECT unnest(from_json(?::JSON, '{_structure(columns)}')) AS r)",
-            [msgspec.json.encode(rows).decode()],
-        )
+        insert_rows(self._con, "download_state", DOWNLOAD_COLUMNS, rows)
 
     def _delete_keys(self, table: str, key: tuple[str, ...], rows: list[dict]) -> None:
         if not rows:
@@ -339,11 +308,25 @@ class DuckLakeArchiveStore:
         return env.meta.kind in MESSAGE_KINDS and env.meta.team == team
 
 
+def insert_rows(
+    con: duckdb.DuckDBPyConnection, table: str, columns: dict[str, str], rows: list[dict]
+) -> None:
+    """Inserts rows in order, passed as one JSON parameter."""
+    if not rows:
+        return
+    names = ", ".join(f'"{name}"' for name in columns)
+    con.execute(
+        f"INSERT INTO {table} ({names}) SELECT unnest(r) FROM "
+        f"(SELECT unnest(from_json(?::JSON, '{_structure(columns)}')) AS r)",
+        [msgspec.json.encode(rows).decode()],
+    )
+
+
 def _structure(columns: dict[str, str]) -> str:
     return msgspec.json.encode([columns]).decode()
 
 
-def _message_row(env: Envelope) -> dict:
+def message_row(env: Envelope) -> dict:
     meta = env.meta
     obj = env.object or {}
     return {
@@ -364,7 +347,7 @@ def _message_row(env: Envelope) -> dict:
     }
 
 
-def _message_envelope(row: dict) -> Envelope:
+def message_envelope(row: dict) -> Envelope:
     meta = Meta(
         kind=row["kind"],
         team=row["team"],
@@ -382,7 +365,7 @@ def _message_envelope(row: dict) -> Envelope:
     return Envelope(meta=meta, object=_decode.decode(obj) if obj is not None else None)
 
 
-def _directory_row(env: Envelope) -> dict:
+def directory_row(env: Envelope) -> dict:
     meta = env.meta
     return {
         "team": meta.team,
@@ -398,14 +381,50 @@ def _directory_row(env: Envelope) -> dict:
     }
 
 
-def _tracked_row(item: TrackedItem) -> dict:
+def directory_envelope(row: dict) -> Envelope:
+    meta = Meta(
+        kind=row["kind"],
+        team=row["team"],
+        id=row["id"],
+        fetched_at=row["fetched_at"],
+        run=row["run"],
+        api=row["api"],
+        slarc=row["slarc"],
+        hash=row["hash"],
+        blob=row["blob"],
+    )
+    obj = row["object"]
+    return Envelope(meta=meta, object=_decode.decode(obj) if obj is not None else None)
+
+
+def run_row(env: Envelope) -> dict:
+    """The run row of a run line; its object is the whole run record."""
+    obj = env.object or {}
+    return {
+        "run": env.meta.run,
+        "command": obj.get("command"),
+        "started": obj.get("started"),
+        "finished": obj.get("finished"),
+        "fetched_at": env.meta.fetched_at,
+        "slarc": env.meta.slarc,
+        "object": env.object,
+    }
+
+
+def run_line(row: dict) -> Envelope:
+    meta = Meta(kind="run", fetched_at=row["fetched_at"], run=row["run"], slarc=row["slarc"])
+    obj = row["object"]
+    return Envelope(meta=meta, object=_decode.decode(obj) if obj is not None else None)
+
+
+def tracked_row(item: TrackedItem) -> dict:
     row = msgspec.to_builtins(item)
     row["team"] = row.pop("team_id")
     row["ts"] = item.ts or ""
     return row
 
 
-def _tracked_item(row: dict) -> TrackedItem:
+def tracked_item(row: dict) -> TrackedItem:
     row["team_id"] = row.pop("team")
     row["ts"] = row["ts"] or None
     row["last_read"] = _decode.decode(row["last_read"])
@@ -413,7 +432,12 @@ def _tracked_item(row: dict) -> TrackedItem:
     return msgspec.convert(row, TrackedItem)
 
 
-def _download_row(state: DownloadState) -> dict:
+def download_row(state: DownloadState) -> dict:
     row = msgspec.to_builtins(state)
     row["team"] = row.pop("team_id")
     return row
+
+
+def download_state(row: dict) -> DownloadState:
+    row["team_id"] = row.pop("team")
+    return msgspec.convert(row, DownloadState)
