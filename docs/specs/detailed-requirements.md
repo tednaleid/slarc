@@ -62,7 +62,7 @@ URL and selector parsing is a pure function with property tests.
 
 - An archive is a directory containing `slarc.toml`. One archive can hold several workspaces. There are no named archives.
 - Lookup, highest priority first: `--root DIR`; `$SLARC_ARCHIVE`; the nearest `slarc.toml` walking up from the current directory (as git does with `.git`); `default_archive` in the global config.
-- If none of those resolves, `pull` creates an archive in the current directory after a one-time confirmation ("No archive here. Create one in /path? [Y/n]"); `--yes` skips it. Commands other than `pull` exit with a message saying no archive was found.
+- If none of those resolves, `pull` creates an archive in the current directory after a one-time confirmation ("No archive here. Create one in /path? [Y/n]"); `--yes` skips it. A bare `pull` never creates an archive and says nothing is tracked; ending the prompt with Ctrl-C or end of input counts as declining. Commands other than `pull` exit with a message saying no archive was found.
 - Global state follows XDG: settings in `$XDG_CONFIG_HOME/slarc/config.toml` (`~/.config/slarc/config.toml` on every platform), derived data such as search indexes in `$XDG_CACHE_HOME/slarc/` keyed by archive path. Pasted credentials go in the OS keychain through `keyring`.
 - `slarc.toml` holds only portable settings: no absolute paths and nothing tied to one user, so a clone of an archive works the same on another machine.
 - Settings resolve flags, then environment, then `slarc.toml`, then the global file, then built-in defaults, key by key. `slarc list` shows the archive path and which files were read.

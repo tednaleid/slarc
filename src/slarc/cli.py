@@ -196,20 +196,31 @@ def _summary(report: PullReport) -> str:
 
 
 def _archive_for_pull(
-    root: Path | None, env: Mapping[str, str], global_config: Mapping[str, Any], yes: bool
-) -> Path:
+    root: Path | None,
+    env: Mapping[str, str],
+    global_config: Mapping[str, Any],
+    yes: bool,
+    bare: bool,
+) -> Path | None:
     """The archive to pull into, created after confirmation when it has no slarc.toml.
 
-    With no archive found, the archive goes in the current directory.
+    With no archive found, the archive goes in the current directory. A bare pull never creates
+    one, since an empty archive tracks nothing, and gets None.
     """
     found = find_archive(Path.cwd(), root, env, global_config)
     if found is not None and (found / ARCHIVE_FILE).is_file():
         return found
+    if bare:
+        return None
     if found is None:
         target, question = Path.cwd(), f"No archive here. Create one in {Path.cwd()}?"
     else:
         target, question = found, f"No archive at {found}. Create one?"
-    if not yes and not typer.confirm(question, default=True):
+    try:
+        declined = not yes and not typer.confirm(question, default=True)
+    except typer.Abort:
+        declined = True
+    if declined:
         _fail("No archive created.")
     create_archive(target)
     return target
@@ -284,7 +295,10 @@ def pull_command(
     args = _run_args(texts, since, until, flags | {"--max-file-size": max_file_size})
     try:
         global_config = read_global_config(services.env, services.home)
-        archive_root = _archive_for_pull(root, services.env, global_config, yes)
+        archive_root = _archive_for_pull(root, services.env, global_config, yes, not parsed)
+        if archive_root is None:
+            out.print(NO_TRACKED_ITEMS, markup=False)
+            return
         overrides = {"downloads": downloads, "max_file_size_mb": max_file_size}
         settings = load_settings(archive_root, global_config, services.env, overrides)
         options = PullOptions(
@@ -314,7 +328,10 @@ def pull_command(
         raise typer.Exit(INTERRUPTED_EXIT) from None
     if any(isinstance(error, NoSession) for error in report.unreachable):
         _warn([str(e) for e in services.credentials.errors])
-    out.print(_summary(report), markup=False)
+    if not parsed and report.items_selected == 0:
+        out.print(NO_TRACKED_ITEMS, markup=False)
+    else:
+        out.print(_summary(report), markup=False)
     if report.failed:
         raise typer.Exit(1)
 

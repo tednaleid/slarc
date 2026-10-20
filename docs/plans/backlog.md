@@ -43,7 +43,6 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 ## Phase 1 leftovers
 
 ### Pull
-- A bare `slarc pull` with nothing tracked prints "Pulled 0 items" instead of saying nothing is tracked (`cli.py`; `NO_TRACKED_ITEMS` exists).
 - The downloads drain after a mid-pull `AuthFailed` can re-raise it, so no summary prints; the exit code and run line are still right (`service/downloads.py`).
 - When a conversation turns `NotVisible` partway through a pull, deletes already appended for its re-read threads stay (`service/pull.py`).
 - A new link whose first read raises `NotVisible` is tracked as `not_visible`, while a `ThreadNotFound` link is not tracked (`service/pull.py` `_message_item`).
@@ -55,7 +54,6 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 - Each workspace gets two `auth.test` calls per run, in `SessionConnector.connect` and `_Workspaces._open`.
 - A tracked DM may fail `search.messages` (DM search syntax is unverified) and warn on every pull; check `in:<#D...>` read-only and skip search for DMs if it fails (`service/pull.py` `_search_replies`).
 - Ctrl-C during the drain waits for every in-flight download, up to 60 s and 100 MB each; check a cancel flag per chunk (`adapters/downloader.py`).
-- Ctrl-C at the create-archive prompt exits 1 with "Aborted!" instead of slarc's interrupt message (`cli.py` `_archive_for_pull`).
 - `--max-file-size 0` is left out of the run line's args because `0 == False` (`cli.py` `_run_args`).
 - A skipped `not_visible` item shows a finished 0-message progress bar (`cli.py` `RichReporter`).
 - Images over the size limit stay `too_large` after the limit is raised; only files are retried (`service/downloads.py` `_image_state`).

@@ -290,7 +290,7 @@ git commit -m "Record items named on the command line before reading them"
 
 ---
 
-### Task 4: Bare pull with nothing tracked, and an aborted create prompt
+### Task 4: Bare pull with nothing tracked, and an aborted create prompt [done]
 
 Backlog lines: "A bare `slarc pull` with nothing tracked prints "Pulled 0 items"" and "Ctrl-C at the create-archive prompt exits 1 with "Aborted!"".
 
@@ -306,7 +306,7 @@ Behavior after this task:
 **Interfaces:**
 - Produces: `PullReport.items_selected: int`, the number of items `resolve` returned.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_bare_pull_without_an_archive_says_nothing_is_tracked(f: Fixture):
@@ -333,18 +333,18 @@ def test_create_prompt_aborted_creates_nothing(f: Fixture):
     assert list(f.work.iterdir()) == []
 ```
 
-- [ ] **Step 2: Run them and watch them fail**
+- [x] **Step 2: Run them and watch them fail**
 
 Run: `just test tests/test_cli_pull.py -k "nothing_tracked or prompt_aborted"`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
-- [ ] **Step 4: Run `just check`**
+- [x] **Step 4: Run `just check`**
 
 Existing tests that run a bare pull already create the archive with an earlier `--yes BASE` pull, so they should pass unchanged. If one relies on a bare pull creating an archive, change the test and say so in the report.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -m "Say nothing is tracked on a bare pull, and treat an aborted prompt as declining"

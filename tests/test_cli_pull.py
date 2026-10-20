@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from slarc import bootstrap
 from slarc.adapters.credentials import CompositeSource, KeyringSource
 from slarc.cli import app
+from slarc.config import create_archive
 from slarc.domain.envelope import decode_line
 from slarc.domain.tracking import RunRecord, run_from_envelope
 from slarc.ports import AuthFailed, BlobStore, CredentialReadError, Session
@@ -105,6 +106,30 @@ def test_pull_declined_creates_nothing(f: Fixture):
     assert "No archive created." in result.output
     assert list(f.work.iterdir()) == []
     assert f.gateway.calls == []
+
+
+def test_bare_pull_without_an_archive_says_nothing_is_tracked(f: Fixture):
+    result = f.pull("--yes")
+    assert result.exit_code == 0, result.output
+    assert "No tracked items yet. Pull a Slack link to start tracking it." in result.output
+    assert list(f.work.iterdir()) == []
+    assert f.gateway.calls == []
+
+
+def test_bare_pull_with_nothing_tracked_says_so(f: Fixture):
+    create_archive(f.work)
+    result = f.pull()
+    assert result.exit_code == 0, result.output
+    assert "No tracked items yet. Pull a Slack link to start tracking it." in result.output
+    assert "Pulled" not in result.output
+
+
+def test_create_prompt_aborted_creates_nothing(f: Fixture):
+    result = f.pull(BASE, input="")
+    assert result.exit_code == 1
+    assert "No archive created." in result.output
+    assert "Aborted!" not in result.output
+    assert list(f.work.iterdir()) == []
 
 
 def test_pull_yes_skips_prompt(f: Fixture):

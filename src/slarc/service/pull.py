@@ -75,6 +75,7 @@ class PullOptions:
 class PullReport:
     """unreachable holds why each workspace that could not connect was skipped."""
 
+    items_selected: int
     items_pulled: int
     lines_appended: int
     messages_seen: int
@@ -125,6 +126,7 @@ def pull(
         counts[API_CALLS] = run.workspaces.api_calls()
         counts[THREADS_READ] = dict(run.threads_read)
     return PullReport(
+        items_selected=len(items),
         items_pulled=run.pulled,
         lines_appended=counted(uow, LINES_APPENDED),
         messages_seen=counted(uow, MESSAGES_SEEN),
