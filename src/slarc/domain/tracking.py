@@ -20,7 +20,8 @@ class TrackedItem(msgspec.Struct, kw_only=True):
     backfill_complete: bool = False
     last_search_at: str | None = None
     last_pull_at: str | None = None
-    status: Literal["ok", "not_visible"] = "ok"
+    status: Literal["ok", "not_visible", "removed"] = "ok"
+    archived: bool = False
     last_read: dict[str, str] = {}
     retry_threads: list[str] = []
 
@@ -40,7 +41,16 @@ class DownloadState(msgspec.Struct, kw_only=True):
     target_kind: Literal["file", "image"]
     target: str
     url: str | None = None
-    status: Literal["pending", "failed", "forbidden", "too_large", "deleted", "external"]
+    status: Literal[
+        "pending",
+        "failed",
+        "forbidden",
+        "too_large",
+        "deleted",
+        "external",
+        "gave_up",
+        "removed",
+    ]
     attempts: int = 0
     last_error: str | None = None
 

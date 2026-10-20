@@ -4,13 +4,20 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Literal
 
+import msgspec
 import pytest
 
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
 from slarc.adapters.jsonl_store import JsonlArchiveStore
 from slarc.domain.envelope import Envelope, Meta, decode_line, encode_line
 from slarc.domain.hashing import content_hash
-from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
+from slarc.domain.tracking import (
+    DownloadState,
+    RunRecord,
+    TrackedItem,
+    run_envelope,
+    run_from_envelope,
+)
 from slarc.ports import ArchiveStore, DirectoryState, SlarcError, StoredMessage
 from tests.fakes import InMemoryArchiveStore
 
@@ -85,7 +92,9 @@ def tracked(newest_ts: str, channel: str = CHANNEL) -> TrackedItem:
     return TrackedItem(team_id=TEAM, kind="conversation", channel=channel, newest_ts=newest_ts)
 
 
-def download(target: str, status: Literal["pending", "failed"], attempts: int) -> DownloadState:
+def download(
+    target: str, status: Literal["pending", "failed", "gave_up", "removed"], attempts: int
+) -> DownloadState:
     return DownloadState(
         team_id=TEAM, target_kind="file", target=target, status=status, attempts=attempts
     )
@@ -225,6 +234,51 @@ def test_tracked_items_latest_entry_across_runs(store_and_reopen):
         assert items[(TEAM, "conversation", CHANNEL, "")].newest_ts == "200.000000"
         assert items[(TEAM, "conversation", other, "")].newest_ts == "50.000000"
         assert len(items) == 2
+
+
+def test_removed_items_leave_tracked_items(store_and_reopen):
+    store, reopen = store_and_reopen
+    keep = tracked("100.000000")
+    gone = TrackedItem(team_id=TEAM, kind="thread", channel=CHANNEL, ts="1.000001")
+    store.append_run(run_record(R1, T1, tracked=[keep, gone]), VERSION)
+    store.append_run(
+        run_record(R2, T2, tracked=[msgspec.structs.replace(gone, status="removed")]), VERSION
+    )
+
+    for current in (store, reopen()):
+        assert list(current.tracked_items()) == [keep.key]
+        assert list(current.removed_items()) == [gone.key]
+
+
+def test_retracking_a_removed_item_tracks_it_again(store_and_reopen):
+    store, reopen = store_and_reopen
+    item = tracked("100.000000")
+    store.append_run(
+        run_record(R1, T1, tracked=[msgspec.structs.replace(item, status="removed")]), VERSION
+    )
+    store.append_run(run_record(R2, T2, tracked=[item]), VERSION)
+
+    for current in (store, reopen()):
+        assert list(current.tracked_items()) == [item.key]
+        assert current.removed_items() == {}
+
+
+def test_archived_and_new_statuses_round_trip_through_a_run_line():
+    run = run_record(
+        R1,
+        T1,
+        tracked=[msgspec.structs.replace(tracked("1.0"), archived=True, status="removed")],
+        downloads=[download("F1", "gave_up", 3), download("F2", "removed", 0)],
+    )
+    decoded = run_from_envelope(decode_line(encode_line(run_envelope(run, VERSION))))
+    assert decoded == run
+
+
+def test_run_line_without_archived_decodes_as_not_archived():
+    env = run_envelope(run_record(R1, T1, tracked=[tracked("1.0")]), VERSION)
+    assert env.object is not None
+    del env.object["tracked"][0]["archived"]
+    assert run_from_envelope(env).tracked[0].archived is False
 
 
 def test_downloads_latest_entry_across_runs(store_and_reopen):

@@ -57,6 +57,9 @@ class InMemoryArchiveStore:
     def tracked_items(self) -> dict[tuple[str, str, str, str], TrackedItem]:
         return archive_state.tracked_items(self.lines)
 
+    def removed_items(self) -> dict[tuple[str, str, str, str], TrackedItem]:
+        return archive_state.removed_items(self.lines)
+
     def downloads(self) -> dict[tuple[str, str], DownloadState]:
         return archive_state.downloads(self.lines)
 

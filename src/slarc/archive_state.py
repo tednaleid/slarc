@@ -82,8 +82,16 @@ def _run_records(lines: Iterable[Envelope]) -> list[RunRecord]:
     return records
 
 
-def tracked_items(lines: Iterable[Envelope]) -> dict[tuple[str, str, str, str], TrackedItem]:
+def _latest_tracked(lines: Iterable[Envelope]) -> dict[tuple[str, str, str, str], TrackedItem]:
     return {item.key: item for run in _run_records(lines) for item in run.tracked}
+
+
+def tracked_items(lines: Iterable[Envelope]) -> dict[tuple[str, str, str, str], TrackedItem]:
+    return {key: item for key, item in _latest_tracked(lines).items() if item.status != "removed"}
+
+
+def removed_items(lines: Iterable[Envelope]) -> dict[tuple[str, str, str, str], TrackedItem]:
+    return {key: item for key, item in _latest_tracked(lines).items() if item.status == "removed"}
 
 
 def downloads(lines: Iterable[Envelope]) -> dict[tuple[str, str], DownloadState]:

@@ -67,6 +67,9 @@ class JsonlArchiveStore:
     def tracked_items(self) -> dict[tuple[str, str, str, str], TrackedItem]:
         return archive_state.tracked_items(self._read([self._runs_path()]))
 
+    def removed_items(self) -> dict[tuple[str, str, str, str], TrackedItem]:
+        return archive_state.removed_items(self._read([self._runs_path()]))
+
     def downloads(self) -> dict[tuple[str, str], DownloadState]:
         return archive_state.downloads(self._read([self._runs_path()]))
 
