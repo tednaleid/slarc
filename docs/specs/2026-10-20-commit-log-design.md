@@ -1,5 +1,7 @@
 # runs.jsonl as a commit log: commits, tags, a lock, and removals that never wait
 
+> Replaced by `2026-10-20-ducklake-archive-design.md` before it was built. Kept for the reasoning; do not build it.
+
 ## Intent
 
 slarc's archive is append-only lines folded into current state, which already makes it most of a log-structured store. Three things are missing, and each one can lose data:
