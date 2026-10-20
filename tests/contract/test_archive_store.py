@@ -8,7 +8,13 @@ import msgspec
 import pytest
 
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
-from slarc.adapters.lake_store import DuckLakeArchiveStore
+from slarc.adapters.lake import connect_lake
+from slarc.adapters.lake_store import (
+    RUN_COLUMNS,
+    VERSION_ORDER,
+    DuckLakeArchiveStore,
+    run_line,
+)
 from slarc.domain.envelope import Envelope, Meta, decode_line, encode_line
 from slarc.domain.hashing import content_hash
 from slarc.domain.tracking import (
@@ -126,13 +132,14 @@ def store_and_reopen(
 ) -> Iterator[tuple[ArchiveStore, Callable[[], ArchiveStore]]]:
     """Yields a store and a function returning a store over the same archive.
 
-    Only committed lines are kept, so reopening first commits each open store's batch with a
-    run that tracks nothing.
+    Only committed lines are kept, so reopening first commits each open store's batch, then
+    records a run that tracks nothing.
     """
     if request.param == "memory":
         memory = InMemoryArchiveStore()
 
         def reopen_memory() -> ArchiveStore:
+            memory.commit(Commit())
             memory.append_run(run_record(R_REOPEN, T1), VERSION)
             return memory
 
@@ -142,6 +149,7 @@ def store_and_reopen(
 
     def reopen() -> ArchiveStore:
         for store in opened:
+            store.commit(Commit())
             store.append_run(run_record(R_REOPEN, T1), VERSION)
         opened.append(DuckLakeArchiveStore(tmp_path, ext_dir))
         return opened[-1]
@@ -149,6 +157,12 @@ def store_and_reopen(
     yield opened[0], reopen
     for store in opened:
         store.close()
+
+
+def track(store: ArchiveStore, *teams: str) -> None:
+    """Commits a tracked conversation in each team, so the teams' directory lines commit."""
+    items = [TrackedItem(team_id=team, kind="conversation", channel=CHANNEL) for team in teams]
+    store.commit(Commit(items=items))
 
 
 def test_stored_messages_reflects_latest_line(store_and_reopen):
@@ -181,6 +195,7 @@ def test_deleted_line_sets_hash_none(store_and_reopen):
 
 def test_directory_state_includes_blob(store_and_reopen):
     store, reopen = store_and_reopen
+    track(store, TEAM)
     referenced = file_line("F1", T1, R1, None)
     downloaded = file_line("F1", T2, R2, "ab" * 32)
     store.append(referenced)
@@ -196,6 +211,7 @@ def test_directory_state_includes_blob(store_and_reopen):
 
 def test_duplicate_and_out_of_order_lines_tolerated(store_and_reopen):
     store, reopen = store_and_reopen
+    track(store, TEAM)
     newer = message(TS, "newer", T2, R2)
     older = message(TS, "older", T1, R1)
     store.append(newer)
@@ -216,6 +232,7 @@ def test_same_second_blob_line_wins_in_store_and_index(
     """A blob line appended in the same second and run as the line without it is current,
     in the store's fold and in the DuckDB file view."""
     store, reopen = store_and_reopen
+    track(store, TEAM)
     without_blob = file_line("F1", T1, R1, None)
     store.append(without_blob)
     store.append(file_line("F1", T1, R1, "cd" * 32))
@@ -258,6 +275,57 @@ def test_append_run_leaves_tracked_items_to_commits(store_and_reopen):
     expected = msgspec.structs.replace(tracked("100.000000"), revision=1)
     for current in (store, reopen()):
         assert current.tracked_items() == {KEY: expected}
+
+
+def recorded_runs(store: ArchiveStore, root: Path, ext_dir: Path) -> list[RunRecord]:
+    """Every run the store recorded, read past the port, which has no run reads."""
+    if isinstance(store, InMemoryArchiveStore):
+        lines = [env for env in store.lines if env.meta.kind == "run"]
+    else:
+        names = ", ".join(RUN_COLUMNS)
+        con = connect_lake(root, ext_dir)
+        try:
+            rows = con.execute(f"SELECT {names} FROM run ORDER BY {VERSION_ORDER}").fetchall()
+        finally:
+            con.close()
+        lines = [run_line(dict(zip(RUN_COLUMNS, row, strict=True))) for row in rows]
+    return [run_from_envelope(env) for env in lines]
+
+
+def test_append_run_writes_only_the_run_row(store_and_reopen, tmp_path: Path, ext_dir: Path):
+    store, reopen = store_and_reopen
+    store.append(message(TS, "kept", T1, R1))
+    store.commit(Commit(items=[tracked("100.000000")], downloads=[download("F1", "pending", 0)]))
+    run = run_record(
+        R2,
+        T2,
+        teams=[TEAM],
+        tracked=[tracked("200.000000", OTHER_CHANNEL)],
+        downloads=[download("F2", "pending", 0)],
+    )
+
+    store.append(message(LATER_TS, "open", T2, R2))
+    with pytest.raises(ValueError):
+        store.append_run(run, VERSION)
+    store.discard()
+    store.drop_messages(TEAM, CHANNEL, {TS})
+    with pytest.raises(ValueError):
+        store.append_run(run, VERSION)
+    store.discard()
+    store.drop_downloads(TEAM, {"F1"})
+    with pytest.raises(ValueError):
+        store.append_run(run, VERSION)
+    store.discard()
+    store.append_run(run, VERSION)
+
+    assert recorded_runs(store, tmp_path, ext_dir) == [
+        msgspec.structs.replace(run, tracked=[], downloads=[])
+    ]
+    expected = msgspec.structs.replace(tracked("100.000000"), revision=1)
+    for current in (store, reopen()):
+        assert set(current.stored_messages(TEAM, CHANNEL)) == {TS}
+        assert current.tracked_items() == {KEY: expected}
+        assert list(current.downloads()) == [(TEAM, "F1")]
 
 
 def test_removed_items_leave_tracked_items(store_and_reopen):
@@ -389,6 +457,7 @@ def test_append_after_drop_messages_still_lands(store_and_reopen):
 
 def test_drop_directory_lines_removes_every_version(store_and_reopen):
     store, reopen = store_and_reopen
+    track(store, TEAM)
     kept = file_line("F2", T1, R1, None)
     store.append(file_line("F1", T1, R1, None))
     store.append(kept)
@@ -437,6 +506,7 @@ def test_drop_workspace_removes_raw_and_directory(store_and_reopen):
 
 def test_blob_references_lists_every_directory_blob(store_and_reopen):
     store, reopen = store_and_reopen
+    track(store, TEAM, OTHER_TEAM)
     store.append(file_line("F1", T1, R1, None))
     store.append(file_line("F1", T2, R2, "ab" * 32))
     store.append(file_line("I1", T1, R1, "cd" * 32, team=OTHER_TEAM, kind="image"))
@@ -452,6 +522,7 @@ def test_blob_references_lists_every_directory_blob(store_and_reopen):
 
 def test_channels_lists_channels_with_lines(store_and_reopen):
     store, reopen = store_and_reopen
+    track(store, TEAM)
     store.append(message(TS, "here", T1, R1, channel=OTHER_CHANNEL))
     store.append(message(TS, "there", T1, R1))
     store.append(file_line("F1", T1, R1, None))

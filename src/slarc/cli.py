@@ -741,9 +741,9 @@ def rm_command(
             with UnitOfWork(
                 archive, blobs, services.clock, "rm", args, __version__, services.run_suffix
             ) as uow:
-                apply_removal(removal, uow)
+                removal = apply_removal(removal, uow, blobs)
             try:
-                sweep(removal.teams, archive, blobs)
+                sweep(archive, blobs)
             except SlarcError as error:
                 _fail(f"{error} {RUN_RM_AGAIN}")
             except KeyboardInterrupt:

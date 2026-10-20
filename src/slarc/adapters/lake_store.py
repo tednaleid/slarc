@@ -1,5 +1,5 @@
 # ABOUTME: ArchiveStore over the archive's DuckLake. Appends and drops wait in an open batch that
-# ABOUTME: commit writes in one transaction after checking item revisions; append_run commits too.
+# ABOUTME: commit writes in one transaction after checking item revisions; append_run adds the run.
 from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -174,20 +174,18 @@ class DuckLakeArchiveStore:
         return {(state.team_id, state.target): state for state in states}
 
     def append_run(self, run: RunRecord, slarc_version: str) -> None:
-        """Commits the open batch and the run together.
+        """Commits the run row alone; raises ValueError if the open batch is not empty.
 
         The run row's tracked and downloads lists are empty: the tracked_item and
-        download_state tables hold that state, and only commit writes them. On failure
-        nothing is written and the open batch is kept.
+        download_state tables hold that state, and only commit writes them.
         """
+        if self._batch or self._drops:
+            raise ValueError("Commit or discard the open batch before appending the run")
         recorded = msgspec.structs.replace(run, tracked=[], downloads=[])
         with self._transaction():
-            self._apply_drops()
-            self._insert_batch(self._batch)
             insert_rows(
                 self._con, "run", RUN_COLUMNS, [run_row(run_envelope(recorded, slarc_version))]
             )
-        self.discard()
 
     def channels(self, team: str) -> list[str]:
         rows = self._con.execute(

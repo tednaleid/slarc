@@ -1,6 +1,7 @@
 # ABOUTME: Tests for the `slarc rm` command over a lake of the recorded archive, without Slack.
 # ABOUTME: One test pulls with the pull fixture to track a thread inside a tracked conversation.
 import dataclasses
+import re
 import shutil
 from pathlib import Path
 
@@ -12,7 +13,8 @@ from slarc.adapters.lake import CATALOG
 from slarc.adapters.lake_store import VERSION_ORDER, DuckLakeArchiveStore
 from slarc.cli import app
 from slarc.domain.tracking import RunRecord
-from slarc.ports import ArchiveWriteFailed
+from slarc.ports import ArchiveStore, ArchiveWriteFailed, Commit, CommitConflict
+from slarc.service.remove import Removal
 from tests.contract.test_duckdb_index import envelope
 from tests.recorded_fixtures import RECORDED, RECORDED_TEAM, recorded_lake, recorded_lines
 from tests.test_cli_list_search import services
@@ -167,6 +169,7 @@ def test_rm_cleanup_only_prompts_and_sweeps(archive: Path, tmp_path: Path, ext_d
     for line in recorded_lines(f"raw/{RECORDED_TEAM}/{ALL_NALEID}/*.jsonl"):
         store.append(envelope(line))
     later = "2026-10-20T00:00:00Z"
+    store.commit(Commit())
     store.append_run(RunRecord(run="r_leftover", command="pull", started=later), "0.1.0")
     store.close()
     assert channel_messages(archive, ext_dir, ALL_NALEID) > 0
@@ -216,3 +219,61 @@ def test_rm_thread_in_tracked_conversation_reports_kept(f: Fixture) -> None:  # 
     assert result.output.strip().startswith("Stopped tracking 1 item.")
     assert " Kept " in result.output
     assert " message" in result.output and "other tracked items cover." in result.output
+
+
+def test_rm_after_prompt_includes_messages_committed_meanwhile(
+    archive: Path, tmp_path: Path, ext_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stores: list[ArchiveStore] = []
+    questions: list[str] = []
+    plan_removal = cli.plan_removal
+
+    def plan_and_keep_store(*args, **kwargs) -> Removal:
+        stores.append(args[2])
+        return plan_removal(*args, **kwargs)
+
+    def pull_commits_then_yes(question: str, default: bool) -> bool:
+        """Commits a new message for the conversation, as a pull would, then confirms."""
+        questions.append(question)
+        [store] = stores
+        [line, *_] = recorded_lines(f"raw/{RECORDED_TEAM}/{ALL_NALEID}/*.jsonl")
+        late_ts = "1792500000.000100"
+        line["meta"] |= {"ts": late_ts, "fetched_at": "2026-10-20T00:00:00Z", "run": "r_late"}
+        line["object"] |= {"ts": late_ts}
+        store.append(envelope(line))
+        item = store.tracked_items()[(RECORDED_TEAM, "conversation", ALL_NALEID, "")]
+        store.commit(Commit(items=[item]))
+        return True
+
+    monkeypatch.setattr(cli, "plan_removal", plan_and_keep_store)
+    monkeypatch.setattr(cli.typer, "confirm", pull_commits_then_yes)
+    result = invoke(tmp_path, "rm", "#all-naleid", "--root", str(archive))
+
+    assert result.exit_code == 0, result.output
+    assert channel_messages(archive, ext_dir, ALL_NALEID) == 0
+    [question] = questions
+    planned = re.search(r"delete (\d+) lines", question)
+    printed = re.search(r"deleted (\d+) lines", result.output)
+    assert planned is not None and printed is not None
+    assert int(printed[1]) == int(planned[1]) + 1
+
+
+def test_rm_that_keeps_conflicting_fails_and_removes_nothing(
+    archive: Path, tmp_path: Path, ext_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def conflict(store: DuckLakeArchiveStore, change: Commit) -> None:
+        store.discard()
+        raise CommitConflict()
+
+    before = snapshot(archive, ext_dir)
+    monkeypatch.setattr(DuckLakeArchiveStore, "commit", conflict)
+    result = invoke(tmp_path, "rm", "#all-naleid", "--yes", "--root", str(archive))
+
+    assert result.exit_code == 1
+    output = " ".join(result.output.split())
+    assert output == "Other slarc commands kept changing these items; run rm again."
+    after = snapshot(archive, ext_dir)
+    for state in (before, after):
+        assert isinstance(state["tables"], dict)
+        del state["tables"]["run"]
+    assert after == before

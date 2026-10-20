@@ -365,7 +365,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
 - [x] **Step 4: Run `just check` and watch it pass.**
 - [x] **Step 5: Commit:** `Commit each download result, dropping results for removed targets`.
 
-### Task 11: rm commits with revision checks
+### Task 11: rm commits with revision checks [done]
 
 **Files:**
 - Modify: `src/slarc/service/remove.py`, `src/slarc/cli.py` (`rm_command`), `src/slarc/adapters/lake_store.py` and `tests/fakes.py` (`append_run`)
@@ -384,15 +384,15 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
   - **The result message** uses the counts `apply_removal` returns.
   - **`append_run`** now commits only the run row, with `tracked` and `downloads` emptied, and raises `ValueError` if the open batch is not empty. Nothing fills those lists any more, apart from `run.downloads` as the drain's working list.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `test_rm_after_prompt_includes_messages_committed_meanwhile`: plan, commit new messages for the item, then apply. The new messages are deleted, and the printed counts include them.
   - `test_rm_retries_then_gives_up` uses a fake store that always conflicts.
   - `test_append_run_writes_only_the_run_row`, as a contract test over fake and lake.
   - Keep every existing rm test passing.
-- [ ] **Step 2: Run them and watch them fail.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run `just check` and watch it pass.**
-- [ ] **Step 5: Commit:** `Commit removals with revision checks, recomputing when a pull got there first`.
+- [x] **Step 2: Run them and watch them fail.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run `just check` and watch it pass.**
+- [x] **Step 5: Commit:** `Commit removals with revision checks, recomputing when a pull got there first`.
 
 ## Phase 3: locks and maintenance
 

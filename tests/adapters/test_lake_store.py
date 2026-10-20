@@ -1,5 +1,5 @@
-# ABOUTME: Tests for behavior only the lake store has: the open batch, which append_run commits
-# ABOUTME: in one transaction with the run row, and tracked item round trips.
+# ABOUTME: Tests for behavior only the lake store has: the open batch across connections, a run
+# ABOUTME: row that a failed append_run leaves unwritten, and tracked item round trips.
 from pathlib import Path
 
 import msgspec
@@ -42,7 +42,7 @@ def test_reads_see_the_open_batch(tmp_path: Path, ext_dir: Path) -> None:
     store = DuckLakeArchiveStore(tmp_path, ext_dir)
     committed = message(TS, "Hello", T1, R1)
     store.append(committed)
-    store.append_run(run_record(R1, T1), VERSION)
+    store.commit(Commit())
     edited = message(TS, "Hello!", T2, R2)
     downloaded = file_line("F1", T2, R2, "ab" * 32)
     store.append(edited)
@@ -71,13 +71,11 @@ def run_count(root: Path, ext_dir: Path) -> int:
         con.close()
 
 
-def test_append_run_commits_batch_and_run_together(
+def test_failed_append_run_writes_no_run_row(
     tmp_path: Path, ext_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = DuckLakeArchiveStore(tmp_path, ext_dir)
-    line = message(TS, "Hello", T1, R1)
     run = run_record(R1, T1)
-    store.append(line)
 
     def fail(*args: object) -> None:
         raise RuntimeError("interrupted")
@@ -86,15 +84,10 @@ def test_append_run_commits_batch_and_run_together(
         patched.setattr(lake_store, "run_row", fail)
         with pytest.raises(RuntimeError):
             store.append_run(run, VERSION)
-    other = DuckLakeArchiveStore(tmp_path, ext_dir)
-    assert other.stored_messages(TEAM, CHANNEL) == {}
     assert run_count(tmp_path, ext_dir) == 0
 
     store.append_run(run, VERSION)
     store.close()
-    for current in (other, DuckLakeArchiveStore(tmp_path, ext_dir)):
-        assert set(current.stored_messages(TEAM, CHANNEL)) == {TS}
-        current.close()
     assert run_count(tmp_path, ext_dir) == 1
 
 

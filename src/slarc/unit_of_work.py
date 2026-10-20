@@ -1,5 +1,5 @@
 # ABOUTME: Unit of work scoping one run over the archive and blob stores. Commits the open batch
-# ABOUTME: with the run's item and download changes, and appends the run line however the run ends.
+# ABOUTME: with the run's download changes, and appends the run line however the run ends.
 from collections.abc import Sequence
 from types import TracebackType
 
@@ -118,10 +118,10 @@ class UnitOfWork:
         tb: TracebackType | None,
     ) -> None:
         try:
-            # A run that ends normally commits what is left open, with the item changes the
-            # service left in run.tracked; a run that raised keeps only what it committed.
+            # A run that ends normally commits what is left open; a run that raised keeps
+            # only what it committed.
             if exc_type is None:
-                self.commit(self.run.tracked)
+                self.commit()
         except CommitConflict as error:
             self.run.errors.append({"error": str(error)})
         finally:

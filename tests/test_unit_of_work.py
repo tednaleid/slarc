@@ -20,7 +20,6 @@ TS = "1792410693.663869"
 FETCHED = "2026-10-19T13:40:11Z"
 RUN = "r_20261019T134011Z"
 ITEM = TrackedItem(team_id=TEAM, kind="conversation", channel=CHANNEL)
-OTHER_ITEM = TrackedItem(team_id=TEAM, kind="conversation", channel=OTHER_CHANNEL)
 
 
 def make_uow() -> tuple[UnitOfWork, InMemoryArchiveStore, FakeClock]:
@@ -198,7 +197,6 @@ def test_exit_after_an_exception_discards_the_open_batch_then_writes_the_run_row
         uow.run.downloads.append(download("F1"))
         uow.commit([ITEM])
         archive.append(message_line(TS))
-        uow.run.tracked.append(OTHER_ITEM)
         uow.run.downloads.append(download("F2"))
         raise RuntimeError("boom")
 
@@ -211,16 +209,15 @@ def test_exit_after_an_exception_discards_the_open_batch_then_writes_the_run_row
 
 def test_exit_commits_what_is_left_open():
     uow, archive = recording_uow()
+    archive.commit(Commit(items=[ITEM]))
     with uow:
         archive.append(file_line("F1"))
         archive.append(message_line(TS))
-        uow.run.tracked.append(ITEM)
         uow.run.downloads.append(download("F1"))
 
-    [left_open] = archive.commits
-    assert left_open.items == [ITEM]
+    [_, left_open] = archive.commits
+    assert left_open.items == []
     assert left_open.downloads == [download("F1")]
-    assert archive.tracked_items()[ITEM.key].revision == 1
     assert list(archive.directory_state(TEAM, "file")) == ["F1"]
     assert set(archive.stored_messages(TEAM, CHANNEL)) == {TS}
     assert archive.lines[-1].meta.kind == "run"
@@ -250,12 +247,12 @@ def test_exit_commit_failure_discards_writes_the_run_row_and_raises(error: BaseE
 
 def test_exit_records_a_conflict_in_the_run_errors():
     uow, archive = recording_uow()
-    archive.commit(Commit(items=[ITEM]))
     with uow:
         archive.append(message_line(TS))
-        uow.run.tracked.append(ITEM)
+        archive.append(file_line("F1"))
 
     assert archive.stored_messages(TEAM, CHANNEL) == {}
+    assert archive.directory_state(TEAM, "file") == {}
     [line] = run_lines(archive)
     assert line.object is not None
     assert line.object["errors"] == [

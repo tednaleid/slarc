@@ -7,7 +7,7 @@ import pytest
 from slarc import __version__
 from slarc.domain.links import parse_selector
 from slarc.domain.tracking import TrackedItem
-from slarc.ports import Commit, SearchHit, SlarcError
+from slarc.ports import Commit, CommitConflict, Committed, SearchHit, SlarcError
 from slarc.service.remove import Removal, apply_removal, plan_removal, sweep
 from slarc.unit_of_work import UnitOfWork
 from tests.service.pull_harness import (
@@ -98,11 +98,14 @@ def plan(h: Harness, *texts: str, channel_mode: bool = False) -> Removal:
     return plan_removal(selectors, channel_mode, h.archive, h.blobs, WorkspaceIndex())
 
 
-def apply(h: Harness, removal: Removal, *texts: str) -> None:
+def apply(h: Harness, removal: Removal, *texts: str) -> Removal:
+    """Applies the removal in its own unit of work and returns the plan it committed."""
     uow = UnitOfWork(h.archive, h.blobs, h.clock, "rm", list(texts), __version__)
-    with uow:
-        apply_removal(removal, uow)
-    h.clock.advance(3600)
+    try:
+        with uow:
+            return apply_removal(removal, uow, h.blobs)
+    finally:
+        h.clock.advance(3600)
 
 
 def inventory(h: Harness) -> Inventory:
@@ -115,25 +118,27 @@ def inventory(h: Harness) -> Inventory:
     )
 
 
-def swept(h: Harness, removal: Removal) -> None:
-    """Runs the sweep and checks it deleted exactly what the removal planned."""
-    before = inventory(h)
-    sweep(removal.teams, h.archive, h.blobs)
-    after = inventory(h)
-    deleted = (
+def deleted(before: Inventory, after: Inventory) -> tuple[int, int, int, int]:
+    return (
         before.lines - after.lines,
         len(before.files - after.files),
         len(before.images - after.images),
         len(before.blobs - after.blobs),
     )
-    assert deleted == (removal.lines, removal.files, removal.images, removal.blobs)
+
+
+def counts(removal: Removal) -> tuple[int, int, int, int]:
+    return (removal.lines, removal.files, removal.images, removal.blobs)
 
 
 def rm(h: Harness, *texts: str, channel_mode: bool = False) -> Removal:
-    removal = plan(h, *texts, channel_mode=channel_mode)
-    apply(h, removal, *texts)
-    swept(h, removal)
-    return removal
+    """Plans, applies and sweeps, checking that exactly what the committed plan names is
+    deleted; returns the committed plan."""
+    before = inventory(h)
+    committed = apply(h, plan(h, *texts, channel_mode=channel_mode), *texts)
+    sweep(h.archive, h.blobs)
+    assert deleted(before, inventory(h)) == counts(committed)
+    return committed
 
 
 def stored(h: Harness, team: str, channel: str) -> set[str]:
@@ -181,7 +186,7 @@ def test_rm_conversation_deletes_its_lines_and_unreferenced_files(h: Harness):
     assert removal.blobs > 0
     run = h.last_run()
     assert (run.command, run.teams) == ("rm", [TEAM])
-    assert [(i.key, i.status) for i in run.tracked] == [(item("conversation"), "removed")]
+    assert list(h.archive.removed_items()) == [item("conversation")]
     assert removal.downloads == [(TEAM, TOMBSTONE_FILE)]
     assert h.archive.downloads() == {}
     assert run.downloads == []
@@ -279,25 +284,20 @@ def test_pull_after_rm_does_not_requeue_removed_downloads(h: Harness):
 
 def test_rm_rerun_after_interrupted_sweep_finishes_it(h: Harness):
     pull_and_download(h, BASE, SECOND_LINK)
-    first = plan(h, BASE)
-    apply(h, first, BASE)
-    assert len(stored(h, TEAM, CHANNEL)) == CHANNEL_MESSAGES
+    first = apply(h, plan(h, BASE), BASE)
+    assert stored(h, TEAM, CHANNEL) == set()
+    assert first.blobs > 0
+    before = inventory(h)
 
     again = plan(h, BASE)
 
     assert again.items == []
     assert keys(again.already_removed) == [item("conversation")]
     assert not again.nothing_to_do
-    assert (again.lines, again.files, again.images, again.blobs) == (
-        first.lines,
-        first.files,
-        first.images,
-        first.blobs,
-    )
-    apply(h, again, BASE)
-    assert h.last_run().downloads == []
-    swept(h, again)
-    assert stored(h, TEAM, CHANNEL) == set()
+    assert counts(again) == (0, 0, 0, first.blobs)
+    committed = apply(h, again, BASE)
+    sweep(h.archive, h.blobs)
+    assert deleted(before, inventory(h)) == counts(committed) == counts(again)
     assert plan(h, BASE).nothing_to_do
 
 
@@ -400,3 +400,71 @@ def test_rm_never_calls_slack(h: Harness):
 
     assert h.gateway.calls == []
     assert h.connector.connects == []
+
+
+def test_apply_removal_recomputes_from_fresh_reads(h: Harness):
+    pull_and_download(h, BASE)
+    removal = plan(h, BASE)
+    late_ts = ts_on(20, 9)
+    h.gateway.conversations[CHANNEL].append(message(late_ts))
+    h.pull()
+    assert late_ts in stored(h, TEAM, CHANNEL)
+
+    committed = apply(h, removal, BASE)
+
+    assert stored(h, TEAM, CHANNEL) == set()
+    assert committed.lines == removal.lines + 1
+    assert keys(committed.items) == [item("conversation")]
+    assert h.last_run().counts["lines_deleted"] == committed.lines
+
+
+def test_rm_recomputes_when_a_pull_commits_first(h: Harness, monkeypatch: pytest.MonkeyPatch):
+    pull_and_download(h, BASE)
+    removal = plan(h, BASE)
+    late_ts = ts_on(20, 9)
+    commit = h.archive.commit
+    rm_commits: list[Commit] = []
+    pulling: list[bool] = []
+
+    def pull_got_there_first(change: Commit) -> Committed:
+        """Runs a pull that commits a new message before rm's first commit."""
+        if pulling:
+            return commit(change)
+        rm_commits.append(change)
+        if len(rm_commits) == 1:
+            pulling.append(True)
+            h.gateway.conversations[CHANNEL].append(message(late_ts))
+            with h.archive.elsewhere():
+                h.pull()
+            pulling.clear()
+        return commit(change)
+
+    monkeypatch.setattr(h.archive, "commit", pull_got_there_first)
+    committed = apply(h, removal, BASE)
+
+    assert len([change for change in rm_commits if change.items]) == 2
+    assert stored(h, TEAM, CHANNEL) == set()
+    assert committed.lines == removal.lines + 1
+    assert list(h.archive.removed_items()) == [item("conversation")]
+
+
+def test_rm_retries_then_gives_up(h: Harness, monkeypatch: pytest.MonkeyPatch):
+    pull_and_download(h, BASE)
+    removal = plan(h, BASE)
+    before = inventory(h)
+    attempts: list[Commit] = []
+
+    def always_conflicts(change: Commit) -> Committed:
+        attempts.append(change)
+        h.archive.discard()
+        raise CommitConflict()
+
+    monkeypatch.setattr(h.archive, "commit", always_conflicts)
+    with pytest.raises(SlarcError) as raised:
+        apply(h, removal, BASE)
+
+    assert str(raised.value) == "Other slarc commands kept changing these items; run rm again."
+    assert len(attempts) == 3
+    assert inventory(h) == before
+    assert keys(h.tracked()) == [item("conversation")]
+    assert h.last_run().counts == {}

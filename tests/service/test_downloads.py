@@ -73,7 +73,7 @@ def thread_messages() -> list[dict]:
 
 
 def run_states(h: Harness, kind: str) -> list[DownloadState]:
-    return [d for d in h.last_run().downloads if d.target_kind == kind]
+    return [d for d in h.download_states() if d.target_kind == kind]
 
 
 def serve_every_job(h: Harness) -> None:
@@ -181,7 +181,7 @@ def test_tombstone_file_marked_deleted_without_fetch(h: Harness):
     assert ("files.info", TOMBSTONE_FILE) not in h.gateway.calls
 
     h.pull()
-    assert run_states(h, "file") == []
+    assert not [job for job in h.downloader.jobs if job.target_kind == "file"]
 
 
 def test_file_deleted_after_download_marked_deleted(h: Harness):
@@ -251,7 +251,7 @@ def test_failed_download_retried_next_pull(h: Harness):
 
     [state] = run_states(h, "file")
     assert (state.status, state.attempts, state.last_error) == ("failed", 1, "HTTP 500")
-    assert report.downloads_pending == len(h.last_run().downloads)
+    assert report.downloads_pending == len(h.download_states())
 
     h.pull()
     [state] = run_states(h, "file")
@@ -413,7 +413,7 @@ def test_existing_blob_not_refetched(h: Harness):
     h.pull()
 
     assert h.downloader.jobs == []
-    assert h.last_run().downloads == []
+    assert h.download_states() == []
 
 
 def test_recorded_blob_missing_from_the_store_is_fetched_again(h: Harness):
@@ -506,7 +506,7 @@ def test_malformed_image_url_does_not_fail_the_pull(h: Harness):
 
     report = h.pull(SNIPPET_LINK)
 
-    [state] = [d for d in h.last_run().downloads if d.target == bad]
+    [state] = [d for d in h.download_states() if d.target == bad]
     assert state.status == "pending"
     [job] = [job for job in h.downloader.jobs if job.target == bad]
     assert job.slack_auth is False

@@ -7,7 +7,7 @@ from slarc import __version__
 from slarc.adapters.slack_gateway import MESSAGE_PAGE_LIMIT
 from slarc.domain.envelope import Envelope, Kind
 from slarc.domain.links import parse_selector
-from slarc.domain.tracking import RunRecord, TrackedItem, run_from_envelope
+from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem, run_from_envelope
 from slarc.ports import Session
 from slarc.service.pull import PullOptions, PullReport, pull
 from slarc.unit_of_work import UnitOfWork
@@ -124,6 +124,9 @@ class Harness:
 
     def tracked(self) -> list[TrackedItem]:
         return list(self.archive.tracked_items().values())
+
+    def download_states(self) -> list[DownloadState]:
+        return list(self.archive.downloads().values())
 
     def change_message(self, ts: str, **changes: object) -> None:
         messages = self.gateway.conversations[CHANNEL]

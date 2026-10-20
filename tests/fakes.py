@@ -103,12 +103,12 @@ class InMemoryArchiveStore:
         return dict(self.download_states)
 
     def append_run(self, run: RunRecord, slarc_version: str) -> None:
-        """Commits the open batch, then records the run line; only commit writes download
-        states."""
-        self._apply_drops()
-        self.lines.extend(self._batch)
-        self.lines.append(run_envelope(run, slarc_version))
-        self.discard()
+        """Records the run line with tracked and downloads emptied; raises ValueError if the
+        open batch is not empty."""
+        if self._batch or self._line_drops or self._download_drops:
+            raise ValueError("Commit or discard the open batch before appending the run")
+        recorded = msgspec.structs.replace(run, tracked=[], downloads=[])
+        self.lines.append(run_envelope(recorded, slarc_version))
 
     def channels(self, team: str) -> list[str]:
         return sorted({env.meta.channel or "" for env in self._team_message_lines(team)})
@@ -183,11 +183,6 @@ class InMemoryArchiveStore:
 
     def _staged(self, env: Envelope) -> bool:
         return any(drop(env) for drop in self._line_drops)
-
-    def _apply_drops(self) -> None:
-        self.lines = [env for env in self.lines if not self._staged(env)]
-        for key in self._download_drops:
-            self.download_states.pop(key, None)
 
     def _visible(self) -> list[Envelope]:
         return self.lines + self._batch

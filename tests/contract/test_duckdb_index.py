@@ -69,11 +69,12 @@ def later_run(**fields) -> RunRecord:
 
 
 def commit(root: Path, ext_dir: Path, *lines: Envelope, run: RunRecord | None = None) -> None:
-    """Appends lines to the archive's lake and commits them with a run."""
+    """Appends lines to the archive's lake, commits them, then records a run."""
     store = DuckLakeArchiveStore(root, ext_dir)
     try:
         for env in lines:
             store.append(env)
+        store.commit(Commit())
         store.append_run(run or later_run(), VERSION)
     finally:
         store.close()

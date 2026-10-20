@@ -10,6 +10,7 @@ from slarc.domain.hashing import content_hash
 from slarc.domain.links import ConversationSel
 from slarc.domain.tracking import DownloadState
 from slarc.ports import AuthFailed, NoSession, Session, SlarcError
+from slarc.service.downloads import outstanding_downloads
 from slarc.service.selectors import resolve_conversation
 from tests.recorded_fixtures import recorded_directory
 from tests.service.pull_harness import (
@@ -194,7 +195,7 @@ def test_file_lines_written_for_referenced_files(h: Harness):
     assert file_line.meta.id == "F0CB7HWPUTA"
     assert file_line.meta.api == "conversations.replies"
     assert file_line.meta.hash == content_hash("file", inline)
-    assert [d for d in h.last_run().downloads if d.target_kind == "file"] == [
+    assert [d for d in h.download_states() if d.target_kind == "file"] == [
         DownloadState(
             team_id=TEAM,
             target_kind="file",
@@ -203,7 +204,7 @@ def test_file_lines_written_for_referenced_files(h: Harness):
             status="pending",
         )
     ]
-    assert report.downloads_pending == len(h.last_run().downloads)
+    assert report.downloads_pending == len(h.download_states())
 
     h.pull()
     assert len(h.lines("file")) == 1
@@ -232,7 +233,7 @@ def test_downloaded_file_keeps_its_blob_and_is_not_queued_again(h: Harness):
     h.pull()
 
     assert {env.meta.blob for env in h.lines("file")[1:]} == {blob}
-    assert [d for d in h.last_run().downloads if d.target_kind == "file"] == []
+    assert [d for d in outstanding_downloads(h.archive).values() if d.target_kind == "file"] == []
 
 
 def test_last_read_stored_per_user(h: Harness):
