@@ -360,11 +360,14 @@ def _sql_string(text: str) -> str:
 
 
 def _source_query(root: Path, pattern: str) -> str:
-    """read_ndjson over the files matching pattern, or no rows when none exist yet.
+    return _read_query(sorted(str(path) for path in root.glob(pattern)))
+
+
+def _read_query(paths: list[str]) -> str:
+    """read_ndjson over paths, or no rows when there are none.
 
     Truncated lines from a crash read as rows with a null meta, which every view filters out.
     """
-    paths = sorted(str(path) for path in root.glob(pattern))
     if not paths:
         return f"SELECT CAST(NULL AS {META_TYPE}) AS meta, CAST(NULL AS JSON) AS object WHERE false"
     files = "[" + ", ".join(_sql_string(path) for path in paths) + "]"
@@ -392,6 +395,11 @@ class DuckDbQueryIndex:
 
     def __init__(self, root: Path) -> None:
         self._db = duckdb.connect(":memory:")
+        self._channel_files: dict[tuple[str, str], list[str]] = {}
+        for path in sorted(root.glob(SOURCES["raw_line"])):
+            channel_dir = path.parent
+            key = (channel_dir.parent.name, channel_dir.name)
+            self._channel_files.setdefault(key, []).append(str(path))
         for name, pattern in SOURCES.items():
             self._db.execute(f"CREATE VIEW {name} AS {_source_query(root, pattern)}")
         for name, query in ENTITY_VIEWS.items():
@@ -481,9 +489,16 @@ class DuckDbQueryIndex:
     def _messages(
         self, condition: str, params: dict[str, Any], include_deleted: bool
     ) -> list[dict]:
+        """Runs the message view over the channel's own month files only, so a loop over
+        conversations reads each file once instead of the whole archive per conversation."""
         deleted = "" if include_deleted else "AND deleted_at IS NULL"
+        source = _read_query(self._channel_files.get((params["team"], params["channel"]), []))
         cursor = self._db.execute(
             f"""
+            WITH raw_line AS ({source}),
+                message_line AS ({ENTITY_VIEWS["message_line"]}),
+                message_current AS ({ENTITY_VIEWS["message_current"]}),
+                message AS ({ENTITY_VIEWS["message"]})
             SELECT {MESSAGE_COLUMNS} FROM message
             WHERE team_id = $team AND channel_id = $channel AND {condition} {deleted}
             ORDER BY {TS_ORDER.format("ts")}

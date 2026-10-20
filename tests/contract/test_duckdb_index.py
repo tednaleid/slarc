@@ -364,6 +364,18 @@ def test_thread_returns_parent_then_replies(index: DuckDbQueryIndex) -> None:
     assert messages[0]["reply_count"] == 3
 
 
+def test_messages_and_thread_read_only_their_channels_files(archive: Path) -> None:
+    with DuckDbQueryIndex(archive) as index:
+        every = index.messages(RECORDED_TEAM, ALL_NALEID, None, None, include_deleted=True)
+        thread = index.thread(RECORDED_TEAM, ALL_NALEID, WAVE_PARENT, include_deleted=True)
+        for channel in (archive / "raw" / RECORDED_TEAM).iterdir():
+            if channel.name != ALL_NALEID:
+                shutil.rmtree(channel)
+
+        assert index.messages(RECORDED_TEAM, ALL_NALEID, None, None, include_deleted=True) == every
+        assert index.thread(RECORDED_TEAM, ALL_NALEID, WAVE_PARENT, include_deleted=True) == thread
+
+
 def test_bad_sql_raises_one_line_slarc_error(index: DuckDbQueryIndex) -> None:
     with pytest.raises(SlarcError) as caught:
         index.sql("SELEC 1")
