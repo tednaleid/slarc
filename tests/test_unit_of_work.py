@@ -154,11 +154,11 @@ def test_commit_sends_changed_download_states_only():
     assert (left_open.downloads, left_open.settled, left_open.requires) == ([], set(), set())
 
 
-def test_commit_forgets_dropped_download_states():
+def test_commit_forgets_and_returns_dropped_download_states():
     uow, archive = recording_uow()
     with uow:
         uow.run.downloads.append(download("F1"))
-        uow.commit(downloads_exist=True)
+        assert uow.commit(downloads_exist=True) == {(TEAM, "F1")}
 
         assert uow.run.downloads == []
         uow.run.downloads.append(download("F1"))

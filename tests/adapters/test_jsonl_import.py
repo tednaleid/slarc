@@ -94,11 +94,11 @@ class JsonlFolds:
         return archive_state.directory_objects(self._directory_lines(team, kind))
 
     def outstanding_downloads(self) -> dict:
-        """The download states that are not removed and whose target has no blob."""
+        """The download states whose target has no blob."""
         outstanding = {}
         for key, state in self._runs.downloads().items():
             held = self.directory_state(state.team_id, state.target_kind).get(state.target)
-            if state.status != "removed" and (held is None or held.blob is None):
+            if held is None or held.blob is None:
                 outstanding[key] = state
         return outstanding
 
@@ -211,6 +211,29 @@ def test_import_leaves_out_download_states_whose_target_has_a_blob(
     assert list(lake.downloads()) == [(TEAM, "F2")]
     assert lake.downloads() == JsonlFolds(tmp_path).outstanding_downloads()
     assert report.downloads == 1
+    lake.close()
+
+
+def test_import_reads_a_removed_download_entry_as_no_state(tmp_path: Path, ext_dir: Path) -> None:
+    item = tracked("100.000000")
+    pending = download("F1", "pending", 0)
+    rm_run = run_envelope(
+        run_record(R2, T2, tracked=[msgspec.structs.replace(item, status="removed")]), VERSION
+    )
+    assert rm_run.object is not None
+    rm_run.object["downloads"] = [{**msgspec.to_builtins(pending), "status": "removed"}]
+    write_jsonl(
+        tmp_path,
+        file_line("F1", T1, R1, None),
+        run_envelope(run_record(R1, T1, tracked=[item], downloads=[pending]), VERSION),
+        rm_run,
+    )
+
+    import_jsonl(tmp_path, ext_dir)
+
+    lake = DuckLakeArchiveStore(tmp_path, ext_dir)
+    assert lake.downloads() == {}
+    assert list(lake.removed_items()) == [item.key]
     lake.close()
 
 

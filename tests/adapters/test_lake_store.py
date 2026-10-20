@@ -1,10 +1,12 @@
 # ABOUTME: Tests for behavior only the lake store has: the open batch, which append_run commits
-# ABOUTME: in one transaction with the run's download states, and tracked item round trips.
+# ABOUTME: in one transaction with the run row, and tracked item round trips.
 from pathlib import Path
 
 import msgspec
 import pytest
 
+from slarc.adapters import lake_store
+from slarc.adapters.lake import connect_lake
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.ports import Commit
 from tests.contract.test_archive_store import (
@@ -16,7 +18,6 @@ from tests.contract.test_archive_store import (
     TEAM,
     TS,
     VERSION,
-    download,
     file_line,
     message,
     run_record,
@@ -62,31 +63,39 @@ def test_reads_see_the_open_batch(tmp_path: Path, ext_dir: Path) -> None:
     other.close()
 
 
-def test_append_run_commits_batch_and_downloads_together(
+def run_count(root: Path, ext_dir: Path) -> int:
+    con = connect_lake(root, ext_dir)
+    try:
+        return con.execute("SELECT count(*) FROM run").fetchall()[0][0]
+    finally:
+        con.close()
+
+
+def test_append_run_commits_batch_and_run_together(
     tmp_path: Path, ext_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = DuckLakeArchiveStore(tmp_path, ext_dir)
     line = message(TS, "Hello", T1, R1)
-    run = run_record(R1, T1, downloads=[download("F1", "pending", 0)])
+    run = run_record(R1, T1)
     store.append(line)
 
     def fail(*args: object) -> None:
         raise RuntimeError("interrupted")
 
     with monkeypatch.context() as patched:
-        patched.setattr(DuckLakeArchiveStore, "_upsert_downloads", fail)
+        patched.setattr(lake_store, "run_row", fail)
         with pytest.raises(RuntimeError):
             store.append_run(run, VERSION)
     other = DuckLakeArchiveStore(tmp_path, ext_dir)
     assert other.stored_messages(TEAM, CHANNEL) == {}
-    assert other.downloads() == {}
+    assert run_count(tmp_path, ext_dir) == 0
 
     store.append_run(run, VERSION)
     store.close()
     for current in (other, DuckLakeArchiveStore(tmp_path, ext_dir)):
         assert set(current.stored_messages(TEAM, CHANNEL)) == {TS}
-        assert current.downloads() == {(TEAM, "F1"): download("F1", "pending", 0)}
         current.close()
+    assert run_count(tmp_path, ext_dir) == 1
 
 
 def test_tracked_items_round_trip_every_field(tmp_path: Path, ext_dir: Path) -> None:

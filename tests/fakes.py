@@ -103,11 +103,10 @@ class InMemoryArchiveStore:
         return dict(self.download_states)
 
     def append_run(self, run: RunRecord, slarc_version: str) -> None:
-        """Commits the open batch, then records the run line and its download states."""
+        """Commits the open batch, then records the run line; only commit writes download
+        states."""
         self._apply_drops()
         self.lines.extend(self._batch)
-        for state in run.downloads:
-            self.download_states[(state.team_id, state.target)] = state
         self.lines.append(run_envelope(run, slarc_version))
         self.discard()
 

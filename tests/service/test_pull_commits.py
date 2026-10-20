@@ -6,7 +6,7 @@ import msgspec
 import pytest
 
 from slarc.domain.tracking import ItemKey, TrackedItem
-from slarc.ports import AuthFailed, Commit
+from slarc.ports import AuthFailed, Commit, DownloadJob, DownloadResult
 from tests.service.pull_harness import (
     BASE,
     CHANNEL,
@@ -28,12 +28,13 @@ SECOND_LINK = f"https://naleidworkspace.slack.com/archives/{SECOND_CHANNEL}"
 THREAD_LINK = f"{BASE}/p1792410693663869"
 THREAD = TrackedItem(team_id=TEAM, kind="thread", channel=CHANNEL, ts=PARENT_TS)
 FILE_ID = "F0FILE00001"
+FILE_URL = f"https://files.slack.com/files-pri/{TEAM}-{FILE_ID}/notes.txt"
 FILE = {
     "id": FILE_ID,
     "name": "notes.txt",
     "mode": "hosted",
     "size": 5,
-    "url_private_download": f"https://files.slack.com/files-pri/{TEAM}-{FILE_ID}/notes.txt",
+    "url_private_download": FILE_URL,
 }
 CONFLICT = "Another slarc command changed the archive at the same time."
 
@@ -256,3 +257,29 @@ def test_thread_item_removed_during_the_pull_is_skipped(
     ]
     assert list(h.archive.removed_items()) == [THREAD.key]
     assert report.items_pulled == 1
+
+
+def test_drain_after_rm_of_the_item_drops_its_file_result(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+):
+    h.gateway.conversations[CHANNEL] = [message(ts_on(18, 9), files=[FILE])]
+    h.gateway.conversations[SECOND_CHANNEL] = [message(ts_on(18, 10))]
+    h.gateway.files[FILE_ID] = FILE
+    h.downloader.serve(FILE_URL, b"notes")
+    fetch = h.downloader.fetch
+
+    def rm_commits_before_the_drain(
+        jobs: list[DownloadJob], parallelism: int
+    ) -> Iterator[DownloadResult]:
+        remove_conversation(h, CHANNEL, files={FILE_ID})
+        return fetch(jobs, parallelism)
+
+    monkeypatch.setattr(h.downloader, "fetch", rm_commits_before_the_drain)
+
+    report = h.pull(BASE, SECOND_LINK)
+
+    assert FILE_ID in {job.target for job in h.downloader.jobs}
+    assert list(h.archive.removed_items()) == [conversation(CHANNEL)]
+    assert FILE_ID not in h.archive.directory_state(TEAM, "file")
+    assert (TEAM, FILE_ID) not in h.archive.downloads()
+    assert report.files_saved == 0

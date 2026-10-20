@@ -341,7 +341,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
 - [x] **Step 4: Run `just check` and watch it pass.**
 - [x] **Step 5: Commit:** `Commit pull work per item and per page, rolling back stale batches`.
 
-### Task 10: The download drain commits per result
+### Task 10: The download drain commits per result [done]
 
 **Files:**
 - Modify: `src/slarc/service/downloads.py`
@@ -356,14 +356,14 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
   - **A dropped result** is not counted in `files_saved` or `images_saved`. `_Recorder.record` learns of the drop because the key leaves `run.downloads`.
   - **The `removed` status** is no longer read: delete the `prior.status == "removed"` branches in `_file_state` and `_image_state`, and remove `"removed"` from `DownloadState.status`.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `test_drain_commits_each_result`: interrupt after the second result, and the first two are recorded.
   - `test_result_for_a_removed_target_is_dropped`: drop the target's state row before its result commits. No directory row is written, and it's not counted as saved.
   - `test_downloaded_state_row_is_deleted`.
-- [ ] **Step 2: Run them and watch them fail.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run `just check` and watch it pass.**
-- [ ] **Step 5: Commit:** `Commit each download result, dropping results for removed targets`.
+- [x] **Step 2: Run them and watch them fail.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run `just check` and watch it pass.**
+- [x] **Step 5: Commit:** `Commit each download result, dropping results for removed targets`.
 
 ### Task 11: rm commits with revision checks
 

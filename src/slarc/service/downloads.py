@@ -1,5 +1,5 @@
 # ABOUTME: Queues downloads of the files and images messages reference, then drains the queue.
-# ABOUTME: A download lands as a directory line with meta.blob; other outcomes as download states.
+# ABOUTME: Each result commits a directory line with meta.blob or a download state change.
 from dataclasses import dataclass
 from typing import Literal
 
@@ -122,11 +122,12 @@ def drain_downloads(
     connector: SlackConnector,
     reporter: Reporter,
 ) -> DrainedDownloads:
-    """Downloads this run's pending targets and earlier runs' queue, recording each result.
+    """Downloads this run's pending targets and earlier runs' queue, committing each result.
 
     The reporter hears how many jobs are done, failed and skipped before the first result and
     after each one. A result counts as failed or skipped by the status it settles into, so a
-    file whose files.info read fails after its download counts as failed.
+    file whose files.info read fails after its download counts as failed. A result whose
+    target's download state an rm deleted meanwhile is dropped and counts as neither.
     """
     _requeue_earlier(uow, max_bytes)
     jobs = [_job(state, max_bytes) for state in uow.run.downloads if state.status == "pending"]
@@ -232,8 +233,6 @@ def _file_state(
     file: dict, team_id: str, max_bytes: int, prior: DownloadState | None
 ) -> DownloadState | None:
     """The state to record for a referenced file, or None when there is nothing to record."""
-    if prior is not None and prior.status == "removed":
-        prior = None
     if prior is not None and prior.status in TERMINAL_STATUSES:
         return None
     url = file.get("url_private_download") or file.get("url_private")
@@ -266,8 +265,6 @@ def _image_state(
 
     With retry_skipped, an outside-site image that was forbidden or gave_up starts over.
     """
-    if prior is not None and prior.status == "removed":
-        prior = None
     if (
         retry_skipped
         and prior is not None
@@ -316,11 +313,11 @@ def _requeue_earlier(uow: UnitOfWork, max_bytes: int) -> None:
 
 
 class _Recorder:
-    """Records each download result in the archive and the run's download states.
+    """Records and commits each download result in the archive and the run's download states.
 
     A downloaded file is recorded with its files.info object. Users and emoji whose image
     was downloaded get their new lines in finish, which reads their directory once. saved
-    counts the files and images recorded with their blob.
+    counts the files and images committed with their blob.
     """
 
     def __init__(self, uow: UnitOfWork, connector: SlackConnector) -> None:
@@ -330,19 +327,32 @@ class _Recorder:
         self.saved: dict[Kind, int] = {"file": 0, "image": 0}
 
     def record(self, result: DownloadResult) -> str | None:
-        """Records the result; returns the status it settled into, or None when downloaded."""
+        """Records and commits the result; returns the status it settled into, or None when it
+        was downloaded or dropped.
+
+        The commit drops the result, directory line and state change alike, when its target
+        has no download state left.
+        """
         job = result.job
+        downloaded = None
         if result.status != "ok":
             self._settle(job, result.status, result.error)
         elif job.target_kind == "file":
-            self._record_file(result)
+            downloaded = self._record_file(result)
         else:
-            self._record_image(result)
+            downloaded = self._record_image(result)
         key = (job.team_id, job.target)
+        if key in self.uow.commit(downloads_exist=True):
+            return None
+        if downloaded is not None:
+            self.saved[downloaded] += 1
+            if downloaded == "image":
+                self.images.setdefault(job.team_id, set()).add(job.url)
         held = (d for d in self.uow.run.downloads if (d.team_id, d.target) == key)
         return next((d.status for d in held), None)
 
     def finish(self) -> None:
+        """Commits the new lines of users and emoji whose image was downloaded."""
         for team_id, urls in self.images.items():
             for kind, api in DIRECTORY_LIST_APIS.items():
                 objects = self.uow.archive.directory_objects(team_id, kind)
@@ -352,28 +362,32 @@ class _Recorder:
                     if directory_image_url(kind, obj) in urls
                 }
                 append_directory(self.uow, team_id, kind, shown, api)
+        self.uow.commit(downloads_exist=True)
 
-    def _record_file(self, result: DownloadResult) -> None:
+    def _record_file(self, result: DownloadResult) -> Kind | None:
+        """Appends the downloaded file's line and returns "file", or settles the job and
+        returns None when its files.info read fails."""
         job = result.job
         try:
             info = self.connector.connect(job.team_id).file_info(job.target)
         except FileDeleted as error:
             self._settle(job, "deleted", str(error))
-            return
+            return None
         except AuthFailed:
             raise
         except SlarcError as error:
             self._settle(job, "failed", str(error))
-            return
+            return None
         digest = content_hash("file", info)
         self._append(job, "file", info, FILES_INFO_API, digest, result.sha256)
+        return "file"
 
-    def _record_image(self, result: DownloadResult) -> None:
+    def _record_image(self, result: DownloadResult) -> Kind:
         job = result.job
         image = {"url": job.url, "content_type": result.content_type, "size": result.size}
         digest = content_hash("image", image)
         self._append(job, "image", image, DOWNLOAD_API, digest, result.sha256)
-        self.images.setdefault(job.team_id, set()).add(job.url)
+        return "image"
 
     def _append(
         self, job: DownloadJob, kind: Kind, obj: dict, api: str, digest: str, blob: str | None
@@ -383,7 +397,6 @@ class _Recorder:
             uow, kind, team=job.team_id, id=job.target, api=api, hash=digest, blob=blob
         )
         append_line(uow, Envelope(meta=meta, object=obj))
-        self.saved[kind] += 1
         self._replace(job, None)
 
     def _settle(self, job: DownloadJob, status: SettledStatus, error: str | None) -> None:
@@ -396,13 +409,15 @@ class _Recorder:
         self._replace(job, settled)
 
     def _replace(self, job: DownloadJob, state: DownloadState | None) -> None:
-        """Replaces the run's state for the job's target; None drops it, as a download does."""
+        """Replaces the run's state for the job's target; None settles it, as a download does,
+        so the next commit deletes its download state."""
         key = (job.team_id, job.target)
         downloads = self.uow.run.downloads
         for index, held in enumerate(downloads):
             if (held.team_id, held.target) == key:
                 if state is None:
                     del downloads[index]
+                    self.uow.settle(key)
                 else:
                     downloads[index] = state
                 return

@@ -52,7 +52,6 @@ class DownloadState(msgspec.Struct, kw_only=True):
         "deleted",
         "external",
         "gave_up",
-        "removed",
     ]
     attempts: int = 0
     last_error: str | None = None

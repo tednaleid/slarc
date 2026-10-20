@@ -1,6 +1,7 @@
 # ABOUTME: Tests for queueing, draining and recording downloads of files and images during a pull.
 # ABOUTME: A fake downloader serves bytes per URL into an in-memory blob store.
 import hashlib
+from collections.abc import Iterator
 
 import pytest
 
@@ -8,7 +9,14 @@ from slarc import __version__
 from slarc.domain.directory import DirectoryView
 from slarc.domain.hashing import content_hash
 from slarc.domain.tracking import DownloadState
-from slarc.ports import AuthFailed, CommitConflict, DirectoryState, DownloadJob
+from slarc.ports import (
+    AuthFailed,
+    Commit,
+    CommitConflict,
+    DirectoryState,
+    DownloadJob,
+    DownloadResult,
+)
 from slarc.service.downloads import (
     drain_downloads,
     image_urls,
@@ -314,42 +322,6 @@ def test_full_pull_retries_given_up_and_forbidden_outside_images(h: Harness):
     assert image_status(h, GITHUB_THUMB) == ("forbidden", 1)
 
 
-def test_removed_prior_state_queues_afresh(h: Harness):
-    h.pull(THREAD_LINK)
-    prior = {
-        (TEAM, SNIPPET): DownloadState(
-            team_id=TEAM,
-            target_kind="file",
-            target=SNIPPET,
-            url=SNIPPET_URL,
-            status="removed",
-            attempts=2,
-        ),
-        (TEAM, GIPHY_URL): DownloadState(
-            team_id=TEAM,
-            target_kind="image",
-            target=GIPHY_URL,
-            url=GIPHY_URL,
-            status="removed",
-            attempts=2,
-        ),
-    }
-    message = {
-        "ts": SNIPPET_TS,
-        "files": [{"id": SNIPPET, "url_private_download": SNIPPET_URL, "size": 10}],
-        "attachments": [{"image_url": GIPHY_URL}],
-    }
-
-    with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
-        jobs = queue_downloads(
-            message, TEAM, uow, PullOptions().max_file_bytes, files={}, images={}, known=prior
-        )
-        states = list(uow.run.downloads)
-
-    assert {job.target for job in jobs} == {SNIPPET, GIPHY_URL}
-    assert [(s.status, s.attempts) for s in states] == [("pending", 0)] * 2
-
-
 @pytest.mark.parametrize(
     "shown",
     [
@@ -494,15 +466,14 @@ def test_pull_download_pull_appends_nothing(h: Harness):
     assert non_run_lines(h) == written
 
 
-def test_downloaded_target_is_not_outstanding(h: Harness):
+def test_downloaded_state_row_is_deleted(h: Harness):
     h.pull(SNIPPET_LINK)
-    assert outstanding_downloads(h.archive)[(TEAM, SNIPPET)].status == "pending"
+    assert h.archive.downloads()[(TEAM, SNIPPET)].status == "pending"
 
     h.downloader.serve(SNIPPET_URL, snippet_bytes())
     h.pull()
 
-    assert h.archive.downloads()[(TEAM, SNIPPET)].status == "pending"
-    assert (TEAM, SNIPPET) not in outstanding_downloads(h.archive)
+    assert (TEAM, SNIPPET) not in h.archive.downloads()
 
 
 def test_edited_snippet_downloaded_again(h: Harness):
@@ -559,6 +530,60 @@ def test_drain_reports_progress_before_and_after_each_result(h: Harness):
         (2, 1, 0, total),
         (3, 1, 1, total),
     ]
+
+
+def test_drain_commits_each_result(h: Harness, monkeypatch: pytest.MonkeyPatch):
+    h.change_message(SNIPPET_TS, attachments=[{"image_url": GIPHY_URL}])
+    h.downloader.serve(SNIPPET_URL, snippet_bytes())
+    h.downloader.serve(GIPHY_URL, b"giphy", "image/gif")
+    h.downloader.serve(avatar(ME), b"avatar", "image/png")
+    fetch = h.downloader.fetch
+
+    def interrupted_after_two(
+        jobs: list[DownloadJob], parallelism: int
+    ) -> Iterator[DownloadResult]:
+        results = list(fetch(jobs, parallelism))
+        yield from results[:2]
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(h.downloader, "fetch", interrupted_after_two)
+
+    with pytest.raises(KeyboardInterrupt):
+        h.pull(SNIPPET_LINK)
+
+    assert [job.target for job in h.downloader.jobs] == [SNIPPET, GIPHY_URL, avatar(ME)]
+    assert h.lines("file")[-1].meta.blob == sha256(snippet_bytes())
+    images = h.archive.directory_state(TEAM, "image")
+    assert images[GIPHY_URL].blob == sha256(b"giphy")
+    assert avatar(ME) not in images
+    assert [(key, state.status) for key, state in h.archive.downloads().items()] == [
+        ((TEAM, avatar(ME)), "pending")
+    ]
+
+
+def test_result_for_a_removed_target_is_dropped(h: Harness, monkeypatch: pytest.MonkeyPatch):
+    h.downloader.serve(SNIPPET_URL, snippet_bytes())
+    fetch = h.downloader.fetch
+
+    def rm_drops_the_snippet_first(
+        jobs: list[DownloadJob], parallelism: int
+    ) -> Iterator[DownloadResult]:
+        for result in fetch(jobs, parallelism):
+            if result.job.target == SNIPPET:
+                with h.archive.elsewhere() as archive:
+                    archive.drop_downloads(TEAM, {SNIPPET})
+                    archive.commit(Commit())
+            yield result
+
+    monkeypatch.setattr(h.downloader, "fetch", rm_drops_the_snippet_first)
+
+    report = h.pull(SNIPPET_LINK)
+
+    assert [env.meta.blob for env in h.lines("file")] == [None]
+    assert (TEAM, SNIPPET) not in h.archive.downloads()
+    assert run_states(h, "file") == []
+    assert report.files_saved == 0
+    assert h.blobs.exists(sha256(snippet_bytes()))
 
 
 def test_drain_reports_no_progress_without_jobs(h: Harness):

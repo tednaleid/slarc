@@ -9,7 +9,7 @@ from slarc.domain.directory import directory_image_url
 from slarc.domain.envelope import Envelope
 from slarc.domain.links import ConversationSel, Selector, WorkspaceSel
 from slarc.domain.tracking import DownloadState, ItemKey, TrackedItem
-from slarc.ports import ArchiveStore, BlobStore, Commit, QueryIndex, SlarcError
+from slarc.ports import ArchiveStore, BlobStore, Commit, DownloadKey, QueryIndex, SlarcError
 from slarc.service.downloads import image_urls
 from slarc.service.listing import workspace_domains
 from slarc.service.selectors import archived_conversation, only_workspace
@@ -22,7 +22,8 @@ class Removal:
 
     lines counts message and deleted lines, every version; files and images count targets.
     kept_messages counts stored messages the named items cover that other tracked items still
-    cover. downloads are the final states that keep a later pull from fetching orphaned targets.
+    cover. downloads are the targets whose download states the removal deletes, so a later pull
+    does not fetch them and a running pull drops their results.
     """
 
     items: list[TrackedItem]
@@ -34,7 +35,7 @@ class Removal:
     images: int
     blobs: int
     kept_messages: int
-    downloads: list[DownloadState]
+    downloads: list[DownloadKey]
 
     @property
     def nothing_to_do(self) -> bool:
@@ -77,16 +78,21 @@ def plan_removal(
         images=sum(len(team.images) for team in deletion.teams),
         blobs=len(deletion.blobs),
         kept_messages=_kept_messages(items, remaining, archive),
-        downloads=[state for team in deletion.teams for state in team.downloads],
+        downloads=[key for team in deletion.teams for key in team.downloads],
     )
 
 
 def apply_removal(removal: Removal, uow: UnitOfWork) -> None:
-    """Records the removal in the run; the unit of work appends the run line on exit."""
+    """Records the removal in the run and stages its download state drops; the unit of work
+    commits both and appends the run line on exit."""
     run = uow.run
     run.teams = list(removal.teams)
     run.tracked.extend(msgspec.structs.replace(item, status="removed") for item in removal.items)
-    run.downloads.extend(removal.downloads)
+    targets: dict[str, set[str]] = {}
+    for team, target in removal.downloads:
+        targets.setdefault(team, set()).add(target)
+    for team, team_targets in targets.items():
+        uow.archive.drop_downloads(team, team_targets)
     run.counts["lines_deleted"] = removal.lines
     run.counts["files_deleted"] = removal.files
     run.counts["images_deleted"] = removal.images
@@ -124,7 +130,7 @@ class _TeamDeletion:
     lines: int
     files: set[str]
     images: set[str]
-    downloads: list[DownloadState]
+    downloads: list[DownloadKey]
 
 
 @dataclass(frozen=True)
@@ -163,7 +169,7 @@ def _deletion(
 def _team_deletion(
     team: str,
     tracked: list[TrackedItem],
-    known: dict[tuple[str, str], DownloadState],
+    known: dict[DownloadKey, DownloadState],
     archive: ArchiveStore,
 ) -> _TeamDeletion:
     """Uncovered message lines, then the files and images no kept message line references.
@@ -191,10 +197,9 @@ def _team_deletion(
     files = set(archive.directory_state(team, "file")) - file_refs
     images = set(archive.directory_state(team, "image")) - image_refs
     downloads = [
-        msgspec.structs.replace(state, status="removed")
-        for state in known.values()
+        key
+        for key, state in known.items()
         if state.team_id == team
-        and state.status != "removed"
         and state.target not in (file_refs if state.target_kind == "file" else image_refs)
     ]
     return _TeamDeletion(team, not tracked, stamps, lines, files, images, downloads)

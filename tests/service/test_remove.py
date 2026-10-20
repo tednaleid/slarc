@@ -165,6 +165,7 @@ def test_rm_conversation_deletes_its_lines_and_unreferenced_files(h: Harness):
     pull_and_download(h, BASE, SECOND_LINK)
     assert file_ids(h) == {*SPIKE_FILES, TOMBSTONE_FILE}
     assert GIPHY_URL in image_ids(h)
+    assert h.archive.downloads()[(TEAM, TOMBSTONE_FILE)].status == "deleted"
 
     removal = rm(h, BASE)
 
@@ -181,10 +182,9 @@ def test_rm_conversation_deletes_its_lines_and_unreferenced_files(h: Harness):
     run = h.last_run()
     assert (run.command, run.teams) == ("rm", [TEAM])
     assert [(i.key, i.status) for i in run.tracked] == [(item("conversation"), "removed")]
-    removed = {d.target for d in run.downloads if d.status == "removed"}
-    assert {*SPIKE_FILES, TOMBSTONE_FILE} <= removed
-    assert GIPHY_URL in removed
-    assert avatar(ME) not in removed
+    assert removal.downloads == [(TEAM, TOMBSTONE_FILE)]
+    assert h.archive.downloads() == {}
+    assert run.downloads == []
     assert run.counts == {
         "lines_deleted": removal.lines,
         "files_deleted": removal.files,

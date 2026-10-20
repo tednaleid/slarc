@@ -6,10 +6,12 @@ from dataclasses import replace
 import msgspec
 
 from slarc.domain.envelope import Envelope, Meta
-from slarc.domain.tracking import DownloadState, ItemKey, TrackedItem, run_from_envelope
+from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem
 from slarc.ports import Commit, CommitConflict, DirectoryState, DownloadKey, StoredMessage
 
 type StoredRevisions = Mapping[ItemKey, tuple[int, str]]  # (revision, status) per tracked item
+
+REMOVED_DOWNLOAD = "removed"
 
 
 def version_key(meta: Meta) -> tuple[str, str]:
@@ -70,21 +72,35 @@ def directory_objects(lines: Iterable[Envelope]) -> dict[str, dict]:
     return {id_: env.object or {} for id_, env in latest_by_id(lines).items()}
 
 
+class _DownloadTarget(msgspec.Struct):
+    team_id: str
+    target: str
+
+
 class LatestRuns:
     """The latest tracked item per key and download state per target, fed run lines in any order.
 
-    A run line whose object does not convert is skipped.
+    A run line whose object does not convert is skipped. A download entry whose status is
+    REMOVED_DOWNLOAD, which JSONL run lines use for a target whose state was deleted, leaves
+    its target with no download state.
     """
 
     def __init__(self) -> None:
         self._tracked: dict[ItemKey, tuple[tuple[str, str], TrackedItem]] = {}
-        self._downloads: dict[tuple[str, str], tuple[tuple[str, str], DownloadState]] = {}
+        self._downloads: dict[DownloadKey, tuple[tuple[str, str], DownloadState | None]] = {}
 
     def add(self, env: Envelope) -> None:
         if env.meta.kind != "run":
             return
+        obj = dict(env.object or {})
+        entries = obj.get("downloads")
+        removed_entries = []
+        if isinstance(entries, list):
+            removed_entries = [entry for entry in entries if _is_removed(entry)]
+            obj["downloads"] = [entry for entry in entries if not _is_removed(entry)]
         try:
-            run = run_from_envelope(env)
+            run = msgspec.convert(obj, RunRecord)
+            removed = msgspec.convert(removed_entries, list[_DownloadTarget])
         except msgspec.ValidationError:
             return
         key = version_key(env.meta)
@@ -92,8 +108,11 @@ class LatestRuns:
             held = self._tracked.get(item.key)
             if held is None or key >= held[0]:
                 self._tracked[item.key] = (key, item)
-        for state in run.downloads:
-            target = (state.team_id, state.target)
+        states: list[tuple[DownloadKey, DownloadState | None]] = [
+            ((state.team_id, state.target), state) for state in run.downloads
+        ]
+        states += [((entry.team_id, entry.target), None) for entry in removed]
+        for target, state in states:
             held_state = self._downloads.get(target)
             if held_state is None or key >= held_state[0]:
                 self._downloads[target] = (key, state)
@@ -104,8 +123,14 @@ class LatestRuns:
     def removed_items(self) -> dict[ItemKey, TrackedItem]:
         return {k: item for k, (_, item) in self._tracked.items() if item.status == "removed"}
 
-    def downloads(self) -> dict[tuple[str, str], DownloadState]:
-        return {target: state for target, (_, state) in self._downloads.items()}
+    def downloads(self) -> dict[DownloadKey, DownloadState]:
+        return {
+            target: state for target, (_, state) in self._downloads.items() if state is not None
+        }
+
+
+def _is_removed(entry: object) -> bool:
+    return isinstance(entry, dict) and entry.get("status") == REMOVED_DOWNLOAD
 
 
 def latest_runs(lines: Iterable[Envelope]) -> LatestRuns:

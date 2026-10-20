@@ -60,13 +60,14 @@ class UnitOfWork:
         *,
         unchanged: Sequence[TrackedItem] = (),
         downloads_exist: bool = False,
-    ) -> None:
+    ) -> set[DownloadKey]:
         """Commits the open batch with the items, the download states in run.downloads that
         changed since the last commit, and the keys settled and refs required since then.
 
         Each item is sent with the revision this run last committed for its key, so a stale
-        copy of an item commits. On CommitConflict the run is put back as it was at the last
-        commit, and the conflict is raised.
+        copy of an item commits. Returns the download keys the commit dropped, which leave
+        run.downloads. On CommitConflict the run is put back as it was at the last commit,
+        and the conflict is raised.
         """
         committed_states = {_download_key(state): state for state in self._committed_downloads}
         change = Commit(
@@ -93,6 +94,7 @@ class UnitOfWork:
         self._committed_downloads = list(self.run.downloads)
         self._settled.clear()
         self._requires.clear()
+        return committed.dropped
 
     def discard(self) -> None:
         """Empties the open batch and puts run.downloads back as the last commit left it."""

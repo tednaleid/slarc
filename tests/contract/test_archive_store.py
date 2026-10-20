@@ -113,7 +113,7 @@ def tracked(newest_ts: str, channel: str = CHANNEL) -> TrackedItem:
 
 
 def download(
-    target: str, status: Literal["pending", "failed", "gave_up", "removed"], attempts: int
+    target: str, status: Literal["pending", "failed", "gave_up"], attempts: int
 ) -> DownloadState:
     return DownloadState(
         team_id=TEAM, target_kind="file", target=target, status=status, attempts=attempts
@@ -288,7 +288,7 @@ def test_archived_and_new_statuses_round_trip_through_a_run_line():
         R1,
         T1,
         tracked=[msgspec.structs.replace(tracked("1.0"), archived=True, status="removed")],
-        downloads=[download("F1", "gave_up", 3), download("F2", "removed", 0)],
+        downloads=[download("F1", "gave_up", 3)],
     )
     decoded = run_from_envelope(decode_line(encode_line(run_envelope(run, VERSION))))
     assert decoded == run
@@ -301,13 +301,10 @@ def test_run_line_without_archived_decodes_as_not_archived():
     assert run_from_envelope(env).tracked[0].archived is False
 
 
-def test_downloads_latest_entry_across_runs(store_and_reopen):
+def test_downloads_latest_state_across_commits(store_and_reopen):
     store, reopen = store_and_reopen
-    store.append_run(run_record(R1, T1, downloads=[download("F1", "pending", 0)]), VERSION)
-    store.append_run(
-        run_record(R2, T2, downloads=[download("F1", "failed", 1), download("F2", "pending", 0)]),
-        VERSION,
-    )
+    store.commit(Commit(downloads=[download("F1", "pending", 0)]))
+    store.commit(Commit(downloads=[download("F1", "failed", 1), download("F2", "pending", 0)]))
 
     for current in (store, reopen()):
         states = current.downloads()
@@ -316,15 +313,27 @@ def test_downloads_latest_entry_across_runs(store_and_reopen):
         assert len(states) == 2
 
 
-def test_downloads_keep_a_downloaded_targets_earlier_state(store_and_reopen):
-    """A downloaded target drops out of its run's list; its directory blob records the download."""
+def test_downloads_keep_a_state_until_it_is_settled(store_and_reopen):
+    """A directory blob for the target leaves its download state alone; settling deletes it."""
     store, reopen = store_and_reopen
-    store.append_run(run_record(R1, T1, downloads=[download("F1", "pending", 0)]), VERSION)
+    store.commit(Commit(items=[tracked("100.000000")], downloads=[download("F1", "pending", 0)]))
     store.append(file_line("F1", T2, R2, "ab" * 32))
-    store.append_run(run_record(R2, T2), VERSION)
+    store.commit(Commit())
 
     for current in (store, reopen()):
         assert current.downloads() == {(TEAM, "F1"): download("F1", "pending", 0)}
+
+
+def test_append_run_leaves_download_states_to_commits(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.commit(Commit(downloads=[download("F1", "pending", 0)]))
+    store.drop_downloads(TEAM, {"F1"})
+    store.commit(Commit())
+
+    store.append_run(run_record(R1, T1, downloads=[download("F1", "pending", 0)]), VERSION)
+
+    for current in (store, reopen()):
+        assert current.downloads() == {}
 
 
 def stamps(store: ArchiveStore, team: str = TEAM, channel: str = CHANNEL) -> list[str | None]:

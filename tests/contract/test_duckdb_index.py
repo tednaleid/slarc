@@ -462,6 +462,9 @@ def test_run_view_keeps_tracked_and_downloads_columns(archive: Path, ext_dir: Pa
     state = DownloadState(
         team_id=RECORDED_TEAM, target_kind="file", target="F0PDF", status="pending"
     )
+    store = DuckLakeArchiveStore(archive, ext_dir)
+    store.commit(Commit(downloads=[state]))
+    store.close()
     commit(archive, ext_dir, run=later_run(tracked=[item], downloads=[state]))
     with DuckDbQueryIndex(archive, ext_dir) as index:
         columns, rows = index.sql("SELECT run, tracked, downloads FROM run ORDER BY run")

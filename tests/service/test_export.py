@@ -487,20 +487,10 @@ def test_bot_avatar_falls_back_to_a_downloaded_icon(archive, store, blobs) -> No
 def test_file_placeholders_and_unsafe_chrome(archive, store, blobs) -> None:
     thumb = "https://example.com/preview.xml"
     append_line(store, "image", {"url": thumb, "size": 153}, id=thumb, blob=SEED_RED)
-    store.append_run(
-        RunRecord(
-            run=LATER_RUN,
-            command="pull",
-            started=LATER,
-            finished=LATER,
-            downloads=[
-                DownloadState(
-                    team_id=RECORDED_TEAM, target_kind="file", target="FBIG", status="too_large"
-                )
-            ],
-        ),
-        "0.1.0",
+    too_large = DownloadState(
+        team_id=RECORDED_TEAM, target_kind="file", target="FBIG", status="too_large"
     )
+    store.commit(Commit(downloads=[too_large]))
     append_message(
         store,
         {

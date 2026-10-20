@@ -218,7 +218,7 @@ def _without_duplicates(lines: Iterable[Envelope]) -> tuple[list[Envelope], int]
 
 
 def _outstanding(states: Iterable[DownloadState], directory: list[Envelope]) -> list[DownloadState]:
-    """The states that outstanding_downloads keeps, without removed states.
+    """The states that outstanding_downloads keeps.
 
     That is each state whose target's latest directory line has no blob.
     """
@@ -229,7 +229,7 @@ def _outstanding(states: Iterable[DownloadState], directory: list[Envelope]) -> 
     outstanding = []
     for state in states:
         line = held.get((state.team_id, state.target_kind), {}).get(state.target)
-        if state.status != "removed" and (line is None or line.blob is None):
+        if line is None or line.blob is None:
             outstanding.append(state)
     return outstanding
 
@@ -294,18 +294,19 @@ def _select(
 def _current_run_line(
     runs: list[Envelope], tracked: list[TrackedItem], downloads: list[DownloadState]
 ) -> Envelope:
-    """The last run line, carrying the current tracked items and download states."""
+    """The last run line, carrying the current tracked items and download states, and a
+    removed entry for each target an earlier run line names that has no state now."""
     current = {(state.team_id, state.target) for state in downloads}
     earlier = archive_state.latest_runs(runs[:-1]).downloads()
     settled = [
-        msgspec.structs.replace(state, status="removed")
+        {**msgspec.to_builtins(state), "status": archive_state.REMOVED_DOWNLOAD}
         for key, state in earlier.items()
         if key not in current
     ]
     last = runs[-1]
     obj = dict(last.object or {})
     obj["tracked"] = msgspec.to_builtins(tracked)
-    obj["downloads"] = msgspec.to_builtins([*downloads, *settled])
+    obj["downloads"] = [*msgspec.to_builtins(downloads), *settled]
     return Envelope(meta=last.meta, object=obj)
 
 
