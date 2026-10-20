@@ -362,7 +362,7 @@ Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cas
 
 - Service tests run against the fakes: no network, no disk, milliseconds each.
 - Renderer tests are golden-file tests over recorded messages covering every subtype, block and element type in the fixtures.
-- Adapter contract tests run the same test module against the fake and the real adapter: `JsonlArchiveStore` and `DuckDbQueryIndex` against a temp directory; `SessionTokenGateway` against recorded HTTP responses with credentials scrubbed.
+- Adapter contract tests run the same test module against the fake and the real adapter: `DuckLakeArchiveStore` and `DuckDbQueryIndex` against a temp directory; `SessionTokenGateway` against recorded HTTP responses with credentials scrubbed.
 - The LevelDB reader and cookie decryption are tested against synthetic files built by a small writer in the test code (Snappy allows literal-only streams, so no compressor is needed). Real credentials are never committed.
 - Property tests (Hypothesis) for link parsing, `ts` ordering, and idempotency: pulling the same fixture twice appends no lines and leaves the views identical.
 

@@ -1,25 +1,27 @@
 # ABOUTME: Tests for importing a JSONL archive into a lake and exporting a lake back to JSONL.
-# ABOUTME: The JSONL store reading the same files is the oracle the imported lake must match.
+# ABOUTME: Folds over the same JSONL files, through archive_state, are the oracle for the lake.
 import hashlib
 from pathlib import Path
 
 import msgspec
 import pytest
 
+from slarc import archive_state
 from slarc.adapters import jsonl_import
 from slarc.adapters.jsonl_import import (
     DIRECTORY_FILES,
+    RUNS_FILE,
     ImportReport,
     export_jsonl,
     has_jsonl,
     import_jsonl,
+    read_envelopes,
 )
-from slarc.adapters.jsonl_store import JsonlArchiveStore
 from slarc.adapters.lake import CATALOG, DATA_DIR, connect_lake
 from slarc.adapters.lake_store import DuckLakeArchiveStore
-from slarc.domain.envelope import encode_line
+from slarc.domain.envelope import Envelope, Kind, encode_line, month_of
+from slarc.domain.tracking import run_envelope
 from slarc.ports import ArchiveStore, SlarcError
-from slarc.service.downloads import outstanding_downloads
 from tests.contract.test_archive_store import (
     CHANNEL,
     R1,
@@ -46,7 +48,57 @@ def teams_of(root: Path) -> list[str]:
     return sorted({p.name for top in ("raw", "directory") for p in (root / top).glob("*")})
 
 
-def assert_same_reads(lake: ArchiveStore, expected: ArchiveStore, teams: list[str]) -> None:
+class JsonlFolds:
+    """The state of a JSONL archive read through archive_state's folds, without any store."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        runs = archive_state.latest_runs(read_envelopes([root / RUNS_FILE]))
+        self._runs = runs
+
+    def tracked_items(self) -> dict:
+        return self._runs.tracked_items()
+
+    def removed_items(self) -> dict:
+        return self._runs.removed_items()
+
+    def channels(self, team: str) -> list[str]:
+        raw = self._root / "raw" / team
+        return sorted(d.name for d in raw.glob("*") if any(d.glob("*.jsonl")))
+
+    def message_lines(self, team: str, channel: str) -> list[Envelope]:
+        months = sorted((self._root / "raw" / team / channel).glob("*.jsonl"))
+        return [env for env in read_envelopes(months) if env.meta.kind in ("message", "deleted")]
+
+    def stored_messages(self, team: str, channel: str) -> dict:
+        latest = archive_state.LatestMessages()
+        for env in self.message_lines(team, channel):
+            latest.add(env)
+        return latest.current()
+
+    def directory_state(self, team: str, kind: Kind) -> dict:
+        return archive_state.directory_state(self._directory_lines(team, kind))
+
+    def directory_objects(self, team: str, kind: Kind) -> dict:
+        return archive_state.directory_objects(self._directory_lines(team, kind))
+
+    def outstanding_downloads(self) -> dict:
+        """The download states that are not removed and whose target has no blob."""
+        outstanding = {}
+        for key, state in self._runs.downloads().items():
+            held = self.directory_state(state.team_id, state.target_kind).get(state.target)
+            if state.status != "removed" and (held is None or held.blob is None):
+                outstanding[key] = state
+        return outstanding
+
+    def _directory_lines(self, team: str, kind: Kind) -> list[Envelope]:
+        path = self._root / "directory" / team / DIRECTORY_FILES[kind]
+        return list(read_envelopes([path]))
+
+
+def assert_same_reads(
+    lake: ArchiveStore, expected: ArchiveStore | JsonlFolds, teams: list[str]
+) -> None:
     assert lake.tracked_items() == expected.tracked_items()
     assert lake.removed_items() == expected.removed_items()
     for team in teams:
@@ -61,14 +113,6 @@ def assert_same_reads(lake: ArchiveStore, expected: ArchiveStore, teams: list[st
             assert lake.directory_state(team, kind) == expected.directory_state(team, kind)
 
 
-def outstanding_without_removed(store: ArchiveStore) -> dict:
-    return {
-        key: state
-        for key, state in outstanding_downloads(store).items()
-        if state.status != "removed"
-    }
-
-
 def jsonl_hashes(root: Path) -> dict[Path, str]:
     return {
         path: hashlib.sha256(path.read_bytes()).hexdigest()
@@ -76,13 +120,23 @@ def jsonl_hashes(root: Path) -> dict[Path, str]:
     }
 
 
-def write_jsonl(root: Path, *lines, runs=()) -> None:
-    store = JsonlArchiveStore(root)
-    for line in lines:
-        store.append(line)
-    for run in runs:
-        store.append_run(run, VERSION)
-    store.close()
+def jsonl_path(root: Path, env: Envelope) -> Path:
+    meta = env.meta
+    if meta.kind == "run":
+        return root / RUNS_FILE
+    if meta.kind in ("message", "deleted"):
+        return (
+            root / "raw" / str(meta.team) / str(meta.channel) / f"{month_of(meta.ts or '0')}.jsonl"
+        )
+    return root / "directory" / str(meta.team) / DIRECTORY_FILES[meta.kind]
+
+
+def write_jsonl(root: Path, *lines: Envelope, runs=()) -> None:
+    for env in [*lines, *(run_envelope(run, VERSION) for run in runs)]:
+        path = jsonl_path(root, env)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("ab") as out:
+            out.write(encode_line(env))
 
 
 def test_has_jsonl_looks_for_any_jsonl_part(tmp_path: Path) -> None:
@@ -100,10 +154,10 @@ def test_import_of_recorded_fixture_matches_jsonl_reads(tmp_path: Path, ext_dir:
 
     report = import_jsonl(root, ext_dir)
 
-    expected = JsonlArchiveStore(root)
+    expected = JsonlFolds(root)
     lake = DuckLakeArchiveStore(root, ext_dir)
     assert_same_reads(lake, expected, teams_of(root))
-    assert lake.downloads() == outstanding_without_removed(expected)
+    assert lake.downloads() == expected.outstanding_downloads()
     assert report == ImportReport(
         messages=44,
         directory=65,
@@ -114,7 +168,6 @@ def test_import_of_recorded_fixture_matches_jsonl_reads(tmp_path: Path, ext_dir:
         duplicates=0,
     )
     lake.close()
-    expected.close()
 
 
 def test_import_report_counts_removed_items_apart(tmp_path: Path, ext_dir: Path) -> None:
@@ -124,6 +177,30 @@ def test_import_report_counts_removed_items_apart(tmp_path: Path, ext_dir: Path)
     report = import_jsonl(tmp_path, ext_dir)
 
     assert (report.tracked, report.removed) == (1, 1)
+
+
+def test_import_leaves_out_download_states_whose_target_has_a_blob(
+    tmp_path: Path, ext_dir: Path
+) -> None:
+    write_jsonl(
+        tmp_path,
+        file_line("F1", T1, R1, None),
+        file_line("F1", T2, R2, "ab" * 32),
+        file_line("F2", T1, R1, None),
+        runs=[
+            run_record(
+                R1, T1, downloads=[download("F1", "pending", 0), download("F2", "pending", 0)]
+            )
+        ],
+    )
+
+    report = import_jsonl(tmp_path, ext_dir)
+
+    lake = DuckLakeArchiveStore(tmp_path, ext_dir)
+    assert list(lake.downloads()) == [(TEAM, "F2")]
+    assert lake.downloads() == JsonlFolds(tmp_path).outstanding_downloads()
+    assert report.downloads == 1
+    lake.close()
 
 
 def test_import_drops_exact_duplicates_and_counts_them(tmp_path: Path, ext_dir: Path) -> None:
@@ -172,11 +249,9 @@ def test_interrupted_import_is_redone(tmp_path: Path, ext_dir: Path) -> None:
     assert not any((root / name).exists() for name in IMPORTING)
     assert not (root / "catalog.sqlite.importing-wal").exists()
     assert not (root / DATA_DIR / "orphan.parquet").exists()
-    expected = JsonlArchiveStore(root)
     lake = DuckLakeArchiveStore(root, ext_dir)
-    assert_same_reads(lake, expected, teams_of(root))
+    assert_same_reads(lake, JsonlFolds(root), teams_of(root))
     lake.close()
-    expected.close()
 
 
 def test_import_refuses_an_archive_that_has_a_lake(tmp_path: Path, ext_dir: Path) -> None:

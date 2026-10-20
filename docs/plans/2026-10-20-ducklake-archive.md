@@ -215,7 +215,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
 - [x] **Step 4: Run `just check` and watch it pass.**
 - [x] **Step 5: Commit:** `Open archives as DuckLakes, importing JSONL archives on first use`.
 
-### Task 6: Delete the JSONL store
+### Task 6: Delete the JSONL store [done]
 
 **Files:**
 - Delete: `src/slarc/adapters/jsonl_store.py`
@@ -225,8 +225,8 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
   - `src/slarc/archive_state.py`: keep only what the import and the overlay use;
   - `docs/architecture.md`.
 
-- [ ] **Step 1: Delete the store and its tests.** Rewrite the import oracle on `archive_state`, and delete any `archive_state` function nothing calls.
-- [ ] **Step 2: Run `just check` and watch it pass.**
+- [x] **Step 1: Delete the store and its tests.** Rewrite the import oracle on `archive_state`, and delete any `archive_state` function nothing calls.
+- [x] **Step 2: Run `just check` and watch it pass.**
 - [ ] **Step 3: Commit:** `Remove the JSONL archive store`.
 
 ## Phase 2: commits

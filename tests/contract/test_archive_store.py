@@ -1,6 +1,5 @@
-# ABOUTME: Contract tests every ArchiveStore must pass, run over the fake, JSONL and the lake.
-# ABOUTME: Covers file layout, latest-wins reads, directory and run-line state, and dropping lines.
-import os
+# ABOUTME: Contract tests every ArchiveStore must pass, run over the fake and the lake.
+# ABOUTME: Covers latest-wins reads, directory and run-line state, and dropping lines.
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Literal
@@ -9,7 +8,6 @@ import msgspec
 import pytest
 
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
-from slarc.adapters.jsonl_store import JsonlArchiveStore
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.domain.envelope import Envelope, Meta, decode_line, encode_line
 from slarc.domain.hashing import content_hash
@@ -20,7 +18,7 @@ from slarc.domain.tracking import (
     run_envelope,
     run_from_envelope,
 )
-from slarc.ports import ArchiveStore, ArchiveWriteFailed, DirectoryState, SlarcError, StoredMessage
+from slarc.ports import ArchiveStore, DirectoryState, StoredMessage
 from tests.fakes import InMemoryArchiveStore
 
 TEAM = "T0CB5LYPVFA"
@@ -121,62 +119,30 @@ def download(
     )
 
 
-@pytest.fixture(params=["memory", "jsonl", "lake"])
+@pytest.fixture(params=["memory", "lake"])
 def store_and_reopen(
     request, tmp_path: Path, ext_dir: Path
 ) -> Iterator[tuple[ArchiveStore, Callable[[], ArchiveStore]]]:
     """Yields a store and a function returning a store over the same archive.
 
-    For the JSONL store the reopened instance reads only what reached the files. The lake
-    keeps only committed lines, so reopening it first commits each open store's batch with
-    a run that tracks nothing.
+    The lake keeps only committed lines, so reopening it first commits each open store's
+    batch with a run that tracks nothing.
     """
     if request.param == "memory":
         memory = InMemoryArchiveStore()
         yield memory, lambda: memory
         return
-    opened: list[JsonlArchiveStore | DuckLakeArchiveStore]
-    if request.param == "jsonl":
-        opened = [JsonlArchiveStore(tmp_path)]
-    else:
-        opened = [DuckLakeArchiveStore(tmp_path, ext_dir)]
+    opened = [DuckLakeArchiveStore(tmp_path, ext_dir)]
 
     def reopen() -> ArchiveStore:
-        current = opened[-1]
-        if isinstance(current, JsonlArchiveStore):
-            current.flush()
-            opened.append(JsonlArchiveStore(tmp_path))
-        else:
-            for store in opened:
-                store.append_run(run_record(R_REOPEN, T1), VERSION)
-            opened.append(DuckLakeArchiveStore(tmp_path, ext_dir))
+        for store in opened:
+            store.append_run(run_record(R_REOPEN, T1), VERSION)
+        opened.append(DuckLakeArchiveStore(tmp_path, ext_dir))
         return opened[-1]
 
     yield opened[0], reopen
     for store in opened:
         store.close()
-
-
-@pytest.fixture
-def jsonl_store(tmp_path: Path) -> Iterator[JsonlArchiveStore]:
-    store = JsonlArchiveStore(tmp_path)
-    yield store
-    store.close()
-
-
-def test_message_lands_in_month_file_of_its_ts(jsonl_store: JsonlArchiveStore, tmp_path: Path):
-    jsonl_store.append(message(OLD_TS, "old", T1, R1))
-    jsonl_store.append(message(TS, "new", T1, R1))
-    jsonl_store.append(deleted(OLD_TS, T2, R2))
-    jsonl_store.append(file_line("F1", T1, R1, None))
-    jsonl_store.flush()
-
-    old_month = tmp_path / "raw" / TEAM / CHANNEL / "2024-03.jsonl"
-    new_month = tmp_path / "raw" / TEAM / CHANNEL / "2026-10.jsonl"
-    old_kinds = [decode_line(line).meta.kind for line in old_month.read_bytes().splitlines()]
-    assert old_kinds == ["message", "deleted"]
-    assert len(new_month.read_bytes().splitlines()) == 1
-    assert (tmp_path / "directory" / TEAM / "files.jsonl").exists()
 
 
 def test_stored_messages_reflects_latest_line(store_and_reopen):
@@ -370,73 +336,6 @@ def test_run_lines_appended_after_a_read_fold_in_version_order(store_and_reopen)
         assert current.downloads()[(TEAM, "F1")] == download("F1", "failed", 1)
 
 
-def test_jsonl_store_reads_runs_jsonl_once(
-    jsonl_store: JsonlArchiveStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    runs = tmp_path / "runs.jsonl"
-    jsonl_store.append_run(run_record(R1, T1, tracked=[tracked("100.000000")]), VERSION)
-    reads: list[Path] = []
-    real_read = JsonlArchiveStore._read
-
-    def counting_read(self, paths):
-        paths = list(paths)
-        reads.extend(paths)
-        return real_read(self, paths)
-
-    monkeypatch.setattr(JsonlArchiveStore, "_read", counting_read)
-    jsonl_store.tracked_items()
-    jsonl_store.removed_items()
-    jsonl_store.downloads()
-    jsonl_store.append_run(run_record(R2, T2, tracked=[tracked("200.000000")]), VERSION)
-    items = jsonl_store.tracked_items()
-
-    assert reads.count(runs) == 1
-    assert items[(TEAM, "conversation", CHANNEL, "")].newest_ts == "200.000000"
-
-
-def test_truncated_trailing_line_skipped_and_next_append_starts_new_line(tmp_path: Path):
-    month = tmp_path / "raw" / TEAM / CHANNEL / "2026-10.jsonl"
-    month.parent.mkdir(parents=True)
-    good = message(TS, "kept", T1, R1)
-    month.write_bytes(encode_line(good) + encode_line(message(TS, "cut", T2, R2))[:40])
-
-    store = JsonlArchiveStore(tmp_path)
-    assert store.stored_messages(TEAM, CHANNEL)[TS].hash == good.meta.hash
-
-    later = message(TS, "later", T3, R3)
-    store.append(later)
-    store.close()
-
-    reopened = JsonlArchiveStore(tmp_path)
-    assert reopened.stored_messages(TEAM, CHANNEL)[TS].hash == later.meta.hash
-    reopened.close()
-
-
-def test_line_of_unknown_kind_skipped(tmp_path: Path):
-    month = tmp_path / "raw" / TEAM / CHANNEL / "2026-10.jsonl"
-    month.parent.mkdir(parents=True)
-    unknown = b'{"meta":{"schema":1,"kind":"huddle","team":"T","ts":"1.0"},"object":{}}\n'
-    good = message(TS, "kept", T1, R1)
-    month.write_bytes(unknown + encode_line(good))
-
-    store = JsonlArchiveStore(tmp_path)
-    assert store.stored_messages(TEAM, CHANNEL) == {
-        TS: StoredMessage(hash=good.meta.hash, thread_ts=None, fetched_at=T1)
-    }
-    store.close()
-
-
-def test_jsonl_store_in_a_read_only_archive_raises_slarc_error(tmp_path: Path):
-    tmp_path.chmod(0o555)
-    store = JsonlArchiveStore(tmp_path)
-    try:
-        with pytest.raises(SlarcError, match=f"Could not write to {tmp_path / 'runs.jsonl'}"):
-            store.append_run(run_record(R1, T1), VERSION)
-    finally:
-        store.close()
-        tmp_path.chmod(0o755)
-
-
 def stamps(store: ArchiveStore, team: str = TEAM, channel: str = CHANNEL) -> list[str | None]:
     return [env.meta.ts for env in store.message_lines(team, channel)]
 
@@ -455,21 +354,6 @@ def test_drop_messages_removes_every_version_and_only_those(store_and_reopen):
     for current in (store, reopen()):
         assert stamps(current) == [OLD_TS, LATER_TS]
         assert stamps(current, channel=OTHER_CHANNEL) == [TS]
-
-
-def test_drop_messages_deletes_empty_month_files_and_channel_dir(
-    jsonl_store: JsonlArchiveStore, tmp_path: Path
-):
-    channel_dir = tmp_path / "raw" / TEAM / CHANNEL
-    jsonl_store.append(message(OLD_TS, "old", T1, R1))
-    jsonl_store.append(message(TS, "new", T1, R1))
-
-    assert jsonl_store.drop_messages(TEAM, CHANNEL, {OLD_TS}) == 1
-    assert sorted(p.name for p in channel_dir.iterdir()) == ["2026-10.jsonl"]
-
-    assert jsonl_store.drop_messages(TEAM, CHANNEL, {TS}) == 1
-    assert not channel_dir.exists()
-    assert jsonl_store.channels(TEAM) == []
 
 
 def test_drop_messages_refreshes_stored_messages(store_and_reopen):
@@ -521,7 +405,7 @@ def test_drop_directory_lines_removes_every_version(store_and_reopen):
         assert list(current.directory_state(TEAM, "image")) == ["F1"]
 
 
-def test_drop_workspace_removes_raw_and_directory(store_and_reopen, tmp_path: Path):
+def test_drop_workspace_removes_raw_and_directory(store_and_reopen):
     store, reopen = store_and_reopen
     store.append(message(TS, "gone", T1, R1))
     store.append(file_line("F1", T1, R1, "ab" * 32))
@@ -539,9 +423,6 @@ def test_drop_workspace_removes_raw_and_directory(store_and_reopen, tmp_path: Pa
         assert set(current.stored_messages(OTHER_TEAM, CHANNEL)) == {TS}
         assert list(current.directory_state(OTHER_TEAM, "file")) == ["F2"]
         assert len(current.tracked_items()) == 1
-    if isinstance(store, JsonlArchiveStore):
-        assert not (tmp_path / "raw" / TEAM).exists()
-        assert not (tmp_path / "directory" / TEAM).exists()
 
     store.append(message(LATER_TS, "again", T2, R2))
     store.flush()
@@ -572,86 +453,3 @@ def test_channels_lists_channels_with_lines(store_and_reopen):
     for current in (store, reopen()):
         assert current.channels(TEAM) == [CHANNEL, OTHER_CHANNEL]
         assert current.channels(OTHER_TEAM) == []
-
-
-def test_rewrite_keeps_lines_that_do_not_decode(jsonl_store: JsonlArchiveStore, tmp_path: Path):
-    month = tmp_path / "raw" / TEAM / CHANNEL / "2026-10.jsonl"
-    month.parent.mkdir(parents=True)
-    unknown = b'{"meta":{"schema":1,"kind":"huddle","team":"T","ts":"1.0"},"object":{}}\n'
-    kept = encode_line(message(LATER_TS, "kept", T1, R1))
-    month.write_bytes(unknown + encode_line(message(TS, "gone", T1, R1)) + kept)
-
-    assert jsonl_store.drop_messages(TEAM, CHANNEL, {TS}) == 1
-    assert month.read_bytes() == unknown + kept
-
-
-def test_failed_rewrite_leaves_original_intact(
-    jsonl_store: JsonlArchiveStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    month = tmp_path / "raw" / TEAM / CHANNEL / "2026-10.jsonl"
-    jsonl_store.append(message(TS, "first", T1, R1))
-    jsonl_store.append(message(LATER_TS, "second", T1, R1))
-    jsonl_store.flush()
-    original = month.read_bytes()
-
-    def fail(fd: int) -> None:
-        raise OSError(28, "No space left on device")
-
-    monkeypatch.setattr("slarc.adapters.jsonl_store.os.fsync", fail)
-    with pytest.raises(ArchiveWriteFailed, match="No space left on device"):
-        jsonl_store.drop_messages(TEAM, CHANNEL, {TS})
-
-    assert month.read_bytes() == original
-    assert list(month.parent.iterdir()) == [month]
-
-
-def test_interrupted_rewrite_leaves_original_intact(
-    jsonl_store: JsonlArchiveStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    month = tmp_path / "raw" / TEAM / CHANNEL / "2026-10.jsonl"
-    jsonl_store.append(message(TS, "first", T1, R1))
-    jsonl_store.append(message(LATER_TS, "second", T1, R1))
-    jsonl_store.flush()
-    original = month.read_bytes()
-
-    def interrupt(fd: int) -> None:
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr("slarc.adapters.jsonl_store.os.fsync", interrupt)
-    with pytest.raises(KeyboardInterrupt):
-        jsonl_store.drop_messages(TEAM, CHANNEL, {TS})
-
-    assert month.read_bytes() == original
-    assert list(month.parent.iterdir()) == [month]
-
-
-def test_rewritten_file_keeps_its_mode(jsonl_store: JsonlArchiveStore, tmp_path: Path):
-    month = tmp_path / "raw" / TEAM / CHANNEL / "2026-10.jsonl"
-    jsonl_store.append(message(TS, "first", T1, R1))
-    jsonl_store.append(message(LATER_TS, "second", T1, R1))
-    jsonl_store.flush()
-    month.chmod(0o644)
-
-    jsonl_store.drop_messages(TEAM, CHANNEL, {TS})
-
-    assert month.stat().st_mode & 0o777 == 0o644
-
-
-def test_append_run_syncs_data_lines_before_the_run_line_and_the_run_line_after(
-    jsonl_store: JsonlArchiveStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    month = tmp_path / "raw" / TEAM / CHANNEL / "2026-10.jsonl"
-    runs = tmp_path / "runs.jsonl"
-    jsonl_store.append(message(TS, "first", T1, R1))
-    synced: list[tuple[int, bool]] = []
-    real_fsync = os.fsync
-
-    def record(fd: int) -> None:
-        synced.append((os.fstat(fd).st_ino, runs.exists() and runs.stat().st_size > 0))
-        real_fsync(fd)
-
-    monkeypatch.setattr("slarc.adapters.jsonl_store.os.fsync", record)
-    jsonl_store.append_run(run_record(R1, T1), VERSION)
-
-    assert (month.stat().st_ino, False) in synced
-    assert synced[-1] == (runs.stat().st_ino, True)

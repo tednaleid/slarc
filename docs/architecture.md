@@ -82,7 +82,7 @@ The Jinja partials under `src/slarc/export/templates/` own the message chrome: `
 ## Testing
 
 - Service tests run against the fakes in `tests/fakes.py` (`tests/service/pull_harness.py` composes them for pull): no network, no disk.
-- Contract tests in `tests/contract/` run the same tests against `DuckLakeArchiveStore`, `JsonlArchiveStore` and `InMemoryArchiveStore`, and against `FsBlobStore` and `InMemoryBlobStore`. `DuckDbQueryIndex` is tested over a temp lake imported from the recorded archive (`recorded_lake` in `tests/recorded_fixtures.py`), with further rows committed through `DuckLakeArchiveStore`.
+- Contract tests in `tests/contract/` run the same tests against `DuckLakeArchiveStore` and `InMemoryArchiveStore`, and against `FsBlobStore` and `InMemoryBlobStore`. `DuckDbQueryIndex` is tested over a temp lake imported from the recorded archive (`recorded_lake` in `tests/recorded_fixtures.py`), with further rows committed through `DuckLakeArchiveStore`.
 - `SessionTokenGateway` is tested with a fake Web API client serving spike-shaped responses. The LevelDB reader and cookie decryption are tested against synthetic files from `tests/leveldb_writer.py` and `tests/cookies_writer.py`.
 - Recorded fixtures: `tests/fixtures/workspace/` is a JSONL archive of the test workspace, so it stays reviewable in git. `just record-fixtures` pulls into a temp lake, exports it with `jsonl_import.export_jsonl` and scrubs secrets line by line; `test_fixture_archive_has_no_secrets` guards it. `tests/fixtures/spike/` holds raw Slack responses from the spike.
 - Golden files: every recorded message renders to `tests/golden/`; `just test --update-golden` rewrites them after an intended change.

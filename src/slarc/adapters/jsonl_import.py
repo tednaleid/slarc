@@ -165,16 +165,18 @@ def export_jsonl(root: Path, ext_dir: Path, target: Path) -> None:
 
 def _read_archive(root: Path) -> _JsonlArchive:
     messages, duplicates = _without_duplicates(
-        env for env in _read(sorted(root.glob("raw/*/*/*.jsonl"))) if env.meta.kind in MESSAGE_KINDS
+        env
+        for env in read_envelopes(sorted(root.glob("raw/*/*/*.jsonl")))
+        if env.meta.kind in MESSAGE_KINDS
     )
     directory = list(
-        _read(
+        read_envelopes(
             team / name
             for team in sorted(root.glob("directory/*"))
             for name in DIRECTORY_FILES.values()
         )
     )
-    runs = [env for env in _read([root / RUNS_FILE]) if env.meta.kind == "run"]
+    runs = [env for env in read_envelopes([root / RUNS_FILE]) if env.meta.kind == "run"]
     fold = archive_state.latest_runs(runs)
     return _JsonlArchive(
         messages=messages,
@@ -186,8 +188,8 @@ def _read_archive(root: Path) -> _JsonlArchive:
     )
 
 
-def _read(paths: Iterable[Path]) -> Iterator[Envelope]:
-    """Envelopes from each existing file; blank and undecodable lines are skipped, as today."""
+def read_envelopes(paths: Iterable[Path]) -> Iterator[Envelope]:
+    """Envelopes from each existing file; blank and undecodable lines are skipped."""
     for path in paths:
         if not path.exists():
             continue
