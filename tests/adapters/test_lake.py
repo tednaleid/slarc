@@ -1,6 +1,5 @@
 # ABOUTME: Tests for the lake adapter: catalog creation, settings, moved archives and extensions.
 # ABOUTME: Connecting downloads the DuckDB extensions once into the real cache directory.
-import os
 import sqlite3
 from pathlib import Path
 
@@ -15,11 +14,6 @@ from slarc.adapters.lake import (
 )
 
 TABLES = {"message_version", "directory_entry", "run", "tracked_item", "download_state"}
-
-
-@pytest.fixture(scope="session")
-def ext_dir() -> Path:
-    return extension_directory(os.environ, Path.home())
 
 
 def test_extension_directory_follows_xdg_cache_home(tmp_path: Path) -> None:

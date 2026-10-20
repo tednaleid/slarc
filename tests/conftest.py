@@ -1,6 +1,11 @@
-# ABOUTME: Shared pytest configuration for slarc's tests.
-# ABOUTME: Adds --update-golden, which rewrites golden files instead of comparing against them.
+# ABOUTME: Shared pytest configuration and fixtures for slarc's tests.
+# ABOUTME: Adds --update-golden and the DuckDB extension directory the lake tests share.
+import os
+from pathlib import Path
+
 import pytest
+
+from slarc.adapters.lake import extension_directory
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -15,3 +20,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 @pytest.fixture
 def update_golden(request: pytest.FixtureRequest) -> bool:
     return bool(request.config.getoption("--update-golden"))
+
+
+@pytest.fixture(scope="session")
+def ext_dir() -> Path:
+    """The real extension cache, so connecting downloads the DuckDB extensions at most once."""
+    return extension_directory(os.environ, Path.home())

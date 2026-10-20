@@ -1,4 +1,4 @@
-# ABOUTME: Contract tests every ArchiveStore implementation must pass, run over the fake and JSONL.
+# ABOUTME: Contract tests every ArchiveStore must pass, run over the fake, JSONL and the lake.
 # ABOUTME: Covers file layout, latest-wins reads, directory and run-line state, and dropping lines.
 import os
 from collections.abc import Callable, Iterator
@@ -10,6 +10,7 @@ import pytest
 
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
 from slarc.adapters.jsonl_store import JsonlArchiveStore
+from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.domain.envelope import Envelope, Meta, decode_line, encode_line
 from slarc.domain.hashing import content_hash
 from slarc.domain.tracking import (
@@ -37,6 +38,7 @@ T3 = "2026-10-19T15:00:00Z"
 R1 = "r_20261019T134011Z"
 R2 = "r_20261019T140000Z"
 R3 = "r_20261019T150000Z"
+R_REOPEN = "r_reopen"
 
 
 def message(
@@ -119,23 +121,35 @@ def download(
     )
 
 
-@pytest.fixture(params=["memory", "jsonl"])
+@pytest.fixture(params=["memory", "jsonl", "lake"])
 def store_and_reopen(
-    request, tmp_path: Path
+    request, tmp_path: Path, ext_dir: Path
 ) -> Iterator[tuple[ArchiveStore, Callable[[], ArchiveStore]]]:
     """Yields a store and a function returning a store over the same archive.
 
-    For the JSONL store the reopened instance reads only what reached the files.
+    For the JSONL store the reopened instance reads only what reached the files. The lake
+    keeps only committed lines, so reopening it first commits each open store's batch with
+    a run that tracks nothing.
     """
     if request.param == "memory":
         memory = InMemoryArchiveStore()
         yield memory, lambda: memory
         return
-    opened: list[JsonlArchiveStore] = [JsonlArchiveStore(tmp_path)]
+    opened: list[JsonlArchiveStore | DuckLakeArchiveStore]
+    if request.param == "jsonl":
+        opened = [JsonlArchiveStore(tmp_path)]
+    else:
+        opened = [DuckLakeArchiveStore(tmp_path, ext_dir)]
 
     def reopen() -> ArchiveStore:
-        opened[-1].flush()
-        opened.append(JsonlArchiveStore(tmp_path))
+        current = opened[-1]
+        if isinstance(current, JsonlArchiveStore):
+            current.flush()
+            opened.append(JsonlArchiveStore(tmp_path))
+        else:
+            for store in opened:
+                store.append_run(run_record(R_REOPEN, T1), VERSION)
+            opened.append(DuckLakeArchiveStore(tmp_path, ext_dir))
         return opened[-1]
 
     yield opened[0], reopen

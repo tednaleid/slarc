@@ -1,0 +1,450 @@
+# ABOUTME: ArchiveStore over the archive's DuckLake. Appended lines wait in an open batch that
+# ABOUTME: reads see, and append_run commits them with the run, tracked items and download states.
+from collections.abc import Callable, Generator, Iterator
+from contextlib import contextmanager
+from pathlib import Path
+
+import msgspec
+
+from slarc import archive_state
+from slarc.adapters.lake import connect_lake
+from slarc.archive_state import LatestMessages
+from slarc.domain.envelope import Envelope, Kind, Meta
+from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem, run_envelope
+from slarc.ports import DirectoryState, StoredMessage
+
+MESSAGE_KINDS = ("message", "deleted")
+
+MESSAGE_COLUMNS = {
+    "team": "VARCHAR",
+    "channel": "VARCHAR",
+    "ts": "VARCHAR",
+    "thread_ts": "VARCHAR",
+    "user": "VARCHAR",
+    "kind": "VARCHAR",
+    "fetched_at": "VARCHAR",
+    "run": "VARCHAR",
+    "source_team": "VARCHAR",
+    "api": "VARCHAR",
+    "slarc": "VARCHAR",
+    "hash": "VARCHAR",
+    "plain": "VARCHAR",
+    "object": "JSON",
+}
+DIRECTORY_COLUMNS = {
+    "team": "VARCHAR",
+    "kind": "VARCHAR",
+    "id": "VARCHAR",
+    "fetched_at": "VARCHAR",
+    "run": "VARCHAR",
+    "api": "VARCHAR",
+    "slarc": "VARCHAR",
+    "hash": "VARCHAR",
+    "blob": "VARCHAR",
+    "object": "JSON",
+}
+RUN_COLUMNS = {
+    "run": "VARCHAR",
+    "command": "VARCHAR",
+    "started": "VARCHAR",
+    "finished": "VARCHAR",
+    "fetched_at": "VARCHAR",
+    "slarc": "VARCHAR",
+    "object": "JSON",
+}
+TRACKED_COLUMNS = {
+    "team": "VARCHAR",
+    "kind": "VARCHAR",
+    "channel": "VARCHAR",
+    "ts": "VARCHAR",
+    "since": "VARCHAR",
+    "until": "VARCHAR",
+    "newest_ts": "VARCHAR",
+    "oldest_ts": "VARCHAR",
+    "backfill_complete": "BOOLEAN",
+    "last_search_at": "VARCHAR",
+    "last_pull_at": "VARCHAR",
+    "status": "VARCHAR",
+    "archived": "BOOLEAN",
+    "last_read": "JSON",
+    "retry_threads": "JSON",
+}
+DOWNLOAD_COLUMNS = {
+    "team": "VARCHAR",
+    "target_kind": "VARCHAR",
+    "target": "VARCHAR",
+    "url": "VARCHAR",
+    "status": "VARCHAR",
+    "attempts": "INTEGER",
+    "last_error": "VARCHAR",
+}
+TRACKED_KEY = ("team", "kind", "channel", "ts")
+DOWNLOAD_KEY = ("team", "target")
+
+# Ascending (fetched_at, run), then insertion order, which is the order archive_state's folds
+# expect: of two lines with the same version, the later one wins.
+VERSION_ORDER = "coalesce(fetched_at, ''), coalesce(run, ''), rowid"
+
+# The latest directory row of each file and image, by the same rule as archive_state.
+LATEST_BLOBS = """
+    SELECT team, kind, id, blob FROM directory_entry
+    WHERE kind IN ('file', 'image') AND id IS NOT NULL AND hash IS NOT NULL
+    QUALIFY row_number() OVER (
+        PARTITION BY team, kind, id
+        ORDER BY coalesce(fetched_at, '') DESC, coalesce(run, '') DESC, rowid DESC) = 1
+"""
+
+_decode = msgspec.json.Decoder()
+
+
+class DuckLakeArchiveStore:
+    def __init__(self, root: Path, ext_dir: Path) -> None:
+        self._con = connect_lake(root, ext_dir)
+        self._batch: list[Envelope] = []
+
+    def append(self, env: Envelope) -> None:
+        meta = env.meta
+        if meta.kind == "run":
+            raise ValueError("A run is stored through append_run")
+        if meta.team is None:
+            raise ValueError(f"A {meta.kind} line needs meta.team")
+        if meta.kind in MESSAGE_KINDS and (meta.channel is None or meta.ts is None):
+            raise ValueError(f"A {meta.kind} line needs meta.channel and meta.ts")
+        self._batch.append(env)
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self._con.close()
+
+    def stored_messages(self, team: str, channel: str) -> dict[str, StoredMessage]:
+        latest = LatestMessages()
+        rows = self._con.execute(
+            "SELECT kind, ts, fetched_at, run, hash, thread_ts FROM message_version "
+            f"WHERE team = ? AND channel = ? ORDER BY {VERSION_ORDER}",
+            [team, channel],
+        ).fetchall()
+        for kind, ts, fetched, run, hash_, thread_ts in rows:
+            meta = Meta(kind=kind, ts=ts, fetched_at=fetched, run=run, hash=hash_)
+            latest.add(Envelope(meta=meta, object={"thread_ts": thread_ts} if thread_ts else None))
+        for env in self._batch_messages(team, channel):
+            latest.add(env)
+        return latest.current()
+
+    def directory_state(self, team: str, kind: Kind) -> dict[str, DirectoryState]:
+        return archive_state.directory_state(self._directory_lines(team, kind, with_object=False))
+
+    def directory_objects(self, team: str, kind: Kind) -> dict[str, dict]:
+        return archive_state.directory_objects(self._directory_lines(team, kind, with_object=True))
+
+    def tracked_items(self) -> dict[ItemKey, TrackedItem]:
+        return self._tracked_where("status != 'removed'")
+
+    def removed_items(self) -> dict[ItemKey, TrackedItem]:
+        return self._tracked_where("status = 'removed'")
+
+    def downloads(self) -> dict[tuple[str, str], DownloadState]:
+        """The download state of each target whose latest directory row has no blob."""
+        names = ", ".join(f"d.{name}" for name in DOWNLOAD_COLUMNS)
+        rows = self._con.execute(
+            f"WITH latest AS ({LATEST_BLOBS}) SELECT {names} FROM download_state d "
+            "LEFT JOIN latest l ON l.team = d.team AND l.kind = d.target_kind AND l.id = d.target "
+            "WHERE l.blob IS NULL ORDER BY d.team, d.target"
+        ).fetchall()
+        states = {}
+        for team, target_kind, target, url, status, attempts, last_error in rows:
+            states[(team, target)] = DownloadState(
+                team_id=team,
+                target_kind=target_kind,
+                target=target,
+                url=url,
+                status=status,
+                attempts=attempts,
+                last_error=last_error,
+            )
+        return states
+
+    def append_run(self, run: RunRecord, slarc_version: str) -> None:
+        """Commits the open batch, the run, and its tracked items and download states together.
+
+        A run committed after a newer one leaves alone the items and targets the newer run
+        wrote, so the newest run by (fetched_at, run) wins as it does in a fold of run lines.
+        On failure nothing is written and the open batch is kept.
+        """
+        env = run_envelope(run, slarc_version)
+        with self._transaction():
+            self._insert_batch()
+            self._insert(
+                "run",
+                RUN_COLUMNS,
+                [
+                    {
+                        "run": run.run,
+                        "command": run.command,
+                        "started": run.started,
+                        "finished": run.finished,
+                        "fetched_at": env.meta.fetched_at,
+                        "slarc": slarc_version,
+                        "object": env.object,
+                    }
+                ],
+            )
+            newer_items, newer_targets = self._written_by_newer_runs(env.meta)
+            self._upsert_tracked([i for i in run.tracked if i.key not in newer_items])
+            self._upsert_downloads(
+                [d for d in run.downloads if (d.team_id, d.target) not in newer_targets]
+            )
+        self._batch.clear()
+
+    def channels(self, team: str) -> list[str]:
+        rows = self._con.execute(
+            "SELECT DISTINCT channel FROM message_version WHERE team = ?", [team]
+        ).fetchall()
+        batched = {env.meta.channel for env in self._batch if self._is_message_of(env, team)}
+        return sorted({row[0] for row in rows} | {c for c in batched if c is not None})
+
+    def message_lines(self, team: str, channel: str) -> Iterator[Envelope]:
+        names = ", ".join(f'"{name}"' for name in MESSAGE_COLUMNS)
+        rows = self._con.execute(
+            f"SELECT {names} FROM message_version WHERE team = ? AND channel = ? "
+            f"ORDER BY ts, {VERSION_ORDER}",
+            [team, channel],
+        ).fetchall()
+        lines = [_message_envelope(dict(zip(MESSAGE_COLUMNS, row, strict=True))) for row in rows]
+        return iter(lines + self._batch_messages(team, channel))
+
+    def drop_messages(self, team: str, channel: str, stamps: set[str]) -> int:
+        dropped = self._drop_batched(
+            lambda m: (
+                m.kind in MESSAGE_KINDS
+                and (m.team, m.channel) == (team, channel)
+                and m.ts in stamps
+            )
+        )
+        return dropped + self._delete(
+            "message_version",
+            "team = ? AND channel = ? AND list_contains(?, ts)",
+            [team, channel, sorted(stamps)],
+        )
+
+    def drop_directory_lines(self, team: str, kind: Kind, ids: set[str]) -> int:
+        dropped = self._drop_batched(lambda m: (m.team, m.kind) == (team, kind) and m.id in ids)
+        return dropped + self._delete(
+            "directory_entry",
+            "team = ? AND kind = ? AND list_contains(?, id)",
+            [team, kind, sorted(ids)],
+        )
+
+    def drop_workspace(self, team: str) -> None:
+        self._drop_batched(lambda m: m.team == team)
+        with self._transaction():
+            self._con.execute("DELETE FROM message_version WHERE team = ?", [team]).fetchall()
+            self._con.execute("DELETE FROM directory_entry WHERE team = ?", [team]).fetchall()
+
+    def blob_references(self) -> list[tuple[str, Kind, str, str]]:
+        rows = self._con.execute(
+            "SELECT team, kind, id, blob FROM directory_entry "
+            "WHERE blob IS NOT NULL AND id IS NOT NULL ORDER BY team, kind, id, rowid"
+        ).fetchall()
+        references: list[tuple[str, Kind, str, str]] = [tuple(row) for row in rows]
+        for env in self._batch:
+            meta = env.meta
+            if meta.kind not in MESSAGE_KINDS and meta.id and meta.blob:
+                references.append((meta.team or "", meta.kind, meta.id, meta.blob))
+        return list(dict.fromkeys(references))
+
+    def _directory_lines(self, team: str, kind: Kind, *, with_object: bool) -> list[Envelope]:
+        rows = self._con.execute(
+            f"SELECT id, fetched_at, run, hash, blob, {'object' if with_object else 'NULL'} "
+            f"FROM directory_entry WHERE team = ? AND kind = ? ORDER BY {VERSION_ORDER}",
+            [team, kind],
+        ).fetchall()
+        lines = [
+            Envelope(
+                meta=Meta(kind=kind, id=id_, fetched_at=fetched, run=run, hash=hash_, blob=blob),
+                object=_decode.decode(obj) if obj is not None else None,
+            )
+            for id_, fetched, run, hash_, blob, obj in rows
+        ]
+        lines.extend(env for env in self._batch if (env.meta.team, env.meta.kind) == (team, kind))
+        return lines
+
+    def _tracked_where(self, condition: str) -> dict[ItemKey, TrackedItem]:
+        names = ", ".join(f'"{name}"' for name in TRACKED_COLUMNS)
+        rows = self._con.execute(
+            f"SELECT {names} FROM tracked_item WHERE {condition} ORDER BY team, kind, channel, ts"
+        ).fetchall()
+        items = {}
+        for row in rows:
+            item = _tracked_item(dict(zip(TRACKED_COLUMNS, row, strict=True)))
+            items[item.key] = item
+        return items
+
+    def _written_by_newer_runs(self, meta: Meta) -> tuple[set[ItemKey], set[tuple[str, str]]]:
+        """The tracked items and download targets that committed runs newer than meta wrote."""
+        rows = self._con.execute(
+            "SELECT object FROM run WHERE coalesce(fetched_at, '') > ? "
+            "OR (coalesce(fetched_at, '') = ? AND coalesce(run, '') > ?)",
+            [meta.fetched_at or "", meta.fetched_at or "", meta.run or ""],
+        ).fetchall()
+        items: set[ItemKey] = set()
+        targets: set[tuple[str, str]] = set()
+        for (obj,) in rows:
+            newer = msgspec.json.decode(obj, type=RunRecord)
+            items.update(item.key for item in newer.tracked)
+            targets.update((state.team_id, state.target) for state in newer.downloads)
+        return items, targets
+
+    def _insert_batch(self) -> None:
+        messages = [env for env in self._batch if env.meta.kind in MESSAGE_KINDS]
+        entries = [env for env in self._batch if env.meta.kind not in MESSAGE_KINDS]
+        messages.sort(key=lambda env: (env.meta.team, env.meta.channel, env.meta.ts))
+        entries.sort(key=lambda env: (env.meta.team, env.meta.kind, env.meta.id or ""))
+        self._insert("message_version", MESSAGE_COLUMNS, [_message_row(env) for env in messages])
+        self._insert("directory_entry", DIRECTORY_COLUMNS, [_directory_row(env) for env in entries])
+
+    def _upsert_tracked(self, items: list[TrackedItem]) -> None:
+        rows = [_tracked_row(item) for item in items]
+        self._delete_keys("tracked_item", TRACKED_KEY, rows)
+        self._insert("tracked_item", TRACKED_COLUMNS, rows)
+
+    def _upsert_downloads(self, states: list[DownloadState]) -> None:
+        rows = [_download_row(state) for state in states]
+        self._delete_keys("download_state", DOWNLOAD_KEY, rows)
+        self._insert("download_state", DOWNLOAD_COLUMNS, rows)
+
+    def _insert(self, table: str, columns: dict[str, str], rows: list[dict]) -> None:
+        """Inserts rows in order, passed as one JSON parameter."""
+        if not rows:
+            return
+        names = ", ".join(f'"{name}"' for name in columns)
+        self._con.execute(
+            f"INSERT INTO {table} ({names}) SELECT unnest(r) FROM "
+            f"(SELECT unnest(from_json(?::JSON, '{_structure(columns)}')) AS r)",
+            [msgspec.json.encode(rows).decode()],
+        )
+
+    def _delete_keys(self, table: str, key: tuple[str, ...], rows: list[dict]) -> None:
+        if not rows:
+            return
+        keys = [{name: row[name] for name in key} for row in rows]
+        matches = " AND ".join(f"k.{name} = {table}.{name}" for name in key)
+        self._con.execute(
+            f"DELETE FROM {table} WHERE EXISTS (SELECT 1 FROM "
+            f"(SELECT unnest(from_json(?::JSON, '{_structure(dict.fromkeys(key, 'VARCHAR'))}')) "
+            f"AS k) WHERE {matches})",
+            [msgspec.json.encode(keys).decode()],
+        ).fetchall()
+
+    def _delete(self, table: str, condition: str, params: list) -> int:
+        with self._transaction():
+            deleted = self._con.execute(f"DELETE FROM {table} WHERE {condition}", params).fetchall()
+        return deleted[0][0]
+
+    @contextmanager
+    def _transaction(self) -> Generator[None]:
+        self._con.execute("BEGIN")
+        try:
+            yield
+        except BaseException:
+            self._con.execute("ROLLBACK")
+            raise
+        self._con.execute("COMMIT")
+
+    def _drop_batched(self, drop: Callable[[Meta], bool]) -> int:
+        kept = [env for env in self._batch if not drop(env.meta)]
+        dropped = len(self._batch) - len(kept)
+        self._batch = kept
+        return dropped
+
+    def _batch_messages(self, team: str, channel: str) -> list[Envelope]:
+        return [
+            env
+            for env in self._batch
+            if self._is_message_of(env, team) and env.meta.channel == channel
+        ]
+
+    @staticmethod
+    def _is_message_of(env: Envelope, team: str) -> bool:
+        return env.meta.kind in MESSAGE_KINDS and env.meta.team == team
+
+
+def _structure(columns: dict[str, str]) -> str:
+    return msgspec.json.encode([columns]).decode()
+
+
+def _message_row(env: Envelope) -> dict:
+    meta = env.meta
+    obj = env.object or {}
+    return {
+        "team": meta.team,
+        "channel": meta.channel,
+        "ts": meta.ts,
+        "thread_ts": obj.get("thread_ts"),
+        "user": obj.get("user"),
+        "kind": meta.kind,
+        "fetched_at": meta.fetched_at,
+        "run": meta.run,
+        "source_team": meta.source_team,
+        "api": meta.api,
+        "slarc": meta.slarc,
+        "hash": meta.hash,
+        "plain": meta.plain,
+        "object": env.object,
+    }
+
+
+def _message_envelope(row: dict) -> Envelope:
+    meta = Meta(
+        kind=row["kind"],
+        team=row["team"],
+        channel=row["channel"],
+        ts=row["ts"],
+        source_team=row["source_team"],
+        fetched_at=row["fetched_at"],
+        run=row["run"],
+        api=row["api"],
+        slarc=row["slarc"],
+        hash=row["hash"],
+        plain=row["plain"],
+    )
+    obj = row["object"]
+    return Envelope(meta=meta, object=_decode.decode(obj) if obj is not None else None)
+
+
+def _directory_row(env: Envelope) -> dict:
+    meta = env.meta
+    return {
+        "team": meta.team,
+        "kind": meta.kind,
+        "id": meta.id,
+        "fetched_at": meta.fetched_at,
+        "run": meta.run,
+        "api": meta.api,
+        "slarc": meta.slarc,
+        "hash": meta.hash,
+        "blob": meta.blob,
+        "object": env.object,
+    }
+
+
+def _tracked_row(item: TrackedItem) -> dict:
+    row = msgspec.to_builtins(item)
+    row["team"] = row.pop("team_id")
+    row["ts"] = item.ts or ""
+    return row
+
+
+def _tracked_item(row: dict) -> TrackedItem:
+    row["team_id"] = row.pop("team")
+    row["ts"] = row["ts"] or None
+    row["last_read"] = _decode.decode(row["last_read"])
+    row["retry_threads"] = _decode.decode(row["retry_threads"])
+    return msgspec.convert(row, TrackedItem)
+
+
+def _download_row(state: DownloadState) -> dict:
+    row = msgspec.to_builtins(state)
+    row["team"] = row.pop("team_id")
+    return row

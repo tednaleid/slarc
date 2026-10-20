@@ -101,7 +101,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
 - [x] **Step 5: Run `just check` and watch it pass.**
 - [x] **Step 6: Commit:** `Add the lake connection: SQLite catalog in WAL mode, schema and extensions`.
 
-### Task 2: A lake ArchiveStore with today's semantics
+### Task 2: A lake ArchiveStore with today's semantics [done]
 
 **Files:**
 - Create: `src/slarc/adapters/lake_store.py`
@@ -118,14 +118,14 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
   - **`blob_references()`** reads `directory_entry`.
   - **The current-version rules** (newest by `(fetched_at, run)`, deleted lines, tie-breaks) match `archive_state.LatestMessages` and the existing contract tests exactly.
 
-- [ ] **Step 1: Parametrize the `store` fixture over fake, jsonl and lake.** Mark the JSONL-only file-layout tests to skip for the lake. Add lake-only tests in `tests/adapters/test_lake_store.py`:
+- [x] **Step 1: Parametrize the `store` fixture over fake, jsonl and lake.** Mark the JSONL-only file-layout tests to skip for the lake. Add lake-only tests in `tests/adapters/test_lake_store.py`:
   - `test_lines_without_a_run_line_are_not_kept`: append, close without `append_run`, reopen, and nothing is there;
   - `test_reads_see_the_open_batch`;
   - `test_append_run_commits_batch_items_and_downloads_together`.
-- [ ] **Step 2: Run them and watch the lake cases fail.**
-- [ ] **Step 3: Implement `DuckLakeArchiveStore`.** Insert rows sorted by (team, channel, ts), or by (team, kind, id) for directory rows.
-- [ ] **Step 4: Run `just check` and watch it pass.**
-- [ ] **Step 5: Commit:** `Add a DuckLake archive store with commit-at-end semantics`.
+- [x] **Step 2: Run them and watch the lake cases fail.**
+- [x] **Step 3: Implement `DuckLakeArchiveStore`.** Insert rows sorted by (team, channel, ts), or by (team, kind, id) for directory rows.
+- [x] **Step 4: Run `just check` and watch it pass.**
+- [x] **Step 5: Commit:** `Add a DuckLake archive store with commit-at-end semantics`.
 
 ### Task 3: DuckDbQueryIndex over the lake
 
