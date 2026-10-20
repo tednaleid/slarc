@@ -59,6 +59,12 @@ class ThreadNotFound(SlarcError):
         super().__init__(f"Thread {ts} was not found in conversation {channel}.")
 
 
+class ArchiveWriteFailed(SlarcError):
+    def __init__(self, path: Path, reason: str | None) -> None:
+        self.path = path
+        super().__init__(f"Could not write to {path}: {reason}.")
+
+
 class FileDeleted(SlarcError):
     def __init__(self, file_id: str) -> None:
         self.file_id = file_id

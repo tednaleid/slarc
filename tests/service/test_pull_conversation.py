@@ -2,10 +2,12 @@
 # ABOUTME: A fake gateway pages history newest first; some tests interrupt or observe its paging.
 from collections.abc import Iterator
 from itertools import pairwise
+from pathlib import Path
 
 import pytest
 
-from slarc.ports import AuthFailed, SlarcError, ThreadNotFound
+from slarc.domain.envelope import Envelope
+from slarc.ports import ArchiveWriteFailed, AuthFailed, NotVisible, SlarcError, ThreadNotFound
 from slarc.service.pull import PullOptions, date_to_ts
 from tests.service.pull_harness import (
     BASE,
@@ -394,3 +396,38 @@ def test_auth_failure_on_a_thread_read_still_skips_the_workspace(
 
     assert report.failed is True
     assert h.last_run().errors[0]["team_id"] == TEAM
+
+
+def test_archive_write_failure_aborts_the_pull(h: Harness, monkeypatch: pytest.MonkeyPatch):
+    appended = h.archive.append
+
+    def failing_on_messages(env: Envelope) -> None:
+        if env.meta.kind == "message":
+            raise ArchiveWriteFailed(Path("raw/2026-10.jsonl"), "No space left on device")
+        appended(env)
+
+    monkeypatch.setattr(h.archive, "append", failing_on_messages)
+
+    with pytest.raises(ArchiveWriteFailed):
+        h.pull(BASE)
+
+
+def test_retry_thread_turning_not_visible_stays_in_retry_threads(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+):
+    def unreachable(channel: str, ts: str) -> list[dict]:
+        raise SlarcError(UNREACHABLE)
+
+    monkeypatch.setattr(h.gateway, "replies", unreachable)
+    h.pull(BASE)
+    [item] = h.tracked()
+    assert item.retry_threads == [PARENT_TS]
+
+    def not_visible(channel: str, ts: str) -> list[dict]:
+        raise NotVisible(channel)
+
+    monkeypatch.setattr(h.gateway, "replies", not_visible)
+    h.pull()
+
+    [item] = h.tracked()
+    assert (item.status, item.retry_threads) == ("not_visible", [PARENT_TS])

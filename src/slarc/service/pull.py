@@ -17,6 +17,7 @@ from slarc.domain.plain import plain_text
 from slarc.domain.tracking import DownloadState, TrackedItem, item_label
 from slarc.ports import (
     ArchiveStore,
+    ArchiveWriteFailed,
     AuthFailed,
     DirectoryState,
     Downloader,
@@ -372,7 +373,7 @@ class _PullRun:
         except ThreadNotFound:
             self._warn(_missing_message(connection.domain, channel, ts))
             return None
-        except AuthFailed:
+        except AuthFailed, ArchiveWriteFailed:
             raise
         except SlarcError as error:
             link = message_link(connection.domain, channel, ts)
@@ -445,7 +446,7 @@ class _PullRun:
         except ThreadNotFound:
             self._skip(item, _missing_message(connection.domain, item.channel, ts))
             return None
-        except AuthFailed:
+        except AuthFailed, ArchiveWriteFailed:
             raise
         except SlarcError as error:
             link = message_link(connection.domain, item.channel, ts)
@@ -485,7 +486,7 @@ class _PullRun:
         except NotVisible as error:
             self._skip(item, str(error), held)
             return
-        except AuthFailed:
+        except AuthFailed, ArchiveWriteFailed:
             raise
         except SlarcError as error:
             self._warn(
@@ -649,8 +650,9 @@ class _PullRun:
     ) -> None:
         """Appends a page of history and the thread under each of parents, then flushes.
 
-        A thread whose read fails with anything but NotVisible or AuthFailed is skipped with a
-        warning and kept in held.failed_threads.
+        A thread whose read fails with NotVisible or a plain SlarcError is kept in
+        held.failed_threads; NotVisible then propagates, and a plain SlarcError skips the thread
+        with a warning. AuthFailed and ArchiveWriteFailed propagate.
         """
         uow, gateway, team_id, channel = self.uow, connection.gateway, held.team_id, held.channel
         threads: dict[str, list[dict]] = {}
@@ -661,7 +663,10 @@ class _PullRun:
             except ThreadNotFound:
                 self._warn(_missing_message(connection.domain, channel, ts))
                 continue
-            except NotVisible, AuthFailed:
+            except NotVisible:
+                held.failed_threads.add(ts)
+                raise
+            except AuthFailed, ArchiveWriteFailed:
                 raise
             except SlarcError as error:
                 link = message_link(connection.domain, channel, ts)
