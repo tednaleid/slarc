@@ -75,8 +75,14 @@ class JsonlArchiveStore:
         return archive_state.downloads(self._read([self._runs_path()]))
 
     def append_run(self, run: RunRecord, slarc_version: str) -> None:
+        """Appends the run line and syncs it to disk, after syncing every line appended before it.
+
+        A power loss then never keeps a run line whose cursors point past lost message lines,
+        and rm's sweep never deletes anything before the removal it applies is on disk.
+        """
+        self._sync()
         self.append(run_envelope(run, slarc_version))
-        self.flush()
+        self._sync()
 
     def channels(self, team: str) -> list[str]:
         raw = self._root / "raw" / team
@@ -146,6 +152,11 @@ class JsonlArchiveStore:
 
     def _months(self, team: str, channel: str) -> list[Path]:
         return sorted((self._root / "raw" / team / channel).glob("*.jsonl"))
+
+    def _sync(self) -> None:
+        for handle in self._handles.values():
+            handle.flush()
+            os.fsync(handle.fileno())
 
     def _rewrite(self, path: Path, drop: Callable[[Meta], bool]) -> int:
         """Removes the lines whose meta matches drop and returns how many it removed.

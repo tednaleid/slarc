@@ -1,5 +1,6 @@
 # ABOUTME: Contract tests every ArchiveStore implementation must pass, run over the fake and JSONL.
 # ABOUTME: Covers file layout, latest-wins reads, directory and run-line state, and dropping lines.
+import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Literal
@@ -555,3 +556,23 @@ def test_rewritten_file_keeps_its_mode(jsonl_store: JsonlArchiveStore, tmp_path:
     jsonl_store.drop_messages(TEAM, CHANNEL, {TS})
 
     assert month.stat().st_mode & 0o777 == 0o644
+
+
+def test_append_run_syncs_data_lines_before_the_run_line_and_the_run_line_after(
+    jsonl_store: JsonlArchiveStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    month = tmp_path / "raw" / TEAM / CHANNEL / "2026-10.jsonl"
+    runs = tmp_path / "runs.jsonl"
+    jsonl_store.append(message(TS, "first", T1, R1))
+    synced: list[tuple[int, bool]] = []
+    real_fsync = os.fsync
+
+    def record(fd: int) -> None:
+        synced.append((os.fstat(fd).st_ino, runs.exists() and runs.stat().st_size > 0))
+        real_fsync(fd)
+
+    monkeypatch.setattr("slarc.adapters.jsonl_store.os.fsync", record)
+    jsonl_store.append_run(run_record(R1, T1), VERSION)
+
+    assert (month.stat().st_ino, False) in synced
+    assert synced[-1] == (runs.stat().st_ino, True)
