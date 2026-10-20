@@ -1,7 +1,6 @@
 # ABOUTME: Tests for queueing, draining and recording downloads of files and images during a pull.
 # ABOUTME: A fake downloader serves bytes per URL into an in-memory blob store.
 import hashlib
-from itertools import accumulate
 
 import pytest
 
@@ -422,17 +421,22 @@ def test_malformed_image_url_does_not_fail_the_pull(h: Harness):
 
 
 def test_drain_reports_progress_before_and_after_each_result(h: Harness):
+    h.change_message(SNIPPET_TS, attachments=[{"image_url": GIPHY_URL}])
     h.downloader.serve(SNIPPET_URL, snippet_bytes())
-    h.downloader.fail(avatar(ME), error="HTTP 500")
+    del h.gateway.files[SNIPPET]
+    h.downloader.serve(GIPHY_URL, b"giphy", "image/gif")
+    h.downloader.fail(avatar(ME), status="forbidden", error="HTTP 403")
 
     h.pull(SNIPPET_LINK)
 
+    assert [job.target for job in h.downloader.jobs] == [SNIPPET, GIPHY_URL, avatar(ME)]
     total = len(h.downloader.jobs)
-    answered = [job.url for job in h.downloader.jobs if job.url in (SNIPPET_URL, avatar(ME))]
-    failed = accumulate(int(url == avatar(ME)) for url in answered)
-    expected = [(0, 0, total)] + [(done, f, total) for done, f in enumerate(failed, start=1)]
-    assert len(expected) == 3
-    assert h.reporter.download_updates == expected
+    assert h.reporter.download_updates == [
+        (0, 0, 0, total),
+        (1, 1, 0, total),
+        (2, 1, 0, total),
+        (3, 1, 1, total),
+    ]
 
 
 def test_drain_reports_no_progress_without_jobs(h: Harness):

@@ -119,22 +119,26 @@ def drain_downloads(
 ) -> DrainedDownloads:
     """Downloads this run's pending targets and earlier runs' queue, recording each result.
 
-    The reporter hears how many jobs are done and failed before the first and after each result.
+    The reporter hears how many jobs are done, failed and skipped before the first result and
+    after each one. A result counts as failed or skipped by the status it settles into, so a
+    file whose files.info read fails after its download counts as failed.
     """
     _requeue_earlier(uow, max_bytes)
     jobs = [_job(state, max_bytes) for state in uow.run.downloads if state.status == "pending"]
     jobs = _with_credentials(jobs, connector, reporter)
     recorder = _Recorder(uow, connector)
     if jobs:
-        done = failed = 0
-        reporter.downloads(done, failed, len(jobs))
+        done = failed = skipped = 0
+        reporter.downloads(done, failed, skipped, len(jobs))
         try:
             for result in downloader.fetch(jobs, parallelism):
-                recorder.record(result)
+                status = recorder.record(result)
                 done += 1
-                if result.status != "ok":
+                if status in QUEUED_STATUSES:
                     failed += 1
-                reporter.downloads(done, failed, len(jobs))
+                elif status in SKIPPED_STATUSES:
+                    skipped += 1
+                reporter.downloads(done, failed, skipped, len(jobs))
         finally:
             recorder.finish()
     states = uow.run.downloads
@@ -304,7 +308,8 @@ class _Recorder:
         self.images: dict[str, set[str]] = {}
         self.saved: dict[Kind, int] = {"file": 0, "image": 0}
 
-    def record(self, result: DownloadResult) -> None:
+    def record(self, result: DownloadResult) -> str | None:
+        """Records the result; returns the status it settled into, or None when downloaded."""
         job = result.job
         if result.status != "ok":
             self._settle(job, result.status, result.error)
@@ -313,6 +318,9 @@ class _Recorder:
         else:
             self._record_image(result)
         self.uow.archive.flush()
+        key = (job.team_id, job.target)
+        held = (d for d in self.uow.run.downloads if (d.team_id, d.target) == key)
+        return next((d.status for d in held), None)
 
     def finish(self) -> None:
         for team_id, urls in self.images.items():

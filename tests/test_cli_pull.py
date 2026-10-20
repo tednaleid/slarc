@@ -302,20 +302,29 @@ def test_summary_names_messages_directory_lines_and_downloads(
     assert _summary(report(**counts)).splitlines() == expected
 
 
-def test_reporter_shows_item_and_download_rows():
+@pytest.mark.parametrize(
+    ("failed", "skipped", "detail"),
+    [
+        (0, 0, "7/7"),
+        (1, 0, "7/7, 1 failed"),
+        (0, 2, "7/7, 2 skipped"),
+        (1, 2, "7/7, 1 failed, 2 skipped"),
+    ],
+)
+def test_reporter_shows_item_and_download_rows(failed: int, skipped: int, detail: str):
     buffer = io.StringIO()
     console = Console(file=buffer, width=120)
 
     with RichReporter(console) as reporter:
-        reporter.downloads(0, 0, 7)
+        reporter.downloads(0, 0, 0, 7)
         reporter.progress("#all-naleid", 3, 2, 3)
-        reporter.downloads(5, 1, 7)
+        reporter.downloads(7, failed, skipped, 7)
 
-    output = buffer.getvalue()
-    assert "#all-naleid" in output
-    assert "3 read, 2 new" in output
-    assert "Downloads" in output
-    assert "5/7, 1 failed" in output
+    downloads, item = buffer.getvalue().splitlines()
+    assert item.startswith("#all-naleid")
+    assert item.rstrip().endswith("3 read, 2 new")
+    assert downloads.startswith("Downloads")
+    assert downloads.rstrip().endswith(f" {detail}")
 
 
 def test_slarc_error_exits_1_without_traceback(f: Fixture):

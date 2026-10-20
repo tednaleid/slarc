@@ -175,8 +175,13 @@ class RichReporter:
     def progress(self, label: str, done: int, new: int, total: int | None) -> None:
         self._show(label, done, total, f"{done} read, {new} new")
 
-    def downloads(self, done: int, failed: int, total: int) -> None:
-        self._show(DOWNLOADS_ROW, done, total, f"{done}/{total}, {failed} failed")
+    def downloads(self, done: int, failed: int, skipped: int, total: int) -> None:
+        parts = [f"{done}/{total}"]
+        if failed:
+            parts.append(f"{failed} failed")
+        if skipped:
+            parts.append(f"{skipped} skipped")
+        self._show(DOWNLOADS_ROW, done, total, ", ".join(parts))
 
     def _show(self, label: str, done: int, total: int | None, detail: str) -> None:
         if label not in self._tasks:
