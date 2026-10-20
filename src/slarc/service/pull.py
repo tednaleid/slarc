@@ -302,9 +302,14 @@ class _PullRun:
         conversation = view.conversations.get(item.channel, {})
         if conversation.get("last_read"):
             last_read[connection.user_id] = conversation["last_read"]
+        archived = item.kind == "conversation" and bool(conversation.get("is_archived"))
         self._record(
             msgspec.structs.replace(
-                item, status="ok", last_pull_at=fetched_now(self.uow), last_read=last_read
+                item,
+                status="ok",
+                last_pull_at=fetched_now(self.uow),
+                last_read=last_read,
+                archived=archived,
             ),
             held,
         )
@@ -347,9 +352,19 @@ class _PullRun:
         it skips search and later pulls search from its start. Any read failing with NotVisible
         skips the item without deletes; a history page that fails otherwise leaves the item
         unfinished, keeping the progress already recorded.
+
+        An item recorded as archived whose conversation is still archived has had its final
+        refresh, so it is recorded as pulled without reading anything, unless --full is set.
         """
         held = HeldConversation(self.uow.archive, item.team_id, item.channel)
         self.progress = _ItemProgress(self.reporter, item_label(item, view))
+        if (
+            item.archived
+            and view.conversations.get(item.channel, {}).get("is_archived")
+            and not self.options.full
+        ):
+            self._finish(connection, held, item, view)
+            return
         started_at_top = not item.backfill_complete and item.oldest_ts is None
         if started_at_top:
             item = msgspec.structs.replace(item, last_search_at=fetched_now(self.uow))

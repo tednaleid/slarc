@@ -631,3 +631,75 @@ def test_interrupted_thread_read_keeps_lines_appended_before_it(
     h.pull()
 
     assert sorted(message_ts_since(h, 0)) == stamps
+
+
+READ_METHODS = ("conversations.history", "search.messages", "conversations.replies")
+
+
+def read_calls(h: Harness) -> list[tuple]:
+    return [call for call in h.gateway.calls if call[0] in READ_METHODS]
+
+
+def stored_message_ts(h: Harness) -> set[str]:
+    return set(message_ts_since(h, 0))
+
+
+def test_newly_archived_conversation_is_refreshed_once_then_skipped(h: Harness):
+    h.pull(BASE)
+    h.set_archived(True)
+    late = ts_on(20, 9)
+    h.gateway.conversations[CHANNEL] = [message(late), *h.gateway.conversations[CHANNEL]]
+
+    h.pull()
+
+    assert late in stored_message_ts(h)
+    [item] = h.tracked()
+    assert item.archived is True
+    h.gateway.calls.clear()
+    h.reporter.progress_updates.clear()
+    lines_before = len(h.archive.lines)
+
+    h.pull()
+
+    assert read_calls(h) == []
+    assert message_ts_since(h, lines_before) == []
+    assert h.reporter.progress_updates[-1][1:] == (0, 0, 0)
+    [item] = h.tracked()
+    assert item.status == "ok"
+    assert item.last_pull_at == h.last_run().tracked[0].last_pull_at
+
+
+def test_unarchived_conversation_is_refreshed_again(h: Harness):
+    h.set_archived(True)
+    h.pull(BASE)
+    h.set_archived(False)
+    late = ts_on(20, 9)
+    h.gateway.conversations[CHANNEL] = [message(late), *h.gateway.conversations[CHANNEL]]
+
+    h.pull()
+
+    assert late in stored_message_ts(h)
+    [item] = h.tracked()
+    assert item.archived is False
+
+
+def test_full_reads_an_archived_conversation(h: Harness):
+    h.set_archived(True)
+    h.pull(BASE)
+    h.pull()
+    h.gateway.calls.clear()
+
+    h.pull(options=PullOptions(full=True))
+
+    assert [c for c in read_calls(h) if c[0] == "conversations.history"]
+
+
+def test_first_pull_of_an_archived_conversation_backfills(h: Harness):
+    h.set_archived(True)
+
+    h.pull(BASE)
+
+    assert stored_message_ts(h) == {m["ts"] for m in channel_messages()}
+    [item] = h.tracked()
+    assert item.archived is True
+    assert item.backfill_complete

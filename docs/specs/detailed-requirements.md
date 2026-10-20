@@ -189,6 +189,8 @@ Items marked (spike) were confirmed against the test workspace; the rest come fr
 4. Every thread whose parent arrived in step 1 with replies is read with `conversations.replies`.
 5. `--full` replaces steps 1 and 2 with a complete re-read of the conversation's range and every thread in it.
 
+**Slack-archived conversation**: a pull that finishes a conversation while Slack reports it archived (`is_archived` in `conversations.info`) records `archived: true`. A later pull that finds the item `archived: true` and the conversation still archived reads nothing (no history, search or threads) and records the item as pulled, `0 read, 0 new`. A conversation no longer archived records `archived: false` and is refreshed as usual. `--full` re-reads an archived conversation.
+
 **Tracked thread or message**: re-read with `conversations.replies` (a lone message comes back as a one-element thread) on every pull.
 
 **Deletes**
@@ -316,7 +318,7 @@ The entities below are DuckDB views over the files; none is stored separately. E
 | emoji | `emoji.jsonl`, last line per name | (team_id, name) | url, alias_of, is_animated, blob, first_seen, last_seen_in_list |
 | usergroup | `usergroups.jsonl`, last line per id | (team_id, id) | handle, name, user_ids |
 | run | `runs.jsonl` | run | command, args, started, finished, teams, auth per team, messages_seen, lines_appended, rate_limit_wait_s, api_calls (Web API calls per method, pages included), threads_read (threads read per reason ∈ link, history, search, active, full, retry; a thread counts once, under its first reason), errors, tracked, downloads |
-| tracked_item | `runs.jsonl`, the latest entry per item across all run lines | (team_id, kind, channel_id, ts) | kind ∈ conversation, thread, message; since, until, newest_ts, oldest_ts, backfill_complete, last_search_at, last_pull_at, status ∈ ok, not_visible; last_read per user_id; retry_threads (threads whose read failed, re-read first on the next pull). An interrupted first pull resumes paging older history from `oldest_ts` while `backfill_complete` is false. An item named on the command line is recorded before it is read, so an interrupted pull keeps it |
+| tracked_item | `runs.jsonl`, the latest entry per item across all run lines | (team_id, kind, channel_id, ts) | kind ∈ conversation, thread, message; since, until, newest_ts, oldest_ts, backfill_complete, last_search_at, last_pull_at, status ∈ ok, not_visible; archived (the last finished pull found the conversation Slack-archived); last_read per user_id; retry_threads (threads whose read failed, re-read first on the next pull). An interrupted first pull resumes paging older history from `oldest_ts` while `backfill_complete` is false. An item named on the command line is recorded before it is read, so an interrupted pull keeps it |
 | download | `runs.jsonl`, latest entry per target | (team_id, target) | target is a file id or image URL; status ∈ pending, failed, forbidden, too_large, deleted, external; attempts; last_error. Downloaded items drop out; the `blob` on the directory line is the record |
 
 Notes

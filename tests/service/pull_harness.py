@@ -135,6 +135,9 @@ class Harness:
         self.gateway.conversations[CHANNEL] = [message(ts) for ts in stamps]
         self.gateway.page_size = page_size
 
+    def set_archived(self, archived: bool) -> None:
+        self.gateway.infos[CHANNEL] = {**self.gateway.infos[CHANNEL], "is_archived": archived}
+
     def remove_messages(self, *ts: str) -> None:
         messages = self.gateway.conversations[CHANNEL]
         self.gateway.conversations[CHANNEL] = [m for m in messages if m["ts"] not in ts]
