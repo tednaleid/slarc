@@ -190,7 +190,9 @@ class Commit:
     """What a commit writes along with the open batch, and the archive state it assumed.
 
     An item with revision 0 starts tracking; any other item, and each unchanged item, must
-    still have the revision it was read with. Each requires ref must have a directory row.
+    still have the revision it was read with. In each complete team, the tracked items that
+    are not removed must be exactly the items and unchanged items in that team. Each requires
+    ref must have a directory row.
     downloads are upserted and settled download states deleted. With downloads_exist, a
     download or settled key that has no download state is dropped, with the open batch's
     directory rows for its target, instead of failing the commit.
@@ -202,6 +204,7 @@ class Commit:
     settled: Collection[DownloadKey] = frozenset()
     requires: Collection[DirectoryRef] = frozenset()
     downloads_exist: bool = False
+    complete_teams: Collection[str] = frozenset()
 
 
 @dataclass(frozen=True)

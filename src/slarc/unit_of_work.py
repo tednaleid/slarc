@@ -1,6 +1,6 @@
 # ABOUTME: Unit of work scoping one run over the archive and blob stores. Commits the open batch
 # ABOUTME: with the run's download changes, and appends the run line however the run ends.
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from types import TracebackType
 
 import msgspec
@@ -60,6 +60,7 @@ class UnitOfWork:
         *,
         unchanged: Sequence[TrackedItem] = (),
         downloads_exist: bool = False,
+        complete_teams: Collection[str] = frozenset(),
     ) -> set[DownloadKey]:
         """Commits the open batch with the items, the download states in run.downloads that
         changed since the last commit, and the keys settled and refs required since then.
@@ -81,6 +82,7 @@ class UnitOfWork:
             settled=frozenset(self._settled),
             requires=frozenset(self._requires),
             downloads_exist=downloads_exist,
+            complete_teams=frozenset(complete_teams),
         )
         try:
             committed = self.archive.commit(change)

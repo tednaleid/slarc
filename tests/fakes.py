@@ -147,6 +147,7 @@ class InMemoryArchiveStore:
     def _commit(self, change: Commit) -> Committed:
         stored = self._stored_revisions()
         revisions = archive_state.item_revisions(change, stored)
+        archive_state.require_complete_teams(change, stored)
         dropped = archive_state.dropped_downloads(change, set(self.download_states))
         batch = archive_state.without_targets(self._batch, dropped)
         archive_state.require_live_teams(batch, stored, change.items)

@@ -631,6 +631,27 @@ def test_unchanged_item_conflict(store_and_reopen):
         assert live(current, other_key).revision == 2
 
 
+def test_complete_teams_conflict_when_a_live_item_is_not_named(store_and_reopen):
+    store, reopen = store_and_reopen
+    kept = TrackedItem(team_id=TEAM, kind="conversation", channel=CHANNEL)
+    hidden = TrackedItem(team_id=TEAM, kind="conversation", channel=OTHER_CHANNEL)
+    elsewhere = TrackedItem(team_id=OTHER_TEAM, kind="conversation", channel=CHANNEL)
+    store.commit(Commit(items=[kept, msgspec.structs.replace(hidden, status="removed")]))
+    store.commit(Commit(items=[elsewhere]))
+    store.commit(Commit(items=[msgspec.structs.replace(live(store), status="not_visible")]))
+    store.append(message(TS, "ok", T1, R1))
+    store.commit(Commit(unchanged=[live(store)], complete_teams=frozenset({TEAM})))
+
+    newcomer = TrackedItem(team_id=TEAM, kind="thread", channel=CHANNEL, ts=TS)
+    store.commit(Commit(items=[newcomer]))
+    store.append(message(LATER_TS, "lost", T2, R2))
+    with pytest.raises(CommitConflict):
+        store.commit(Commit(unchanged=[live(store)], complete_teams=frozenset({TEAM})))
+
+    for current in (store, reopen()):
+        assert set(current.stored_messages(TEAM, CHANNEL)) == {TS}
+
+
 def test_missing_required_directory_row_conflicts(store_and_reopen):
     store, reopen = store_and_reopen
     store.commit(Commit(items=[tracked("100.000000")]))

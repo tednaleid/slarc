@@ -168,6 +168,18 @@ def item_revisions(change: Commit, stored: StoredRevisions) -> dict[ItemKey, int
     return revisions
 
 
+def require_complete_teams(change: Commit, stored: StoredRevisions) -> None:
+    """Raises CommitConflict when a complete team's tracked items that are not removed are not
+    exactly the commit's items and unchanged items in that team."""
+    for team in change.complete_teams:
+        live = {
+            key for key, (_, status) in stored.items() if key[0] == team and status != "removed"
+        }
+        named = {item.key for item in (*change.items, *change.unchanged) if item.team_id == team}
+        if live != named:
+            raise CommitConflict()
+
+
 def dropped_downloads(change: Commit, existing: set[DownloadKey]) -> set[DownloadKey]:
     """With downloads_exist, the commit's download and settled keys that have no download state."""
     if not change.downloads_exist:

@@ -278,6 +278,7 @@ class DuckLakeArchiveStore:
     def _commit(self, change: Commit) -> Committed:
         stored = self._stored_revisions()
         revisions = archive_state.item_revisions(change, stored)
+        archive_state.require_complete_teams(change, stored)
         existing = self._download_keys() if change.downloads_exist else set()
         dropped = archive_state.dropped_downloads(change, existing)
         batch = archive_state.without_targets(self._batch, dropped)

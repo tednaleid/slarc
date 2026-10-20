@@ -468,3 +468,36 @@ def test_rm_retries_then_gives_up(h: Harness, monkeypatch: pytest.MonkeyPatch):
     assert inventory(h) == before
     assert keys(h.tracked()) == [item("conversation")]
     assert h.last_run().counts == {}
+
+
+def test_rm_recomputes_when_a_pull_starts_tracking_in_the_team(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+):
+    pull_and_download(h, BASE)
+    removal = plan(h, BASE)
+    commit = h.archive.commit
+    rm_commits: list[Commit] = []
+    pulling: list[bool] = []
+
+    def pull_tracks_a_thread_first(change: Commit) -> Committed:
+        """Runs a pull that starts tracking a thread in the conversation before rm's first
+        commit."""
+        if pulling:
+            return commit(change)
+        rm_commits.append(change)
+        if len(rm_commits) == 1:
+            pulling.append(True)
+            with h.archive.elsewhere():
+                h.pull(THREAD_LINK)
+            pulling.clear()
+        return commit(change)
+
+    monkeypatch.setattr(h.archive, "commit", pull_tracks_a_thread_first)
+    committed = apply(h, removal, BASE)
+
+    assert len([change for change in rm_commits if change.items]) == 2
+    assert committed.lines == CHANNEL_MESSAGES - len(THREAD_TS)
+    assert committed.kept_messages == len(THREAD_TS)
+    assert keys(h.tracked()) == [item("thread", ts=PARENT_TS)]
+    assert stored(h, TEAM, CHANNEL) == set(THREAD_TS)
+    assert file_ids(h) == {THREAD_FILE}

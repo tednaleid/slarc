@@ -84,8 +84,9 @@ def apply_removal(removal: Removal, uow: UnitOfWork, blobs: BlobStore) -> Remova
 
     Each attempt recomputes the plan from fresh reads, stages its drops, and commits the named
     items as removed with a revision check on every tracked item in the plan's workspaces. A
-    command that committed to those items in between makes the commit conflict, and the next
-    attempt recomputes; after REMOVAL_ATTEMPTS conflicts it raises SlarcError.
+    command that committed to those items, or started tracking another item in those
+    workspaces, in between makes the commit conflict, and the next attempt recomputes; after
+    REMOVAL_ATTEMPTS conflicts it raises SlarcError.
     """
     archive = uow.archive
     named = [*removal.items, *removal.already_removed]
@@ -104,6 +105,7 @@ def apply_removal(removal: Removal, uow: UnitOfWork, blobs: BlobStore) -> Remova
             uow.commit(
                 [msgspec.structs.replace(item, status="removed") for item in current.items],
                 unchanged=kept,
+                complete_teams=current.teams,
             )
         except CommitConflict:
             continue
