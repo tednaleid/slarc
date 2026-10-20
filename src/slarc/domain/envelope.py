@@ -1,5 +1,5 @@
-# ABOUTME: Envelope model (meta plus verbatim Slack object) and its one-line JSON encoding.
-# ABOUTME: Also formats fetched_at, run ids and the month partition of a Slack ts.
+# ABOUTME: Envelope model: meta plus the verbatim Slack object, the shape of each archive row.
+# ABOUTME: Also formats fetched_at and run ids.
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -44,18 +44,6 @@ class Envelope(msgspec.Struct, kw_only=True, omit_defaults=True):
     object: dict | None = None
 
 
-_encoder = msgspec.json.Encoder()
-_decoder = msgspec.json.Decoder(Envelope)
-
-
-def encode_line(env: Envelope) -> bytes:
-    return _encoder.encode(env) + b"\n"
-
-
-def decode_line(line: bytes) -> Envelope:
-    return _decoder.decode(line)
-
-
 def fetched_at(now: datetime) -> str:
     return now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -63,8 +51,3 @@ def fetched_at(now: datetime) -> str:
 def run_id(now: datetime, suffix: str = "") -> str:
     stamp = "r_" + now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"{stamp}_{suffix}" if suffix else stamp
-
-
-def month_of(ts: str) -> str:
-    seconds = int(ts.split(".")[0])
-    return datetime.fromtimestamp(seconds, UTC).strftime("%Y-%m")

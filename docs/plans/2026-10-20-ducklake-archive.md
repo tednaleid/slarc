@@ -2,16 +2,16 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Mark a task's heading `[done]` and tick its steps in the same commit that finishes it.
 
-**Goal:** Store the archive as a DuckLake (Parquet data plus a SQLite catalog), with a commit per batch of work, item revisions so removals win, two flock locks, maintenance that deletes bytes only when the archive is idle, one owning host, and a one-time import of existing JSONL archives.
+**Goal:** Store the archive as a DuckLake (Parquet data plus a SQLite catalog), with a commit per batch of work, item revisions so removals win, two flock locks, maintenance that deletes bytes only when the archive is idle, and one owning host.
 
 **Architecture:** Five phases, each leaving `main` working:
-1. **Storage swap:** a lake store and lake index behind today's ports, with today's commit-at-end semantics; the JSONL import; the bootstrap switch; then the JSONL store is deleted.
+1. **Storage swap:** a lake store and lake index behind today's ports, with today's commit-at-end semantics; the bootstrap switch; then the JSONL store is deleted. Task 11b later removes the JSONL import that this phase added.
 2. **Commits:** the port gains `commit` and `discard`. `UnitOfWork` commits per batch. Pull, the download drain and rm commit at the design's boundaries, with revision, reference and download checks.
 3. **Locks and maintenance:** a write lock around each transaction, a read lock held for a command's life, and maintenance at the end of pull and rm.
 4. **Owning host:** a host record in the catalog, plus `--take-ownership`.
 5. **Docs, measurements and acceptance.**
 
-Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/slarc/adapters/lake.py`, `lake_store.py`, `duckdb_index.py`, `jsonl_import.py`, `locks.py` and `host.py`.
+Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/slarc/adapters/lake.py`, `lake_store.py`, `duckdb_index.py`, `locks.py` and `host.py`.
 
 **Tech Stack:** Python 3.14, uv, DuckDB 1.5.6 with the `ducklake` and `sqlite_scanner` extensions, msgspec, Typer, pytest.
 
@@ -546,7 +546,7 @@ Ted decided (2026-10-20) that slarc will not import JSONL archives. slarc has on
 **Files:**
 - Modify: this plan's completion notes (below)
 
-- [ ] **Step 1: Measure the queries.** Regenerate the synthetic JSONL archive with `.llm/spike3-ducklake/gen_synthetic.py`, adapted to write into a scratch directory, and import it with `import_jsonl`. Time `search`, `conversation_counts`, `messages` (largest channel) and `thread` through `DuckDbQueryIndex`, with the median of 5 and 4 threads. The spec's budget: search at most 1.82 s and counts at most 1.38 s; messages at most 0.80 s and thread at most 0.194 s (today's 0.64 s and 0.155 s plus 25%). Record the numbers below, and delete the synthetic data.
+- [ ] **Step 1: Measure the queries.** Regenerate the synthetic JSONL archive with `.llm/spike3-ducklake/gen_synthetic.py`, adapted to write into a scratch directory, and build the synthetic lake from the generated JSONL with `load_jsonl` from `tests/jsonl_loader.py`. Time `search`, `conversation_counts`, `messages` (largest channel) and `thread` through `DuckDbQueryIndex`, with the median of 5 and 4 threads. The spec's budget: search at most 1.82 s and counts at most 1.38 s; messages at most 0.80 s and thread at most 0.194 s (today's 0.64 s and 0.155 s plus 25%). Record the numbers below, and delete the synthetic data.
 - [ ] **Step 2: Run `just acceptance`** and record its result below. A failure is fixed before the plan is called done.
 - [ ] **Step 3: Commit:** `Record DuckLake query timings and acceptance results`.
 

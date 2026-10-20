@@ -5,15 +5,17 @@ from pathlib import Path
 import msgspec
 
 from slarc.adapters.lake_store import DuckLakeArchiveStore
-from slarc.domain.envelope import Envelope, decode_line
+from slarc.domain.envelope import Envelope
 from slarc.domain.tracking import DownloadState, ItemKey, TrackedItem, run_from_envelope
 from slarc.ports import Commit, DownloadKey
+
+_decoder = msgspec.json.Decoder(Envelope)
 
 
 def jsonl_envelopes(source: Path, pattern: str) -> list[Envelope]:
     """Every line of the files under source matching a glob pattern, in path order."""
     return [
-        decode_line(line)
+        _decoder.decode(line)
         for path in sorted(source.glob(pattern))
         for line in path.read_bytes().splitlines()
         if line.strip()

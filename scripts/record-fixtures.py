@@ -15,6 +15,7 @@ import re
 import shutil
 import sys
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
@@ -39,7 +40,7 @@ from slarc.adapters.lake_store import (
 from slarc.adapters.slack_gateway import SessionConnector
 from slarc.bootstrap import SystemClock, archive_stores, http_downloader
 from slarc.config import ARCHIVE_FILE, create_archive
-from slarc.domain.envelope import Envelope, decode_line, encode_line, month_of
+from slarc.domain.envelope import Envelope
 from slarc.domain.hashing import content_hash
 from slarc.domain.links import ConversationSel, Selector
 from slarc.ports import Session
@@ -56,6 +57,8 @@ MAX_BLOB_BYTES = 1024 * 1024
 EMAIL = re.compile(r"\b([A-Za-z0-9._%+-]+)@(?!example\.invalid\b)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 SCRUBBED_DOMAIN = "example.invalid"
 SECRET_MARK = b"xox"
+ENCODER = msgspec.json.Encoder()
+DECODER = msgspec.json.Decoder(Envelope)
 DIRECTORY_FILES = {
     "user": "users.jsonl",
     "emoji": "emoji.jsonl",
@@ -105,6 +108,19 @@ def record(root: Path) -> None:
         if uow.run.teams != [TEAM_ID]:
             raise SystemExit(f"The pull reached workspaces other than {TEAM_ID}.")
     print(f"pulled {report.items_pulled} items, {report.lines_appended} lines")
+
+
+def encode_line(env: Envelope) -> bytes:
+    return ENCODER.encode(env) + b"\n"
+
+
+def decode_line(line: bytes) -> Envelope:
+    return DECODER.decode(line)
+
+
+def month_of(ts: str) -> str:
+    """The UTC month of a Slack ts, which names its raw/<team>/<channel>/ file."""
+    return datetime.fromtimestamp(int(ts.split(".")[0]), UTC).strftime("%Y-%m")
 
 
 def select(

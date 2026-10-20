@@ -1,18 +1,10 @@
-# ABOUTME: Tests for the JSONL envelope model, line encoding, timestamps and run records.
-# ABOUTME: Covers meta key order, deleted lines, Slack key order round trips and run envelopes.
-import json
+# ABOUTME: Tests for the envelope helpers that format timestamps and run ids, and for run records.
+# ABOUTME: Covers fetched_at, run ids and converting a RunRecord to and from its run envelope.
 from datetime import UTC, datetime, timedelta, timezone
-from pathlib import Path
 
-from slarc.domain.envelope import (
-    Envelope,
-    Meta,
-    decode_line,
-    encode_line,
-    fetched_at,
-    month_of,
-    run_id,
-)
+import msgspec
+
+from slarc.domain.envelope import Envelope, fetched_at, run_id
 from slarc.domain.tracking import (
     DownloadState,
     RunRecord,
@@ -20,90 +12,6 @@ from slarc.domain.tracking import (
     run_envelope,
     run_from_envelope,
 )
-
-SPIKE = Path(__file__).parent.parent / "fixtures" / "spike"
-
-
-def test_meta_is_first_key_and_order_matches_spec():
-    meta = Meta(
-        kind="message",
-        blob="b",
-        plain="p",
-        hash="h",
-        slarc="0.1.0",
-        api="conversations.history",
-        run="r_20261019T120000Z",
-        fetched_at="2026-10-19T12:00:00Z",
-        source_team="T1",
-        id="i",
-        ts="1792410693.663869",
-        channel="C1",
-        team="T1",
-    )
-    line = encode_line(Envelope(meta=meta, object={"text": "hi"}))
-    assert line.endswith(b"\n")
-    assert b" " not in line.replace(b"hi", b"")
-    decoded = json.loads(line)
-    assert list(decoded) == ["meta", "object"]
-    assert list(decoded["meta"]) == [
-        "schema",
-        "kind",
-        "team",
-        "channel",
-        "ts",
-        "id",
-        "source_team",
-        "fetched_at",
-        "run",
-        "api",
-        "slarc",
-        "hash",
-        "plain",
-        "blob",
-    ]
-    assert decoded["meta"]["schema"] == 1
-
-
-def test_unset_meta_fields_are_omitted():
-    line = encode_line(Envelope(meta=Meta(kind="user", team="T1", id="U1")))
-    assert list(json.loads(line)["meta"]) == ["schema", "kind", "team", "id"]
-
-
-def test_deleted_line_has_no_object():
-    meta = Meta(kind="deleted", team="T1", channel="C1", ts="1792410693.663869")
-    decoded = json.loads(encode_line(Envelope(meta=meta)))
-    assert list(decoded) == ["meta"]
-    assert decode_line(encode_line(Envelope(meta=meta))).object is None
-
-
-def test_round_trip_preserves_slack_key_order():
-    messages = json.loads((SPIKE / "conversations.replies.json").read_text())["messages"]
-    for message in messages:
-        env = Envelope(meta=Meta(kind="message", team="T1"), object=message)
-        back = decode_line(encode_line(env))
-        assert back.object is not None
-        assert back.object == message
-        assert list(back.object) == list(message)
-        assert back == env
-
-
-def test_unknown_meta_keys_are_ignored():
-    line = b'{"meta":{"schema":1,"kind":"user","future":"x"},"object":{"b":1,"a":2}}\n'
-    env = decode_line(line)
-    assert env.meta.kind == "user"
-    assert env.object is not None
-    assert list(env.object) == ["b", "a"]
-
-
-def test_non_ascii_is_written_as_utf8():
-    line = encode_line(Envelope(meta=Meta(kind="user"), object={"name": "café"}))
-    assert "café".encode() in line
-
-
-def test_month_of_uses_utc():
-    assert month_of("1792410693.663869") == "2026-10"
-    assert month_of("1793491199.000000") == "2026-10"
-    assert month_of("1793491200.000000") == "2026-11"
 
 
 def test_fetched_at_is_utc_seconds():
@@ -179,7 +87,7 @@ def test_run_record_round_trip():
     assert env.meta.fetched_at == run.finished
     assert env.object is not None
     assert env.object["command"] == "pull"
-    assert run_from_envelope(decode_line(encode_line(env))) == run
+    assert run_from_envelope(msgspec.json.decode(msgspec.json.encode(env), type=Envelope)) == run
 
 
 def test_run_envelope_before_finish_uses_started():

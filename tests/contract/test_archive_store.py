@@ -15,7 +15,7 @@ from slarc.adapters.lake_store import (
     DuckLakeArchiveStore,
     run_line,
 )
-from slarc.domain.envelope import Envelope, Meta, decode_line, encode_line
+from slarc.domain.envelope import Envelope, Meta
 from slarc.domain.hashing import content_hash
 from slarc.domain.tracking import (
     DownloadState,
@@ -351,14 +351,15 @@ def test_retracking_a_removed_item_tracks_it_again(store_and_reopen):
         assert current.removed_items() == {}
 
 
-def test_archived_and_new_statuses_round_trip_through_a_run_line():
+def test_archived_and_new_statuses_round_trip_through_a_run_envelope():
     run = run_record(
         R1,
         T1,
         tracked=[msgspec.structs.replace(tracked("1.0"), archived=True, status="removed")],
         downloads=[download("F1", "gave_up", 3)],
     )
-    decoded = run_from_envelope(decode_line(encode_line(run_envelope(run, VERSION))))
+    encoded = msgspec.json.encode(run_envelope(run, VERSION))
+    decoded = run_from_envelope(msgspec.json.decode(encoded, type=Envelope))
     assert decoded == run
 
 

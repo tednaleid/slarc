@@ -78,7 +78,7 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 ### Storage and query
 - `MessageTs` compares fractions as integers, so a fraction shorter than six digits misorders, and `message_link` assumes six digits; Slack always sends six (`domain/links.py`).
 - A non-numeric `ts` or malformed `thread_ts` raises a bare `ValueError` when compared instead of when parsed (`domain/links.py`).
-- `int(ts.split(".")[0])` is repeated in `envelope.month_of`, `cli._ts_time`, `export._seconds` and `threads.active_threads`; give `MessageTs` a `seconds` property and a `from_datetime` constructor.
+- `int(ts.split(".")[0])` is repeated in `cli._ts_time`, `export._seconds` and `threads.active_threads`; give `MessageTs` a `seconds` property and a `from_datetime` constructor.
 - Hashing a message whose file entry has no `id` raises `KeyError`, and `files: []` hashes differently from a missing `files` key (`domain/hashing.py`).
 - Blobs are written with mode 0600 and not fsynced before the rename (`adapters/blob_store.py`).
 - `stored_messages` copies the whole map on every call (`adapters/jsonl_store.py`, `archive_state.py`).
