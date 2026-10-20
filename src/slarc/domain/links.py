@@ -6,6 +6,7 @@ from typing import Self, TypeIs
 from urllib.parse import parse_qs, urlparse
 
 CHANNEL_ID = re.compile(r"[CGD][A-Z0-9]{8,}")
+WORKSPACE_DOMAIN = re.compile(r"[a-z0-9][a-z0-9-]*")
 PERMALINK_DIGITS = re.compile(r"p(\d{16})")
 SLACK_HOST_SUFFIX = ".slack.com"
 SLACK_FILE_HOST = "files.slack.com"
@@ -51,7 +52,12 @@ class MessageSel:
     thread_ts: MessageTs | None
 
 
-Selector = ConversationSel | MessageSel
+@dataclass(frozen=True)
+class WorkspaceSel:
+    domain: str
+
+
+Selector = ConversationSel | MessageSel | WorkspaceSel
 
 
 def parse_selector(text: str) -> Selector:
@@ -64,9 +70,11 @@ def parse_selector(text: str) -> Selector:
         return ConversationSel(domain=None, channel=None, name=None, dm_user=text[1:])
     if CHANNEL_ID.fullmatch(text):
         return ConversationSel(domain=None, channel=text, name=None, dm_user=None)
+    if WORKSPACE_DOMAIN.fullmatch(text.lower()):
+        return WorkspaceSel(domain=text.lower())
     raise ValueError(
         f"Cannot read '{text}' as a selector. Use a Slack link, a channel id, "
-        "#channel-name or @user."
+        "#channel-name, @user or a workspace name."
     )
 
 

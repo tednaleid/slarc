@@ -251,6 +251,16 @@ def test_range_without_selectors_exits_1(f: Fixture):
     assert list(f.work.iterdir()) == []
 
 
+def test_range_with_a_workspace_selector_exits_1(f: Fixture):
+    result = f.pull("--yes", "naleidworkspace", "--since", "2026-10-01")
+    assert result.exit_code == 1
+    assert (
+        "--since and --until apply to links and conversations, not to a whole workspace."
+        in result.output
+    )
+    assert list(f.work.iterdir()) == []
+
+
 def test_malformed_date_exits_1(f: Fixture):
     result = f.pull("--yes", "--until", "10/19/2026", BASE)
     assert result.exit_code == 1

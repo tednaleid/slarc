@@ -15,11 +15,13 @@ slarc auth                                                                    # 
 slarc pull https://yourworkspace.slack.com/archives/C0123456789              # pull a conversation and start tracking it
 slarc pull https://yourworkspace.slack.com/archives/C0123456789/p1712345678000100  # a thread or single message
 slarc pull                                                                    # refresh everything tracked
+slarc pull acme                                                               # refresh everything tracked in workspace acme
 slarc pull --full                                                             # re-read everything tracked, catching edits and deletes
 slarc list                                                                    # the archive, its config files and each tracked item
 slarc search "deploy" --in '#general'                                         # archived messages, newest first, with their Slack links
 slarc sql "SELECT channel_id, count(*) FROM message GROUP BY 1"               # DuckDB over the archive's views
 slarc export https://yourworkspace.slack.com/archives/C0123456789 --out ./share  # static HTML
+slarc export acme                                                             # static HTML of everything tracked in workspace acme
 ```
 
 The first `pull` offers to create an archive (a directory with `slarc.toml`) in the current directory. Every command finds the archive from `--root`, then `SLARC_ARCHIVE`, then the current directory or its parents, then `default_archive` in the global config.

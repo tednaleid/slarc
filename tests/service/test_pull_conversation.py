@@ -13,6 +13,10 @@ from tests.service.pull_harness import (
     BASE,
     CHANNEL,
     ME,
+    NALEID,
+    OTHER,
+    OTHER_CHANNEL,
+    OTHER_LINK,
     PARENT_TS,
     REPLY_TS,
     TEAM,
@@ -20,6 +24,7 @@ from tests.service.pull_harness import (
     Harness,
     channel_messages,
     message,
+    other_gateway,
     spike,
     ts_on,
 )
@@ -490,3 +495,40 @@ def test_retry_thread_turning_not_visible_stays_in_retry_threads(
 
     [item] = h.tracked()
     assert (item.status, item.retry_threads) == ("not_visible", [PARENT_TS])
+
+
+def test_workspace_selector_refreshes_what_is_tracked_there(h: Harness):
+    h.serve([ts_on(18, 9)])
+    h.pull(BASE)
+    newer = ts_on(19, 9)
+    h.gateway.conversations[CHANNEL].append(message(newer))
+    before = len(h.archive.lines)
+
+    report = h.pull("naleidworkspace")
+
+    assert report.items_selected == 1
+    assert message_ts_since(h, before) == [newer]
+
+
+def test_workspace_selector_leaves_other_workspaces_alone(h: Harness):
+    other = other_gateway()
+    h.connector.gateways = {NALEID: h.gateway, OTHER: other}
+    h.serve([ts_on(18, 9)])
+    h.pull(BASE, OTHER_LINK)
+    h.gateway.conversations[CHANNEL].append(message(ts_on(19, 9)))
+    other.conversations[OTHER_CHANNEL].append(message(ts_on(19, 10)))
+    before = len(h.archive.lines)
+
+    h.pull("other")
+
+    assert message_ts_since(h, before) == [ts_on(19, 10)]
+    assert h.connector.connects.count("naleidworkspace") == 1
+
+
+def test_workspace_selector_with_nothing_tracked_there_fails(h: Harness):
+    with pytest.raises(SlarcError) as caught:
+        h.pull("naleidworkspace")
+    assert str(caught.value) == (
+        "Nothing is tracked in workspace naleidworkspace. "
+        "Pull a Slack link from it to start tracking it."
+    )

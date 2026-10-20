@@ -8,6 +8,7 @@ from slarc.domain.links import (
     ConversationSel,
     MessageSel,
     MessageTs,
+    WorkspaceSel,
     message_link,
     parse_selector,
 )
@@ -66,10 +67,30 @@ def test_rejects_short_p_digits():
         parse_selector(bad)
 
 
-@pytest.mark.parametrize("text", ["", "hello", "#", "@", "c0ca5396g03"])
+@pytest.mark.parametrize("text", ["", "#", "@", "foo_bar", "-acme", "acme.slack.com"])
 def test_rejects_unrecognized_text(text):
     with pytest.raises(ValueError, match="selector"):
         parse_selector(text)
+
+
+@pytest.mark.parametrize("text", ["acme", "my-team2"])
+def test_bare_word_is_a_workspace(text):
+    assert parse_selector(text) == WorkspaceSel(domain=text)
+
+
+def test_workspace_domain_is_lowercased():
+    assert parse_selector("Acme") == WorkspaceSel(domain="acme")
+
+
+def test_channel_id_is_not_a_workspace():
+    assert parse_selector("C0CA5396G03") == ConversationSel(
+        domain=None, channel="C0CA5396G03", name=None, dm_user=None
+    )
+
+
+def test_selector_error_lists_the_workspace_form():
+    with pytest.raises(ValueError, match=r"or a workspace name\.$"):
+        parse_selector("foo_bar")
 
 
 def test_message_ts_ordering():

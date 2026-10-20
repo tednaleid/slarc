@@ -22,7 +22,14 @@ from pygments.util import ClassNotFound
 
 from slarc.domain.directory import DirectoryView, directory_image_url
 from slarc.domain.emoji import resolve_emoji
-from slarc.domain.links import ConversationSel, MessageSel, Selector, is_web_url
+from slarc.domain.links import (
+    ConversationSel,
+    MessageSel,
+    MessageTs,
+    Selector,
+    WorkspaceSel,
+    is_web_url,
+)
 from slarc.domain.render.blocks import render_message_html
 from slarc.domain.render.mrkdwn import emoji_html, render_mrkdwn_html
 from slarc.domain.tracking import DownloadState
@@ -228,8 +235,10 @@ def export(
 ) -> Path:
     """Writes what selectors name and returns where: the directory, or the file with single_file.
 
-    Without out, the export goes to slarc-export-<first conversation's name> under the current
-    directory.
+    A workspace selector names every tracked conversation of the workspace, and every tracked
+    thread or message whose conversation is not tracked itself, that has archived messages.
+    Without out, the export goes to slarc-export-<first conversation's name>, or the first
+    workspace's domain, under the current directory.
     """
     zone = _zone(tz)
     domains = {domain: team for team, domain in workspace_domains(index).items()}
@@ -244,10 +253,17 @@ def export(
                 team, archive, blobs, single_file, used, styles, zone
             )
         workspace = workspaces[team]
-        page = _page(selector, workspace, index, include_deleted)
-        pages.setdefault(page.filename, page)
+        if isinstance(selector, WorkspaceSel):
+            found = _workspace_pages(selector, workspace, index, archive, include_deleted)
+        else:
+            found = [_page(selector, workspace, index, include_deleted)]
+        for page in found:
+            pages.setdefault(page.filename, page)
     first = next(iter(pages.values()))
-    stem = first.name + (f"-{first.thread_ts}" if first.thread_ts else "")
+    if isinstance(selectors[0], WorkspaceSel):
+        stem = selectors[0].domain
+    else:
+        stem = first.name + (f"-{first.thread_ts}" if first.thread_ts else "")
     default = "slarc-export-" + (UNSAFE_FILENAME.sub("-", stem).strip("-.") or "export")
     css = _static("viewer.css") + HtmlFormatter().get_style_defs(".highlight")
     if single_file:
@@ -316,18 +332,58 @@ def _team(selector: Selector, domains: dict[str, str], archive: ArchiveStore) ->
         return only_workspace(archive.tracked_items())
     team = domains.get(selector.domain)
     if team is None:
-        raise SlarcError(f"This archive holds no workspace {selector.domain}.")
+        held = ", ".join(sorted(domains)) or "none"
+        raise SlarcError(
+            f"This archive holds no workspace {selector.domain}. Workspaces here: {held}."
+        )
     return team
 
 
-def _channel(selector: Selector, workspace: _Workspace) -> str:
+class _NoMessages(SlarcError):
+    """A selected conversation or thread has no archived messages."""
+
+
+def _workspace_pages(
+    selector: WorkspaceSel,
+    workspace: _Workspace,
+    index: QueryIndex,
+    archive: ArchiveStore,
+    include_deleted: bool,
+) -> list[Page]:
+    """The pages of a workspace's tracked items that have messages."""
+    tracked = [item for item in archive.tracked_items().values() if item.team_id == workspace.team]
+    conversations = {item.channel for item in tracked if item.kind == "conversation"}
+    pages = []
+    for item in tracked:
+        item_selector: ConversationSel | MessageSel
+        if item.kind == "conversation":
+            item_selector = ConversationSel(None, item.channel, None, None)
+        elif item.channel not in conversations:
+            item_selector = MessageSel(None, item.channel, MessageTs(item.ts or ""), None)
+        else:
+            continue
+        try:
+            pages.append(_page(item_selector, workspace, index, include_deleted))
+        except _NoMessages:
+            continue
+    if not pages:
+        raise SlarcError(
+            f"The archive holds no messages for workspace {selector.domain}. Pull it first."
+        )
+    return pages
+
+
+def _channel(selector: ConversationSel | MessageSel, workspace: _Workspace) -> str:
     if isinstance(selector, MessageSel):
         return selector.channel
     return archived_conversation(selector, workspace.team, workspace.archive)
 
 
 def _page(
-    selector: Selector, workspace: _Workspace, index: QueryIndex, include_deleted: bool
+    selector: ConversationSel | MessageSel,
+    workspace: _Workspace,
+    index: QueryIndex,
+    include_deleted: bool,
 ) -> Page:
     team = workspace.team
     channel = _channel(selector, workspace)
@@ -341,7 +397,7 @@ def _page(
         filename, title = f"{channel}-{thread_ts}.html", f"Thread in {label}"
     rows = [row for row in rows if row["object"] is not None]
     if not rows:
-        raise SlarcError(f"The archive holds no messages for {title}. Pull it first.")
+        raise _NoMessages(f"The archive holds no messages for {title}. Pull it first.")
     messages = _top_level(rows, channel, workspace, thread_ts is not None)
     return Page(
         filename=filename,

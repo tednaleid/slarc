@@ -21,7 +21,7 @@ from slarc.config import (
     load_settings,
     read_global_config,
 )
-from slarc.domain.links import parse_selector
+from slarc.domain.links import WorkspaceSel, parse_selector
 from slarc.ports import NoArchive, NoSession, SlarcError
 from slarc.service.auth import AuthStatus, auth_status, store_pasted
 from slarc.service.export import export
@@ -42,6 +42,9 @@ NO_SESSIONS = (
     "No Slack sessions found. Sign into the Slack desktop app or run `slarc auth --paste`."
 )
 RANGE_NEEDS_SELECTORS = "--since and --until apply only to links named on the command line."
+RANGE_NOT_FOR_WORKSPACE = (
+    "--since and --until apply to links and conversations, not to a whole workspace."
+)
 INTERRUPTED = "Interrupted; progress so far is saved."
 INTERRUPTED_EXIT = 130
 MB = 1024 * 1024
@@ -247,7 +250,7 @@ def pull_command(
     selectors: Annotated[
         list[str] | None,
         typer.Argument(
-            help="Slack links, conversation ids, #channel-name or @user. "
+            help="Slack links, conversation ids, #channel-name, @user or a workspace name. "
             "Without any, every tracked item is refreshed.",
             show_default=False,
         ),
@@ -288,6 +291,8 @@ def pull_command(
         _fail(str(error))
     if (since or until) and not parsed:
         _fail(RANGE_NEEDS_SELECTORS)
+    if (since or until) and any(isinstance(selector, WorkspaceSel) for selector in parsed):
+        _fail(RANGE_NOT_FOR_WORKSPACE)
     _check_date("--since", since)
     _check_date("--until", until)
     services = bootstrap.current_services()
@@ -519,7 +524,8 @@ def export_command(
     selectors: Annotated[
         list[str],
         typer.Argument(
-            help="Slack links, conversation ids, #channel-name or @user to export.",
+            help="Slack links, conversation ids, #channel-name, @user or a workspace name "
+            "to export.",
             show_default=False,
         ),
     ],
@@ -529,7 +535,7 @@ def export_command(
             "--out",
             metavar="DIR",
             help="Directory to write, or the HTML file with --single-file. "
-            "Default: slarc-export-<conversation name> here.",
+            "Default: slarc-export-<conversation name or workspace> here.",
         ),
     ] = None,
     single_file: Annotated[

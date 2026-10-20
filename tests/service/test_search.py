@@ -96,6 +96,11 @@ def test_search_rejects_unreadable_in_and_empty_text(index: DuckDbQueryIndex) ->
         search(index, "  ", None, None)
 
 
+def test_search_in_rejects_a_workspace_name(index: DuckDbQueryIndex) -> None:
+    with pytest.raises(SlarcError, match="--in takes #channel-name or a conversation id"):
+        search(index, "seed", "acme", None)
+
+
 def test_search_hit_link_is_slack_permalink(index: DuckDbQueryIndex) -> None:
     [top] = search(index, "slarc seed v1", None, None)
     assert top.link == f"https://{DOMAIN}.slack.com/archives/{FIXTURES}/p1792437061952039"

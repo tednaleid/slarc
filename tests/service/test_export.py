@@ -11,7 +11,8 @@ from slarc.adapters.duckdb_index import DuckDbQueryIndex
 from slarc.adapters.jsonl_store import JsonlArchiveStore
 from slarc.domain.envelope import Envelope, Kind, Meta
 from slarc.domain.links import parse_selector
-from slarc.domain.tracking import DownloadState, RunRecord
+from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
+from slarc.ports import SlarcError
 from slarc.service.export import export
 from tests.fakes import InMemoryBlobStore, InMemoryExportWriter
 from tests.recorded_fixtures import RECORDED_TEAM, copy_recorded, recorded_blobs
@@ -547,3 +548,86 @@ def test_file_placeholders_and_unsafe_chrome(archive, store, blobs) -> None:
     assert "border-left-color: #2eb886" in message
     assert "border-left-color: #a30200" in message
     assert f'src="assets/{SEED_RED}.bin"' in message
+
+
+def track(store: JsonlArchiveStore, *items: TrackedItem) -> None:
+    store.append_run(
+        RunRecord(
+            run=LATER_RUN, command="pull", started=LATER, finished=LATER, tracked=list(items)
+        ),
+        "0.1.0",
+    )
+
+
+def html_pages(writer: InMemoryExportWriter) -> set[str]:
+    return {p.name for p in writer.files if p.suffix == ".html" and p.name != "index.html"}
+
+
+def test_workspace_exports_one_page_per_tracked_conversation(archive, store, blobs) -> None:
+    _, writer = run_export(archive, store, blobs, "naleidworkspace")
+    assert html_pages(writer) == {
+        f"{channel}.html" for channel in (ALL_NALEID, FIXTURES, DM, GROUP_DM, ARCHIVED)
+    }
+
+
+def test_workspace_export_adds_no_page_for_a_thread_in_a_tracked_conversation(
+    archive, store, blobs
+) -> None:
+    track(
+        store,
+        TrackedItem(
+            team_id=RECORDED_TEAM, kind="thread", channel=ALL_NALEID, ts="1792427542.806979"
+        ),
+    )
+    _, writer = run_export(archive, store, blobs, "naleidworkspace")
+    assert not any("-" in name for name in html_pages(writer))
+
+
+def test_workspace_export_adds_a_page_for_a_thread_in_an_untracked_conversation(
+    archive, store, blobs
+) -> None:
+    thread_ts = "1792500000.000200"
+    append_line(
+        store,
+        "message",
+        {"type": "message", "ts": thread_ts, "user": TED, "text": "lone thread"},
+        channel="C0THREADONLY",
+        ts=thread_ts,
+    )
+    track(
+        store,
+        TrackedItem(team_id=RECORDED_TEAM, kind="thread", channel="C0THREADONLY", ts=thread_ts),
+    )
+    _, writer = run_export(archive, store, blobs, "naleidworkspace")
+    assert f"C0THREADONLY-{thread_ts}.html" in html_pages(writer)
+
+
+def test_workspace_export_skips_an_item_without_messages(archive, store, blobs) -> None:
+    track(store, TrackedItem(team_id=RECORDED_TEAM, kind="conversation", channel="C0NOMESSAGE"))
+    _, writer = run_export(archive, store, blobs, "naleidworkspace")
+    assert "C0NOMESSAGE.html" not in html_pages(writer)
+    assert len(html_pages(writer)) == 5
+
+
+def test_workspace_export_default_directory_names_the_workspace(archive, store, blobs) -> None:
+    written, _ = run_export(archive, store, blobs, "naleidworkspace", out=None)
+    assert written == Path("slarc-export-naleidworkspace")
+    single, _ = run_export(archive, store, blobs, "naleidworkspace", out=None, single_file=True)
+    assert single == Path("slarc-export-naleidworkspace.html")
+
+
+def test_unknown_workspace_lists_the_workspaces_the_archive_holds(archive, store, blobs) -> None:
+    message = "This archive holds no workspace acme. Workspaces here: naleidworkspace."
+    with pytest.raises(SlarcError) as caught:
+        run_export(archive, store, blobs, "acme")
+    assert str(caught.value) == message
+
+
+def test_workspace_holding_nothing_exportable_says_to_pull(archive, store, blobs) -> None:
+    for path in (archive / "raw").rglob("*.jsonl"):
+        path.unlink()
+    with pytest.raises(SlarcError) as caught:
+        run_export(archive, store, blobs, "naleidworkspace")
+    assert str(caught.value) == (
+        "The archive holds no messages for workspace naleidworkspace. Pull it first."
+    )

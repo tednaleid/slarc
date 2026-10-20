@@ -9,7 +9,14 @@ import msgspec
 from slarc.domain.directory import DirectoryView
 from slarc.domain.envelope import Envelope
 from slarc.domain.hashing import content_hash
-from slarc.domain.links import ConversationSel, MessageSel, MessageTs, Selector, message_link
+from slarc.domain.links import (
+    ConversationSel,
+    MessageSel,
+    MessageTs,
+    Selector,
+    WorkspaceSel,
+    message_link,
+)
 from slarc.domain.plain import plain_text
 from slarc.domain.tracking import TrackedItem, item_label
 from slarc.ports import (
@@ -173,6 +180,15 @@ class _PullRun:
         items: dict[ItemKey, TrackedItem] = {}
         for selector in selectors:
             connection = self.workspaces.connection_to(selector.domain or only_workspace(tracked))
+            if isinstance(selector, WorkspaceSel):
+                held = [item for item in tracked.values() if item.team_id == connection.team_id]
+                if not held:
+                    raise SlarcError(
+                        f"Nothing is tracked in workspace {selector.domain}. "
+                        "Pull a Slack link from it to start tracking it."
+                    )
+                items.update((item.key, item) for item in held)
+                continue
             if isinstance(selector, ConversationSel):
                 channel = resolve_conversation(
                     selector, connection.team_id, connection.gateway, self.uow.archive

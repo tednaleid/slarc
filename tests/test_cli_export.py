@@ -42,6 +42,14 @@ def test_cli_export_writes_default_directory(archive: Path, tmp_path: Path) -> N
     assert copied.read_bytes() == (archive / "blobs/sha256/ca/3f" / SCREENSHOT).read_bytes()
 
 
+def test_cli_export_workspace_writes_default_directory(archive: Path, tmp_path: Path) -> None:
+    result = invoke(tmp_path, "export", "naleidworkspace", "--root", str(archive))
+    assert result.exit_code == 0, result.output
+    out = tmp_path / "work" / "slarc-export-naleidworkspace"
+    assert (out / "index.html").is_file()
+    assert (out / "C0CA5396G03.html").is_file()
+
+
 def test_cli_export_single_file_with_tz(archive: Path, tmp_path: Path) -> None:
     target = tmp_path / "one.html"
     result = invoke(

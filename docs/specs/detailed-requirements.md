@@ -34,15 +34,15 @@ The CLI is the product's surface, so it stays small and each command does a lot.
 
 | Command | Purpose |
 | --- | --- |
-| `slarc pull [link ...] [--since DATE] [--until DATE] [--channel] [--full] [--downloads N] [--max-file-size MB] [--yes]` | With links: start tracking what they name and pull it. Without: refresh everything tracked. Every pull also drains pending and previously failed downloads. `--full` re-reads everything instead of only what is new |
+| `slarc pull [selector ...] [--since DATE] [--until DATE] [--channel] [--full] [--downloads N] [--max-file-size MB] [--yes]` | With links: start tracking what they name and pull it. With a workspace name: refresh everything tracked in that workspace; `--since` and `--until` do not apply to it. Without: refresh everything tracked. Every pull also drains pending and previously failed downloads. `--full` re-reads everything instead of only what is new |
 | `slarc list [--remote]` | Archive location and the config files in effect, then each tracked item with message count, last pull time, pending and skipped files. `--remote` lists every conversation the session can see and marks which are tracked |
 | `slarc search QUERY [--in CONV] [--from USER]` | Matches with author, conversation, time, snippet and Slack link |
-| `slarc export LINK... [--out DIR] [--single-file] [--include-deleted] [--tz ZONE]` | Static HTML of what the links name. Later phases add `--format pdf` |
+| `slarc export SELECTOR... [--out DIR] [--single-file] [--include-deleted] [--tz ZONE]` | Static HTML of what the links name; a workspace name exports every tracked conversation of that workspace, and every tracked thread or message outside a tracked conversation, to `slarc-export-<workspace>`. Later phases add `--format pdf` |
 | `slarc auth [--paste]` | Lists the Slack sessions found and who the user is in each workspace. `--paste` prompts for a browser token and cookie and stores them in the OS keychain |
 | `slarc sql QUERY` | Runs a DuckDB query against the archive's views; the escape hatch |
 | `slarc serve` | Phase 2: local web viewer over one archive |
 
-`pull`, `list`, `search` and `export` accept the same selectors: a Slack link, a conversation id, `#channel-name` or `@user` for a DM. Only `pull` and `auth` need Slack credentials. Developer tooling (fixture recording, the LevelDB comparison check, test workspace seeding) lives in `just` recipes, not in the CLI.
+`pull`, `list`, `search` and `export` accept the same selectors: a Slack link, a conversation id, `#channel-name` or `@user` for a DM. `pull` and `export` also accept a workspace name such as `acme`, which stands for everything tracked in that workspace; `search --in` does not. Only `pull` and `auth` need Slack credentials. Developer tooling (fixture recording, the LevelDB comparison check, test workspace seeding) lives in `just` recipes, not in the CLI.
 
 **Links**
 
@@ -343,7 +343,7 @@ One set of Jinja2 partials drives every output: `export` (static files plus a sm
 
 Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cases, ports as `typing.Protocol` classes in `src/slarc/ports.py`, and adapters that implement them. Nothing in the domain or service layer imports `slack_sdk`, `duckdb`, `httpx`, `keyring` or touches the filesystem or environment, except reading packaged data through `importlib.resources`. `docs/architecture.md` describes the code in detail, with the full ports table; ADR 0003 records the decision.
 
-- **Domain**: value types (`MessageTs` with numeric ordering and permalink conversion, `ConversationSel` and `MessageSel` selectors, envelopes, tracked items and run records), the hashed-subset functions, and pure renderers: rich_text and layout blocks to HTML, mrkdwn to HTML, and `meta.plain`.
+- **Domain**: value types (`MessageTs` with numeric ordering and permalink conversion, `ConversationSel`, `MessageSel` and `WorkspaceSel` selectors, envelopes, tracked items and run records), the hashed-subset functions, and pure renderers: rich_text and layout blocks to HTML, mrkdwn to HTML, and `meta.plain`.
 - **Ports**: `SlackGateway` and `SlackConnector` (a gateway per workspace session), `CredentialSource`, `ArchiveStore`, `BlobStore`, `Downloader`, `ExportWriter` (writes export files), `QueryIndex` (what `search`, `list`, `sql` and `export` read), `Clock`, and `Reporter` (progress and warnings). Every port except `QueryIndex` has an in-memory fake in `tests/fakes.py`; `QueryIndex` is tested through DuckDB over a temp archive.
 - **Unit of work**: one `UnitOfWork` class scopes one pull run over the archive store, blob store and clock; tests give it the in-memory stores. Appends are flushed after each page of results so an interrupted pull keeps what it read; the run line is appended when the run ends, including on an exception or Ctrl-C. A run killed outright loses only its run line, and the next pull re-reads without duplicating lines because hashes match. No message bus or domain events: the service layer collects download jobs during the pull and hands them to the `Downloader` at the end.
 - **Service layer**: one module per use case, taking its ports as arguments.
