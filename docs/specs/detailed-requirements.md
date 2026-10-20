@@ -190,7 +190,7 @@ Items marked (spike) were confirmed against the test workspace; the rest come fr
 4. Every thread whose parent arrived in step 1 with replies is read with `conversations.replies`.
 5. `--full` replaces steps 1 and 2 with a complete re-read of the conversation's range and every thread in it.
 
-**Slack-archived conversation**: a pull that finishes a conversation while Slack reports it archived (`is_archived` in `conversations.info`) records `archived: true`. A later pull that finds the item `archived: true` and the conversation still archived reads nothing (no history, search or threads) and records the item as pulled, `0 read, 0 new`. A conversation no longer archived records `archived: false` and is refreshed as usual. `--full` re-reads an archived conversation.
+**Slack-archived conversation**: a pull that finishes a conversation while Slack reports it archived (`is_archived` in `conversations.info`) records `archived: true`, unless a thread read failed and is left to retry. A later pull that finds the item `archived: true` and the conversation still archived reads nothing (no history, search or threads) and records the item as pulled, `0 read, 0 new`. A `--since` or `--until` that widens its range is still read. A conversation no longer archived records `archived: false` and is refreshed as usual. `--full` re-reads an archived conversation.
 
 **Tracked thread or message**: re-read with `conversations.replies` (a lone message comes back as a one-element thread) on every pull.
 
@@ -247,7 +247,7 @@ Files are appended to, except that `slarc rm` rewrites the files that lose lines
 1. A never-seen message is appended to the month file of its own `ts`.
 2. A re-read message whose `hash` differs from its last stored line is appended to the same month file. An edit to a 2024 message adds one line to `2024-03.jsonl`.
 3. A new reply in a dormant thread has a current `ts`, so it lands in the current month file. Threads are reassembled by `thread_ts` at read time and may span many files.
-4. A delete (see Pulling) appends a `deleted` line to the message's month file. Nothing is hard-deleted.
+4. A delete (see Pulling) appends a `deleted` line to the message's month file. Only `slarc rm` removes lines.
 5. A re-read that matches the stored hash writes nothing, so pulling the same range twice changes no file.
 6. Directory objects follow the same rule, except that a line is appended when either the hash or `meta.blob` differs from the last stored line. A rename is one more line in `users.jsonl`; a `file` line is written when the file is first referenced and again once its blob is downloaded.
 7. Every run appends one `run` line to `runs.jsonl`.

@@ -395,6 +395,36 @@ def test_later_until_widens_range(h: Harness):
     assert (item.until, item.newest_ts) == ("1792454400.000000", stamps[19])
 
 
+def test_wider_since_backfills_gap_of_archived_conversation(h: Harness):
+    stamps = {day: ts_on(day, 12) for day in (17, 18, 19)}
+    h.serve(list(stamps.values()))
+    h.set_archived(True)
+    h.pull(BASE, options=PullOptions(since="2026-10-19"))
+    h.pull()
+    before = len(h.archive.lines)
+
+    h.pull(BASE, options=PullOptions(since="2026-10-17"))
+
+    assert message_ts_since(h, before) == [stamps[18], stamps[17]]
+    [item] = h.tracked()
+    assert (item.oldest_ts, item.backfill_complete, item.archived) == (stamps[17], True, True)
+
+
+def test_later_until_widens_range_of_archived_conversation(h: Harness):
+    stamps = {day: ts_on(day, 12) for day in (17, 18, 19)}
+    h.serve(list(stamps.values()))
+    h.set_archived(True)
+    h.pull(BASE, options=PullOptions(until="2026-10-18"))
+    h.pull()
+    before = len(h.archive.lines)
+
+    h.pull(BASE, options=PullOptions(until="2026-10-19"))
+
+    assert message_ts_since(h, before) == [stamps[19]]
+    [item] = h.tracked()
+    assert (item.newest_ts, item.archived) == (stamps[19], True)
+
+
 def test_flush_called_per_page(h: Harness, monkeypatch: pytest.MonkeyPatch):
     h.serve([ts_on(18, hour) for hour in range(5)], page_size=2)
     served = h.gateway.history
@@ -687,6 +717,7 @@ def test_newly_archived_conversation_is_refreshed_once_then_skipped(h: Harness):
     assert late in stored_message_ts(h)
     [item] = h.tracked()
     assert item.archived is True
+    refreshed_at = item.last_pull_at
     h.gateway.calls.clear()
     h.reporter.progress_updates.clear()
     lines_before = len(h.archive.lines)
@@ -698,7 +729,31 @@ def test_newly_archived_conversation_is_refreshed_once_then_skipped(h: Harness):
     assert h.reporter.progress_updates[-1][1:] == (0, 0, 0)
     [item] = h.tracked()
     assert item.status == "ok"
-    assert item.last_pull_at == h.last_run().tracked[0].last_pull_at
+    assert item.last_pull_at is not None
+    assert item.last_pull_at != refreshed_at
+
+
+def test_archived_conversation_with_a_failed_thread_read_is_refreshed_again(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+):
+    h.set_archived(True)
+    served = h.gateway.replies
+
+    def unreachable(channel: str, ts: str) -> list[dict]:
+        raise SlarcError(UNREACHABLE)
+
+    monkeypatch.setattr(h.gateway, "replies", unreachable)
+    h.pull(BASE)
+
+    [item] = h.tracked()
+    assert (item.retry_threads, item.archived) == ([PARENT_TS], False)
+
+    monkeypatch.setattr(h.gateway, "replies", served)
+    h.pull()
+
+    assert REPLY_TS in stored_message_ts(h)
+    [item] = h.tracked()
+    assert (item.retry_threads, item.archived) == ([], True)
 
 
 def test_unarchived_conversation_is_refreshed_again(h: Harness):

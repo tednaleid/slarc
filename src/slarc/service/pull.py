@@ -226,7 +226,9 @@ class _PullRun:
     def _ranged(self, item: TrackedItem, known: TrackedItem | None) -> TrackedItem:
         """A new conversation takes the options' date range; a tracked one only widens to it.
 
-        Widening since reopens the backfill, which then pages the gap below oldest_ts.
+        Widening since reopens the backfill, which then pages the gap below oldest_ts. Widening
+        until clears archived, so the next pull reads the new range even if Slack has archived
+        the conversation.
         """
         since = date_to_ts(self.options.since, end_of_day=False) if self.options.since else None
         until = date_to_ts(self.options.until, end_of_day=True) if self.options.until else None
@@ -235,7 +237,7 @@ class _PullRun:
         if since is not None and known.since is not None and MessageTs(since) < known.since:
             known = msgspec.structs.replace(known, since=since, backfill_complete=False)
         if until is not None and known.until is not None and MessageTs(until) > known.until:
-            known = msgspec.structs.replace(known, until=until)
+            known = msgspec.structs.replace(known, until=until, archived=False)
         return known
 
     def _message_item(
@@ -306,7 +308,11 @@ class _PullRun:
         conversation = view.conversations.get(item.channel, {})
         if conversation.get("last_read"):
             last_read[connection.user_id] = conversation["last_read"]
-        archived = item.kind == "conversation" and bool(conversation.get("is_archived"))
+        archived = (
+            item.kind == "conversation"
+            and bool(conversation.get("is_archived"))
+            and not held.retry_threads(item)
+        )
         self._record(
             msgspec.structs.replace(
                 item,
@@ -357,13 +363,15 @@ class _PullRun:
         skips the item without deletes; a history page that fails otherwise leaves the item
         unfinished, keeping the progress already recorded.
 
-        An item recorded as archived whose conversation is still archived has had its final
-        refresh, so it is recorded as pulled without reading anything, unless --full is set.
+        An item recorded as archived whose conversation is still archived and whose backfill is
+        complete has had its final refresh, so it is recorded as pulled without reading
+        anything, unless --full is set.
         """
         held = HeldConversation(self.uow.archive, item.team_id, item.channel)
         self.progress = _ItemProgress(self.reporter, item_label(item, view))
         if (
             item.archived
+            and item.backfill_complete
             and view.conversations.get(item.channel, {}).get("is_archived")
             and not self.options.full
         ):
