@@ -1,7 +1,10 @@
 # ABOUTME: Tests for the top-level slarc CLI behavior.
 # ABOUTME: Runs the Typer app in-process with CliRunner.
+import signal
 from io import StringIO
+from pathlib import Path
 
+import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
@@ -23,3 +26,14 @@ def test_progress_bar_shows_messages_read_and_new():
         reporter.progress("#general", 3, 0, 3)
     assert "#general" in output.getvalue()
     assert "3 read, 0 new" in output.getvalue()
+
+
+def test_sigterm_interrupts_like_ctrl_c(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    handlers = {}
+    monkeypatch.setattr(
+        signal, "signal", lambda signum, handler: handlers.update({signum: handler})
+    )
+    runner.invoke(app, ["list", "--root", str(tmp_path)])
+
+    with pytest.raises(KeyboardInterrupt):
+        handlers[signal.SIGTERM](signal.SIGTERM, None)

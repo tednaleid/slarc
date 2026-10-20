@@ -1,9 +1,10 @@
 # ABOUTME: Typer entrypoint for the slarc command line.
 # ABOUTME: Each command takes its adapters from bootstrap and calls the service layer.
+import signal
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from types import TracebackType
+from types import FrameType, TracebackType
 from typing import Annotated, Any, NoReturn
 
 import typer
@@ -86,7 +87,12 @@ def main(
         typer.Option("--version", callback=_print_version, is_eager=True, help="Show version."),
     ] = False,
 ) -> None:
-    pass
+    signal.signal(signal.SIGTERM, _interrupt)
+
+
+def _interrupt(signum: int, frame: FrameType | None) -> None:
+    """Turns SIGTERM (cron timeouts, kill, shutdown) into the Ctrl-C path, which records the run."""
+    raise KeyboardInterrupt
 
 
 def _status_line(status: AuthStatus) -> tuple[str, str | None]:
