@@ -223,7 +223,7 @@ git commit -m "Skip one thread or item when a read fails, and retry failed threa
 
 ---
 
-### Task 3: Record named items before reading them
+### Task 3: Record named items before reading them [done]
 
 Backlog line: "Interrupting a first pull before its first history page completes loses the new item or a widened `since`".
 
@@ -236,7 +236,7 @@ Backlog line: "Interrupting a first pull before its first history page completes
 - Consumes: `_PullRun.pulled` from Task 2. Recording an item at resolve time must not count it as pulled.
 - Produces: `resolve` calls `self._record(item)` for each selected item that is new or differs from its tracked state, after `_ranged` has applied the options' range.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def interrupt_history(h: Harness, monkeypatch, on_page: int) -> None:
@@ -273,16 +273,16 @@ def test_interrupted_pull_keeps_every_new_item(h: Harness, monkeypatch):
 
 `interrupt_history` follows the pattern in `test_interrupted_backfill_resumes_from_oldest_ts`.
 
-- [ ] **Step 2: Run them and watch them fail**
+- [x] **Step 2: Run them and watch them fail**
 
 Run: `just test tests/service/test_pull_conversation.py -k interrupted_`
 Expected: the three tests fail; `test_interrupted_backfill_resumes_from_oldest_ts` still passes.
 
-- [ ] **Step 3: Implement, then add to the tracked_item row:** "An item named on the command line is recorded before it is read, so an interrupted pull keeps it."
+- [x] **Step 3: Implement, then add to the tracked_item row:** "An item named on the command line is recorded before it is read, so an interrupted pull keeps it."
 
-- [ ] **Step 4: Run `just check`**
+- [x] **Step 4: Run `just check`**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -m "Record items named on the command line before reading them"

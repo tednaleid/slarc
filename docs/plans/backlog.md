@@ -45,7 +45,6 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 ### Pull
 - A bare `slarc pull` with nothing tracked prints "Pulled 0 items" instead of saying nothing is tracked (`cli.py`; `NO_TRACKED_ITEMS` exists).
 - The downloads drain after a mid-pull `AuthFailed` can re-raise it, so no summary prints; the exit code and run line are still right (`service/downloads.py`).
-- Interrupting a first pull before its first history page completes loses the new item or a widened `since`; record the item before paging (`service/pull.py`).
 - When a conversation turns `NotVisible` partway through a pull, deletes already appended for its re-read threads stay (`service/pull.py`).
 - A new link whose first read raises `NotVisible` is tracked as `not_visible`, while a `ThreadNotFound` link is not tracked (`service/pull.py` `_message_item`).
 - The "Slack returns no message" warning link leaves out `thread_ts` for a reply (`service/pull.py` `_missing_message`).

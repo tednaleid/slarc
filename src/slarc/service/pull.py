@@ -315,7 +315,7 @@ class _PullRun:
         self._threads_counted: set[tuple[str, str, str]] = set()
 
     def resolve(self, selectors: list[Selector]) -> list[TrackedItem]:
-        """The items to pull; a thread read while working out a selector's kind is kept."""
+        """The items to pull, recorded before they are read; a thread read for its kind is kept."""
         tracked = self.uow.archive.tracked_items()
         if not selectors:
             return list(tracked.values())
@@ -333,6 +333,8 @@ class _PullRun:
                 continue
             known = tracked.get(item.key)
             item = self._ranged(item, known) if item.kind == "conversation" else known or item
+            if item != known:
+                self._record(item)
             items.setdefault(item.key, item)
         return list(items.values())
 

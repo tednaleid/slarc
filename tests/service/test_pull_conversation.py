@@ -244,6 +244,65 @@ def test_interrupted_backfill_resumes_from_oldest_ts(h: Harness, monkeypatch: py
     assert (item.newest_ts, item.oldest_ts, item.backfill_complete) == (stamps[6], stamps[0], True)
 
 
+def interrupt_history(h: Harness, monkeypatch: pytest.MonkeyPatch, on_page: int) -> None:
+    """Raises KeyboardInterrupt when history reaches the given page."""
+    served = h.gateway.history
+
+    def interrupted(channel: str, oldest: str | None, latest: str | None) -> Iterator[list[dict]]:
+        for number, page in enumerate(served(channel, oldest, latest), start=1):
+            if number == on_page:
+                raise KeyboardInterrupt
+            yield page
+
+    monkeypatch.setattr(h.gateway, "history", interrupted)
+
+
+def test_interrupted_first_pull_keeps_the_new_item(h: Harness, monkeypatch: pytest.MonkeyPatch):
+    interrupt_history(h, monkeypatch, on_page=1)
+    with pytest.raises(KeyboardInterrupt):
+        h.pull(BASE)
+    [item] = h.last_run().tracked
+    assert (item.channel, item.backfill_complete, item.oldest_ts) == (CHANNEL, False, None)
+
+    monkeypatch.undo()
+    h.pull()
+    [item] = h.tracked()
+    assert item.backfill_complete is True
+
+
+def test_interrupted_pull_keeps_a_widened_since(h: Harness, monkeypatch: pytest.MonkeyPatch):
+    h.serve([ts_on(17, 9), ts_on(18, 9)])
+    h.pull(BASE, options=PullOptions(since="2026-10-18"))
+    interrupt_history(h, monkeypatch, on_page=1)
+    with pytest.raises(KeyboardInterrupt):
+        h.pull(BASE, options=PullOptions(since="2026-10-17"))
+    [item] = h.tracked()
+    assert (item.since, item.backfill_complete) == (
+        date_to_ts("2026-10-17", end_of_day=False),
+        False,
+    )
+
+
+def test_interrupted_pull_keeps_every_new_item(h: Harness, monkeypatch: pytest.MonkeyPatch):
+    h.gateway.conversations[SECOND_CHANNEL] = [message(ts_on(18, 9))]
+    interrupt_history(h, monkeypatch, on_page=1)
+    with pytest.raises(KeyboardInterrupt):
+        h.pull(BASE, SECOND_LINK, f"{BASE}/p1792410693663869")
+    assert {(item.kind, item.channel) for item in h.tracked()} == {
+        ("conversation", CHANNEL),
+        ("conversation", SECOND_CHANNEL),
+        ("thread", CHANNEL),
+    }
+
+    monkeypatch.undo()
+    h.pull()
+    assert {item.channel for item in h.tracked() if item.backfill_complete} == {
+        CHANNEL,
+        SECOND_CHANNEL,
+    }
+    assert SECOND_CHANNEL in {env.meta.channel for env in h.lines("message")}
+
+
 def test_wider_since_backfills_gap(h: Harness):
     stamps = {day: ts_on(day, 12) for day in (17, 18, 19)}
     h.serve(list(stamps.values()))
