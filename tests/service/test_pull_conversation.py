@@ -137,6 +137,29 @@ def test_progress_reported_after_each_thread_under_a_page(h: Harness):
         ("#all-naleid", 3, 3),
         ("#all-naleid", 4, 4),
         ("#all-naleid", 4, 4),
+        ("#all-naleid", 4, 4),
+    ]
+
+
+def test_progress_moves_to_each_thread_parent_while_a_page_is_read(h: Harness):
+    first, second = ts_on(18, 1), ts_on(18, 3)
+    h.gateway.conversations[CHANNEL] = [
+        message(first, thread_ts=first, reply_count=1),
+        message(ts_on(18, 2), thread_ts=first),
+        message(second, thread_ts=second, reply_count=1),
+        message(ts_on(18, 4), thread_ts=second),
+        message(ts_on(18, 5)),
+    ]
+
+    h.pull(BASE)
+
+    assert [u.at for _, u in h.reporter.progress_updates] == [
+        None,
+        None,
+        second,
+        first,
+        first,
+        first,
     ]
 
 

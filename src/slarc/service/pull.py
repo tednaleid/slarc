@@ -485,8 +485,6 @@ class _PullRun:
             top = item.until or f"{self.uow.clock.now().timestamp():.6f}"
             self.progress.paging(top, _history_floor(oldest, view, item.channel))
         for page in connection.gateway.history(item.channel, oldest, latest):
-            if self.progress is not None and page:
-                self.progress.at = _outermost(None, page, newest=False)
             self._append_history_page(connection, held, page, view, reason)
             newest = _outermost(newest, page, newest=True)
             oldest_ts = _outermost(item.oldest_ts, page, newest=False)
@@ -592,17 +590,24 @@ class _PullRun:
     ) -> None:
         """Appends a page of history, then reads and appends the thread under each of parents.
 
-        Progress is reported after the page and after each thread. A thread whose
+        Progress is reported after the page and after each thread. Under a page, the oldest
+        message reached moves to each parent as its thread is read, then to the page's oldest
+        message, which a page without threads reaches at once. A thread whose
         read fails with NotVisible or a plain SlarcError is kept in held.failed_threads;
         NotVisible then propagates, and a plain SlarcError skips the thread with a warning.
         AuthFailed and ArchiveFailed propagate.
         """
+        oldest = _outermost(None, page, newest=False)
         if page:
+            if not parents:
+                self._reach(oldest)
             self._append_bots(connection, page, view)
             self._append_messages(held, page, HISTORY_API, view)
             self._report_progress()
         gateway, channel = connection.gateway, held.channel
         for ts in parents:
+            if page:
+                self._reach(ts)
             held.read_threads.add(ts)
             try:
                 messages = gateway.replies(channel, ts)
@@ -626,6 +631,14 @@ class _PullRun:
             self._append_bots(connection, messages, view)
             self._append_thread(held, ts, messages, view)
             self._report_progress()
+        if page and parents:
+            self._reach(oldest)
+            self._report_progress()
+
+    def _reach(self, ts: str | None) -> None:
+        """Moves the oldest message reached in history paging to ts."""
+        if self.progress is not None:
+            self.progress.at = ts
 
     def _append_bots(
         self, connection: Connection, messages: list[dict], view: DirectoryView
