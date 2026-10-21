@@ -14,22 +14,18 @@ _Avoid_: sync, archive (as a verb), download, fetch
 
 **Version**:
 One observed state of a message. An edit, a reaction change or a removed link preview produces a new version; earlier versions are kept.
-_Avoid_: revision, history entry
+_Avoid_: revision (for a message version), history entry
 
 **Tracked item**:
 A conversation, thread or message the archive keeps pulling. The first pull of it starts tracking it, and removing it stops.
 _Avoid_: target, subscription, watched item
-
-**Tag**:
-One stretch of tracking a tracked item, from the pull that starts it to the removal that ends it. Tracking the same item again after a removal starts a new tag.
-_Avoid_: tracking id, generation
 
 **Run**:
 One invocation of a command that writes to the archive, such as a pull or a removal, with a record of when it started, what it did and how it ended.
 _Avoid_: job, session, execution
 
 **Batch**:
-The lines one run writes for one unit of its work, such as refreshing one tracked item or one page of a backfill.
+The rows one run writes for one unit of its work, such as refreshing one tracked item or one page of a backfill.
 _Avoid_: chunk, transaction
 
 **Commit**:

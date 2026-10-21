@@ -530,28 +530,28 @@ Ted decided (2026-10-20) that slarc will not import JSONL archives. slarc has on
 
 ## Phase 5: docs, measurements, acceptance
 
-### Task 15: Docs and ADRs
+### Task 15: Docs and ADRs [done]
 
 **Files:**
 - Create: `docs/adr/0004-ducklake-archive.md`
 - Modify: `docs/adr/0001-append-only-jsonl-storage.md` (status superseded by 0004), `docs/specs/detailed-requirements.md`, `docs/architecture.md`, `GLOSSARY.md`, `README.md`
 
-- [ ] **Step 1: Write ADR 0004 in the existing ADR format.** It records the move to DuckLake with a SQLite catalog, why git and direct grepping were given up, why Iceberg and Delta were not chosen (citing the research doc), and the one-owning-host rule.
-- [ ] **Step 2: Update the spec:**
+- [x] **Step 1: Write ADR 0004 in the existing ADR format.** It records the move to DuckLake with a SQLite catalog, why git and direct grepping were given up, why Iceberg and Delta were not chosen (citing the research doc), and the one-owning-host rule.
+- [x] **Step 2: Update the spec:**
   - the storage section;
-  - the data model table: sources become tables, `tracked_item` and `download` have no fold, and `run` keeps its columns;
+  - the data model table: sources become tables, `tracked_item` and `download` have no fold, and `run` drops its `tracked` and `downloads` columns;
   - the rm section, without the do-not-run-during-pull warning and with the deferred message;
   - the Phase 1 ship criterion, now "pulling the same channel twice adds no message or directory rows";
   - the versioning paragraph.
-- [ ] **Step 3: Update `docs/architecture.md`:** the ports, the adapters, the locks and maintenance. Add a note that `serve`, when built, holds the read lock per request.
-- [ ] **Step 4: Remove the Tag entry from `GLOSSARY.md`.**
-- [ ] **Step 5: Update the README:**
+- [x] **Step 3: Update `docs/architecture.md`:** the ports, the adapters, the locks and maintenance. Add a note that `serve`, when built, holds the read lock per request.
+- [x] **Step 4: Remove the Tag entry from `GLOSSARY.md`.**
+- [x] **Step 5: Update the README:**
   - the archive layout;
   - keeping an archive on local disk;
   - marking a Dropbox archive folder available offline;
   - the `--take-ownership` hand-off.
-- [ ] **Step 6: Run `just check` and watch it pass.**
-- [ ] **Step 7: Commit:** `Document the DuckLake archive: ADR 0004, spec, architecture, README`.
+- [x] **Step 6: Run `just check` and watch it pass.**
+- [x] **Step 7: Commit:** `Document the DuckLake archive: ADR 0004, spec, architecture, README`.
 
 ### Task 16: Measurements and acceptance
 

@@ -1,6 +1,6 @@
 ## Overview
 
-slarc is a read-only CLI that logs into Slack with the session the user's Slack desktop app already holds, pulls channels, DMs, threads and single messages into an archive of append-only JSONL files plus a content-addressed blob store, and renders them later as static HTML (and in later phases a local web viewer and PDF). The archive is queried in place by DuckDB, searchable with `rg`, and suited to being kept in git. slarc is a client, not a Slack app: nothing is installed in the workspace, no admin approval is needed, and it sees exactly what the user's account sees.
+slarc is a read-only CLI that logs into Slack with the session the user's Slack desktop app already holds, pulls channels, DMs, threads and single messages into an archive that is a DuckLake (Parquet data files plus a SQLite catalog) with a content-addressed blob store, and renders them later as static HTML (and in later phases a local web viewer and PDF). The archive is queried by DuckDB through slarc's views and is meant to live on one machine's local disk. slarc is a client, not a Slack app: nothing is installed in the workspace, no admin approval is needed, and it sees exactly what the user's account sees.
 
 Python 3.14 with uv, `slack_sdk`, Typer and DuckDB. Hexagonal architecture in the Cosmic Python style so every Slack interaction is behind a port with an in-memory fake for tests. Terms follow `GLOSSARY.md`; the larger decisions have ADRs in `docs/adr/`; facts verified against a real workspace are in `phase0-spike-findings.md`.
 
@@ -12,7 +12,7 @@ Python 3.14 with uv, `slack_sdk`, Typer and DuckDB. Hexagonal architecture in th
 2. Archive faithfully enough to re-render "like Slack" later: formatting, mentions, emoji (custom, animated, skin tones), reactions, files and snippets with full content, images, link previews, threads, edit status.
 3. Pulls are incremental, resumable and idempotent. Re-running is cheap and safe; a crash mid-conversation resumes where it stopped.
 4. Ease of use: `slarc pull <link>` works on a fresh machine with no setup beyond a signed-in Slack desktop app.
-5. Search from the first release, through `slarc search` and through `rg` on the raw files.
+5. Search from the first release, through `slarc search` and through `slarc sql`.
 6. Static HTML export for sharing.
 7. Decent speed: a 100k-message channel in minutes, not hours.
 8. Fast unit tests that never touch the network.
@@ -25,7 +25,8 @@ Python 3.14 with uv, `slack_sdk`, Typer and DuckDB. Hexagonal architecture in th
 - Lists, channel sections and sidebar groups. Canvases, huddles, pins and bookmarks are Someday items in `docs/plans/backlog.md`; until then canvases and huddles render as placeholders where they appear in messages.
 - Apps beyond being the author of messages or the other party in a DM.
 - Recovering pre-edit message text; Slack never exposes it.
-- Knowing about git. slarc writes files that suit git and never runs git or writes git files (ADR 0001).
+- Git support and reading the archive with `rg` or `jq`. The archive is not meant to be merged, diffed or searched as files (ADR 0004).
+- Importing archives written in the earlier JSONL layout. slarc carries no JSONL code.
 - Being sanctioned by Slack (ADR 0002).
 
 ## CLI
@@ -38,7 +39,7 @@ The CLI is the product's surface, so it stays small and each command does a lot.
 | `slarc list [--remote]` | Archive location and the config files in effect, then each tracked item with message count, last pull time, pending and skipped files. `--remote` lists every conversation the session can see and marks which are tracked |
 | `slarc search QUERY [--in CONV] [--from USER]` | Matches with author, conversation, time, snippet and Slack link |
 | `slarc export SELECTOR... [--out DIR] [--single-file] [--include-deleted] [--tz ZONE]` | Static HTML of what the links name; a workspace name exports every tracked conversation of that workspace, and every tracked thread or message outside a tracked conversation, to `slarc-export-<workspace>`. Later phases add `--format pdf` |
-| `slarc rm SELECTOR... [--channel] [--yes]` | Stops tracking what the links name and deletes the message lines, files, images and blobs that no remaining tracked item needs. It shows a summary and asks first (default No); `--yes` skips the prompt. A selector naming only already removed items finishes an interrupted removal. The space is freed when rm ends, or, if another slarc command has the archive open, when a later pull or rm finds it idle |
+| `slarc rm SELECTOR... [--channel] [--yes]` | Stops tracking what the links name and deletes the messages, files, images and blobs that no remaining tracked item needs. It shows a summary and asks first (default No); `--yes` skips the prompt. A selector naming only already removed items finishes an interrupted removal. The removal is committed at once and rm never waits for other commands. The space is freed when rm ends, or, if another slarc command has the archive open, when a later pull or rm finds it idle; rm then says the messages are no longer in the archive and the space is freed when the running slarc command finishes |
 | `slarc auth [--paste]` | Lists the Slack sessions found and who the user is in each workspace. `--paste` prompts for a browser token and cookie and stores them in the OS keychain |
 | `slarc sql QUERY` | Runs a DuckDB query against the archive's views; the escape hatch |
 | `slarc serve` | Phase 2: local web viewer over one archive |
@@ -64,8 +65,8 @@ URL and selector parsing is a pure function with property tests.
 - An archive is a directory containing `slarc.toml`. One archive can hold several workspaces. There are no named archives.
 - Lookup, highest priority first: `--root DIR`; `$SLARC_ARCHIVE`; the nearest `slarc.toml` walking up from the current directory (as git does with `.git`); `default_archive` in the global config.
 - If none of those resolves, `pull` creates an archive in the current directory after a one-time confirmation ("No archive here. Create one in /path? [Y/n]"); `--yes` skips it. A bare `pull` never creates an archive and says nothing is tracked; ending the prompt with Ctrl-C or end of input counts as declining. Commands other than `pull` exit with a message saying no archive was found.
-- Global state follows XDG: settings in `$XDG_CONFIG_HOME/slarc/config.toml` (`~/.config/slarc/config.toml` on every platform), derived data such as search indexes in `$XDG_CACHE_HOME/slarc/` keyed by archive path. Pasted credentials go in the OS keychain through `keyring`.
-- `slarc.toml` holds only portable settings: no absolute paths and nothing tied to one user, so a clone of an archive works the same on another machine.
+- Global state follows XDG: settings in `$XDG_CONFIG_HOME/slarc/config.toml` (`~/.config/slarc/config.toml` on every platform), per-machine state in `$XDG_CACHE_HOME/slarc/` (`~/.cache/slarc`): the archive's lock files under `locks/`, named by the sha256 of its real path, and the DuckDB extensions under `duckdb/`. Pasted credentials go in the OS keychain through `keyring`.
+- `slarc.toml` holds only portable settings: no absolute paths and nothing tied to one user, so a copy of an archive works the same on another machine.
 - Settings resolve flags, then environment, then `slarc.toml`, then the global file, then built-in defaults, key by key. `slarc list` shows the archive path and which files were read.
 
 ```toml
@@ -105,8 +106,8 @@ slarc authenticates as the user with the two credentials the Slack client uses: 
 **Token lifecycle**
 
 - Every command that talks to Slack starts with `auth.test` for each workspace it will touch. On `invalid_auth`, `not_authed`, `token_revoked`, `token_expired` or `account_inactive` the CLI names the source that failed and how to refresh it (sign into the desktop app again, or re-paste), then exits non-zero.
-- A workspace with no session, or whose credentials Slack rejects, is skipped with a warning while the other workspaces are pulled; the run line's `errors` names it. The pull then exits non-zero if no workspace was pulled or any credentials were rejected.
-- The archive records only `team_id`, the user id from `auth.test`, the credential source and the time of the last successful `auth.test`, in the run line.
+- A workspace with no session, or whose credentials Slack rejects, is skipped with a warning while the other workspaces are pulled; the run row's `errors` names it. The pull then exits non-zero if no workspace was pulled or any credentials were rejected.
+- The archive records only `team_id`, the user id from `auth.test`, the credential source and the time of the last successful `auth.test`, in the run row.
 - Signing out of the desktop app invalidates the pair; slarc never does that itself.
 
 **Rate limits**
@@ -177,15 +178,15 @@ Items marked (spike) were confirmed against the test workspace; the rest come fr
 
 1. Resolve the archive and the tracked items to pull.
 2. `auth.test` each workspace involved.
-3. Refresh the workspace directory: `users.list`, `emoji.list`, `usergroups.list`, and `conversations.info` for each conversation involved. Directory first, so `meta.plain` can resolve names.
-4. Pull each tracked item (below), appending envelopes whose hash is new.
+3. Refresh the workspace directory: `users.list`, `emoji.list`, `usergroups.list`, and `conversations.info` for each conversation involved. Directory first, so `plain` can resolve names.
+4. Pull each tracked item (below), adding a message version whenever its hash is new. Each tracked item, directory refresh and history page is its own commit, so a killed pull keeps what it committed.
 5. Download pending files and images (below).
-6. Append one run line with the state of everything the run touched.
+6. Commit one run row recording the command, counts, auth and errors, then run maintenance (Storage).
 
 **Tracked conversation**
 
 1. New history: `conversations.history` from the newest stored `ts` (or `--since` on the first pull) up to `--until` or now.
-2. Replies under old parents: `search.messages` with `in:<#channel> after:<UTC date of the previous pull minus two days>`, paged. Slack treats `after:` as exclusive and evaluates it in the user's time zone, so two days of margin keep replies from slipping through; the extra re-reads change nothing because unchanged messages write no lines. For every match whose permalink carries a `thread_ts` that was not covered by step 1 or 3, re-read that thread.
+2. Replies under old parents: `search.messages` with `in:<#channel> after:<UTC date of the previous pull minus two days>`, paged. Slack treats `after:` as exclusive and evaluates it in the user's time zone, so two days of margin keep replies from slipping through; the extra re-reads change nothing because unchanged messages add no rows. For every match whose permalink carries a `thread_ts` that was not covered by step 1 or 3, re-read that thread.
 3. Active threads: re-read every thread with a stored reply newer than `active_thread_days` (default 7).
 4. Every thread whose parent arrived in step 1 with replies is read with `conversations.replies`.
 5. `--full` replaces steps 1 and 2 with a complete re-read of the conversation's range and every thread in it.
@@ -214,119 +215,126 @@ Items marked (spike) were confirmed against the test workspace; the rest come fr
 
 ## Storage
 
-The archive is append-only JSONL files plus a content-addressed blob store, and nothing else (ADR 0001). Only `slarc rm` rewrites a file, to delete the lines it removes. DuckDB queries the JSONL directly. The files are readable with `cat`, `rg`, `jq`, or an agent.
+The archive is a DuckLake: Parquet data files plus a SQLite catalog, written and read through the `duckdb` package, and a content-addressed blob store beside it (ADR 0004, design in `docs/specs/2026-10-20-ducklake-archive-design.md`). A commit is a catalog transaction, so a batch is part of the archive if and only if its transaction committed, and a crash leaves exactly the last committed state. slarc reads no JSONL: an archive with no `catalog.sqlite` gets an empty lake, and any `raw/`, `directory/` or `runs.jsonl` in it is ignored.
 
 **Layout of one archive**
 
 ```
 <archive>/
   slarc.toml
-  raw/<team>/<conv>/<YYYY-MM>.jsonl     # messages, one envelope per line, partitioned by the message's own ts (UTC)
-  directory/<team>/users.jsonl          # also emoji, conversations, bots, usergroups, files, images
-  runs.jsonl                            # one line per run: command, counts, auth, tracked-item state, download queue
+  catalog.sqlite                        # DuckLake catalog, plus -wal and -shm while open
+  data/                                 # Parquet data and delete files, managed by DuckLake
   blobs/sha256/ab/cd/<hash>             # files, snippets, avatars, emoji and other images
 ```
 
 Exports go wherever `--out` points (default: a new directory named after the export under the current directory).
 
-**Envelope**
+**Tables**
 
-Every line is a `meta` header followed by the verbatim Slack object. `meta` comes first so `rg` and humans see the keys before the payload.
+One DuckLake schema. Every table carries `team` first, as every key does. Times are ISO 8601 UTC strings with `Z`, never timestamp columns.
 
-```json
-{"meta":{"schema":1,"kind":"message","team":"T0CB5LYPVFA","channel":"C0CA5396G03","ts":"1792410693.663869","source_team":"T0CB5LYPVFA","fetched_at":"2026-10-19T13:40:11Z","run":"r_20261019T134011Z","api":"conversations.replies","slarc":"0.1.0","hash":"e3b0c442…","plain":"jim: Hello!"},"object":{…Slack message as returned by the API…}}
-```
+| Table | Rows | Columns |
+| --- | --- | --- |
+| `message_version` | Append-only, one per observed version of a message | team, channel, ts, thread_ts, user, kind (`message` or `deleted`), fetched_at, run, source_team, api, slarc, hash, plain, object |
+| `directory_entry` | Append-only, one per observed state of a user, emoji, conversation, bot, usergroup, file or image | team, kind, id, fetched_at, run, api, slarc, hash, blob, object |
+| `run` | Append-only, one per run that ended | run, command, started, finished, fetched_at, slarc, object (args, teams, auth, counts, errors) |
+| `tracked_item` | One row per item, updated in place | the fields of the `tracked_item` entity below, plus `revision` |
+| `download_state` | One row per download target, updated in place | team, target_kind, target, url, status, attempts, last_error |
 
-- In `raw/` files `meta.kind` is `message` or `deleted`. A `deleted` line has no `object`, `hash` or `plain`.
-- `meta.plain` is the rendered plain text: mentions resolved to names, emoji as `:name:`, links as their label, layout block text included. It is derived and best-effort at write time (a later rename does not rewrite old lines), and it is what makes `rg "jim"` work.
+- `object` is the verbatim Slack object as JSON. A `deleted` row has no `object`, `hash` or `plain`.
+- `plain` is the rendered plain text: mentions resolved to names, emoji as `:name:`, links as their label, layout block text included. It is derived and best-effort at write time (a later rename does not rewrite old rows), and it is what `slarc search` matches.
+- `blob` is the sha256 of the downloaded bytes once present, on the kinds that have one.
+- `run` ids are `r_<UTC timestamp>_<4 hex digits>`, for example `r_20261020T140000Z_3f9a`; the suffix tells apart commands started in the same second.
+- Rows are written sorted by (team, channel, ts), or (team, kind, id) for directory entries. The tables are not partitioned.
 
-**Append rules**
+**Write rules**
 
-Files are appended to, except that `slarc rm` rewrites the files that lose lines. The current state of a message is its last line for `(team, channel, ts)` ordered by `(fetched_at, run)`; earlier lines are its versions.
+The current state of a message is its newest version for `(team, channel, ts)`, ordered by `(fetched_at, run)`; earlier versions are kept. Commits are serialized, so duplicate versions cannot occur.
 
-1. A never-seen message is appended to the month file of its own `ts`.
-2. A re-read message whose `hash` differs from its last stored line is appended to the same month file. An edit to a 2024 message adds one line to `2024-03.jsonl`.
-3. A new reply in a dormant thread has a current `ts`, so it lands in the current month file. Threads are reassembled by `thread_ts` at read time and may span many files.
-4. A delete (see Pulling) appends a `deleted` line to the message's month file. Only `slarc rm` removes lines.
-5. A re-read that matches the stored hash writes nothing, so pulling the same range twice changes no file.
-6. Directory objects follow the same rule, except that a line is appended when either the hash or `meta.blob` differs from the last stored line. A rename is one more line in `users.jsonl`; a `file` line is written when the file is first referenced and again once its blob is downloaded.
-7. Every run appends one `run` line to `runs.jsonl`.
-8. Reading tolerates duplicate lines and lines out of order, as a git merge of two pulls produces.
+1. A never-seen message is added as a `message_version` row.
+2. A re-read message whose `hash` differs from its newest version adds a row. An edit to an old message adds one row.
+3. A new reply in a dormant thread is a new message; threads are reassembled by `thread_ts` at read time.
+4. A delete (see Pulling) adds a `deleted` version. Only `slarc rm` removes rows.
+5. A re-read that matches the stored hash writes nothing, so pulling the same range twice adds no message or directory rows.
+6. Directory entries follow the same rule, except that a row is added when either the hash or `blob` differs from the newest row. A rename is one more `user` row; a `file` row is written when the file is first referenced and again once its blob is downloaded.
+7. Every run that ends adds one `run` row, in its own commit. A run killed outright writes no run row; what it committed stands and what it did not commit was never part of the archive.
+8. `tracked_item` and `download_state` rows are replaced by the commit that changes them. A download state settles by being deleted, in the same commit that writes the directory row recording its blob.
+
+**Commits and removals**
+
+- A commit is one transaction made under the write lock. Pull commits an item named on the command line before reading it, each directory refresh, each tracked item when it finishes or is skipped, each history page of a backfill together with the cursors moved past it, and each download result.
+- Every `tracked_item` row has an integer `revision`. A commit that changes an item names the revision it read and fails, rolling the whole batch back, if the row has moved on: an rm removed it, or another pull advanced it. A download result commits only if its `download_state` row still exists, a directory refresh only if the workspace still has a tracked item that is not removed, and a batch that assumed a file or image was stored only if its directory row still exists. A rolled-back item is picked up again by the next pull, so a pull that started before an rm can never re-track what the rm removed.
+- `slarc rm` commits its removal in one transaction that deletes the rows no remaining tracked item needs and marks each removed item's status `removed`, with its revision bumped. It recomputes its plan after confirmation and retries up to three times if a pull committed in between.
+
+**Locks and maintenance**
+
+- Two `fcntl.flock` files under `$XDG_CACHE_HOME/slarc/locks/` order commands on one machine. Every command holds the read lock shared while it has the archive open (`serve` holds it per request). Each transaction and each maintenance run holds the write lock exclusively, and the read lock is always taken before the write lock.
+- Maintenance runs at the end of every `pull` and `rm`, after the run row commits. It compacts the Parquet files every time. It deletes bytes only when it can take the read lock exclusively without blocking, which shows that no other slarc command has the archive open: it then expires every snapshot but the newest, deletes unreferenced and orphaned data files, deletes blobs no `directory_entry` row references, and vacuums the catalog when its free pages pass a threshold. Otherwise deletion waits for the next maintenance that finds the archive idle. No time windows are used.
+- A pull that reads a message whose blob is missing queues the download again. No pull scans the whole blob store.
+
+**One owning host**
+
+- The catalog records the machine that owns the archive, by a stable machine id with the host name for messages. The first open, including the one that creates the lake, records the current machine.
+- Every command, reads included, checks the record when it opens the archive, once per process. On another machine it stops with a message naming the owning host and saying to wait until the synced folder has finished syncing, then run the command again with the global option `--take-ownership`. That option is the user's statement that every change from the previous host has arrived. It records the current machine, checks that every data file the catalog references exists (stopping with a "has not finished syncing" error if any is missing), and makes the run's maintenance skip deleting orphaned files and unreferenced blobs, because files that synced ahead of the catalog look exactly like orphans.
+- A command that would create a catalog because `catalog.sqlite` is missing refuses, and creates nothing, when `data/` or `blobs/` already holds a file, because a synced folder can deliver those before the catalog. A read command on an archive with no catalog and no files creates an empty lake.
+- The README recommends keeping an archive on local disk, outside synced folders.
 
 **Querying**
 
-DuckDB reads the globs directly with `read_ndjson`, with the `meta` columns given explicitly, `object` typed as `JSON` (inference across subtypes produces unusable unions), and `maximum_object_size` raised for large `blocks`. A view per entity extracts fields with JSON functions; the current-state views use one window function per key ordered by `fetched_at`.
+`DuckDbQueryIndex` attaches the lake read-only and defines a view per entity (Data model) in an in-memory DuckDB per invocation. The current message is one `QUALIFY` over `message_version`; the current-state directory views take the newest row per key. `slarc sql` queries the views by default and the tables as `lake.<table>`. The `duckdb` dependency is pinned exactly, and the `ducklake` and `sqlite_scanner` extensions are downloaded on first use into the XDG cache; if they are missing and cannot be downloaded, slarc says which extensions and that one online run of any command installs them.
 
-`search`, `list` and `sql` build these views in an in-memory DuckDB per invocation. If startup becomes slow on large archives, a rebuildable index goes in `$XDG_CACHE_HOME/slarc/`, never in the archive. During a pull, the JSONL store loads the touched conversation's stored hashes into memory for comparison.
+## Row schema
 
-## JSONL schema
+`object` is verbatim Slack and only its source method (`api`) is recorded. The Python model (msgspec structs) is the source of truth; Phase 2 adds a generated JSON Schema and a `validate` check.
 
-`meta` is fully specified; `object` is verbatim Slack and only its source method is recorded. The Python model (msgspec structs) is the source of truth; Phase 2 adds a generated JSON Schema and a `validate` check.
+**Conventions**
 
-**File conventions**
-
-- UTF-8, one JSON object per line, `\n` terminated, compact encoding, `meta` first with keys in the order below.
-- `object` keeps the key order Slack returned. Hashes are computed over a canonical form (sorted keys, no whitespace) of the hashed subset, so key order never affects identity.
-- `raw/<team>/<conv>/<YYYY-MM>.jsonl` holds `message` and `deleted` lines only. The directory files are exactly `users.jsonl`, `emoji.jsonl`, `conversations.jsonl`, `bots.jsonl`, `usergroups.jsonl`, `files.jsonl` and `images.jsonl`, one kind each. `runs.jsonl` holds `run` lines only.
-
-**`meta` v1**
-
-| Key | Type | Present on | Meaning |
-| --- | --- | --- | --- |
-| schema | integer | all | Envelope schema version; `1` |
-| kind | enum | all | `message`, `deleted`, `user`, `emoji`, `conversation`, `bot`, `usergroup`, `file`, `image`, `run` |
-| team | string | all but run | Workspace `team_id` the object was read through (`T…` or `E…`) |
-| channel | string | message, deleted | Conversation id |
-| ts | string | message, deleted | Slack `ts` |
-| id | string | directory kinds | user id, emoji name, conversation id, bot id, usergroup id, file id, or image URL |
-| source_team | string | message | Author's home team from `object.team`; equals `team` unless Slack Connect |
-| fetched_at | string | all | ISO 8601 UTC with `Z`; ordering key for versions |
-| run | string | all | Run id, `r_<UTC timestamp>` |
-| api | string | all but deleted, run | Slack method that returned `object` (`conversations.history`, `users.list`, `files.info`, `download` for images, …) |
-| slarc | string | all | slarc version that wrote the line |
-| hash | string | all but deleted, run | sha256 hex of the canonical hashed subset of `object` |
-| plain | string | message | Rendered plain text |
-| blob | string | file, emoji, user, bot, image | sha256 of the downloaded bytes once present |
+- Hashes are computed over a canonical form (sorted keys, no whitespace) of the hashed subset, so key order never affects identity.
+- `kind` is `message` or `deleted` in `message_version`, and `user`, `emoji`, `conversation`, `bot`, `usergroup`, `file` or `image` in `directory_entry`.
+- `team` is the workspace `team_id` the object was read through (`T…` or `E…`). `source_team` is the author's home team from `object.team`; it equals `team` unless Slack Connect.
+- `id` in `directory_entry` is the user id, emoji name, conversation id, bot id, usergroup id, file id, or image URL.
+- `api` is the Slack method that returned `object` (`conversations.history`, `users.list`, `files.info`, `download` for images, and so on). `slarc` is the slarc version that wrote the row.
+- `fetched_at` is the ordering key for versions.
 
 **Hashed subset**
 
 - message: `text`, `blocks`, `attachments`, the `id` and `mode` of each entry in `files`, `edited`, `reactions`, `subtype`, `user`, `bot_id`. `blocks` and `attachments` are hashed with every `block_id` removed, because Slack regenerates block ids on each read for API-posted messages. Excluded: `reply_count`, `reply_users`, `reply_users_count`, `latest_reply`, `is_locked`, `last_read`, `subscribed`, and anything else per-user or per-request.
 - user: the whole `profile` object plus `name`, `real_name`, `deleted`, `tz`, `is_bot`, `is_app_user`.
 - emoji: the URL or alias target.
-- conversation: `name`, `topic`, `purpose`, `is_archived`, `is_private`, `is_shared`, membership. `last_read` is per-user and lives in the run line instead.
+- conversation: `name`, `topic`, `purpose`, `is_archived`, `is_private`, `is_shared`, membership. `last_read` is per-user and lives on the tracked item instead.
 - file: everything except `shares` and fields that change on every read.
 - image: the URL plus `Content-Type` and size from the download.
 
-**Versioning**: additive changes to `meta` do not bump `schema`; readers ignore unknown keys. A breaking change bumps it, and readers keep supporting every prior version because only `slarc rm` rewrites files, and it keeps each remaining line as it was.
+**Versioning**: the `slarc` column records which slarc version wrote each row, and readers ignore columns they do not know. The lake does not migrate itself across DuckDB releases, so `duckdb` is pinned exactly; upgrading it is a deliberate change, tested against an archive the previous version created.
 
 ## Data model
 
-The entities below are DuckDB views over the files; none is stored separately. Every key is prefixed by `team_id`.
+The entities below are DuckDB views over the lake's tables. Every key is prefixed by `team_id`. `tracked_item` and `download` are views over `tracked_item` and `download_state` with no fold, because those tables already hold current state.
 
 | Entity | Source | Key | Fields |
 | --- | --- | --- | --- |
-| workspace | `runs.jsonl`, latest `auth` entry per team | team_id | domain, name, user ids seen, credential_source, last_auth_test |
-| conversation | `conversations.jsonl`, last line per id | (team_id, id) | kind ∈ channel, dm, group_dm; is_private; name (null for DM); dm_user_id; is_archived; is_shared; created; creator; topic; purpose; member_ids |
-| message | `raw/`, last line per key | (team_id, channel_id, ts) | source_team, thread_ts, is_thread_parent, reply_count and latest_reply (computed from stored replies), author_kind ∈ user, bot, system; user_id, bot_id, subtype, text_mrkdwn, blocks_json, attachments_json, edited_ts, edited_by, is_broadcast, plain, hash, first_seen_at, last_seen_at, deleted_at |
-| message_version | `raw/`, every line | (team_id, channel_id, ts, fetched_at, run) | hash (null for `deleted`), edited_ts |
+| workspace | `run`, latest `auth` entry per team | team_id | domain, name, user ids seen, credential_source, last_auth_test |
+| conversation | `directory_entry` kind `conversation`, newest row per id | (team_id, id) | kind ∈ channel, dm, group_dm; is_private; name (null for DM); dm_user_id; is_archived; is_shared; created; creator; topic; purpose; member_ids |
+| message | `message_version`, newest row per key | (team_id, channel_id, ts) | source_team, thread_ts, is_thread_parent, reply_count and latest_reply (computed from stored replies), author_kind ∈ user, bot, system; user_id, bot_id, subtype, text_mrkdwn, blocks_json, attachments_json, edited_ts, edited_by, is_broadcast, plain, hash, first_seen_at, last_seen_at, deleted_at |
+| message_version | `message_version`, every row | (team_id, channel_id, ts, fetched_at, run) | hash (null for `deleted`), edited_ts |
 | reaction | unnested from message | (team_id, channel_id, ts, name) | name with skin tone, base_name, count, user_ids |
-| file | `files.jsonl`, last line per id | (team_id, id) | name, title, mimetype, filetype, mode, size, is_external, external_url, permalink, blob, preview_text, width, height |
+| file | `directory_entry` kind `file`, newest row per id | (team_id, id) | name, title, mimetype, filetype, mode, size, is_external, external_url, permalink, blob, preview_text, width, height |
 | message_file | unnested from message | (team_id, channel_id, ts, file_id) | position |
-| image | `images.jsonl`, last line per URL | (team_id, url) | content_type, size, blob |
-| user | `users.jsonl`, last line per id | (team_id, id) | name, real_name, display_name, display (fallback chain applied), email, tz, tz_label, tz_offset, is_bot, is_app_user, deleted, home_team_id, avatar_blob |
-| user_snapshot | `users.jsonl`, every line | (team_id, id, fetched_at) | hash, profile_json |
-| bot | `bots.jsonl`, last line per id | (team_id, id) | app_id, name, icon_blob |
-| emoji | `emoji.jsonl`, last line per name | (team_id, name) | url, alias_of, is_animated, blob, first_seen, last_seen_in_list |
-| usergroup | `usergroups.jsonl`, last line per id | (team_id, id) | handle, name, user_ids |
-| run | `runs.jsonl` | run | command, args, started, finished, teams, auth per team, messages_seen, lines_appended, rate_limit_wait_s, api_calls (Web API calls per method, pages included), threads_read (threads read per reason ∈ link, history, search, active, full, retry; a thread counts once, under its first reason), errors |
-| tracked_item | `runs.jsonl`, the latest entry per item across all run lines | (team_id, kind, channel_id, ts) | kind ∈ conversation, thread, message; since, until, newest_ts, oldest_ts, backfill_complete, last_search_at, last_pull_at, status ∈ ok, not_visible (pull warns once when an item turns not visible, then skips it quietly until it reads again; the summary counts not-visible items); archived (the last finished pull found the conversation Slack-archived); last_read per user_id; retry_threads (threads whose read failed, re-read first on the next pull). An interrupted first pull resumes paging older history from `oldest_ts` while `backfill_complete` is false. An item named on the command line is recorded before it is read, so an interrupted pull keeps it |
-| download | `runs.jsonl`, latest entry per target | (team_id, target) | target is a file id or image URL; status ∈ pending, failed, forbidden, too_large, deleted, external, gave_up, removed; attempts; last_error. Downloaded items drop out; the `blob` on the directory line is the record |
+| image | `directory_entry` kind `image`, newest row per URL | (team_id, url) | content_type, size, blob |
+| user | `directory_entry` kind `user`, newest row per id | (team_id, id) | name, real_name, display_name, display (fallback chain applied), email, tz, tz_label, tz_offset, is_bot, is_app_user, deleted, home_team_id, avatar_blob |
+| user_snapshot | `directory_entry` kind `user`, every row | (team_id, id, fetched_at) | hash, profile_json |
+| bot | `directory_entry` kind `bot`, newest row per id | (team_id, id) | app_id, name, icon_blob |
+| emoji | `directory_entry` kind `emoji`, newest row per name | (team_id, name) | url, alias_of, is_animated, blob, first_seen, last_seen_in_list |
+| usergroup | `directory_entry` kind `usergroup`, newest row per id | (team_id, id) | handle, name, user_ids |
+| run | `run` | run | command, args, started, finished, teams, auth per team, messages_seen, lines_appended, rate_limit_wait_s, api_calls (Web API calls per method, pages included), threads_read (threads read per reason ∈ link, history, search, active, full, retry; a thread counts once, under its first reason), errors |
+| tracked_item | `tracked_item` table, no fold | (team_id, kind, channel_id, ts) | kind ∈ conversation, thread, message; since, until, newest_ts, oldest_ts, backfill_complete, last_search_at, last_pull_at, status ∈ ok, not_visible, removed (pull warns once when an item turns not visible, then skips it quietly until it reads again; the summary counts not-visible items; a removed item keeps its row so rm accepts selectors that name it); archived (the last finished pull found the conversation Slack-archived); last_read per user_id; retry_threads (threads whose read failed, re-read first on the next pull). An interrupted first pull resumes paging older history from `oldest_ts` while `backfill_complete` is false. An item named on the command line is recorded before it is read, so an interrupted pull keeps it |
+| download | `download_state` table, no fold | (team_id, target) | target_kind; target is a file id or image URL; url; status ∈ pending, failed, forbidden, too_large, deleted, external, gave_up; attempts; last_error. A downloaded target's row is deleted; the `blob` on the directory entry is the record. rm deletes the rows of what it removes |
 
 Notes
 
-- A run line has no `meta.team`; it lists the teams it touched, and every tracked and download entry carries its own `team_id`. The current state of an item is its entry in the latest run line that mentions it, so state survives a clone and a merged history.
+- A run row has no `team`; it lists the teams it touched, and every tracked item and download row carries its own `team_id`. The current state of an item is its row, replaced by each commit that changes it.
 - Snippet text lives in the blob; `preview_text` is for listing only.
-- The view definitions are versioned in code; changing them needs no migration because the files are the only state.
+- The view definitions are versioned in code. Changing a view needs no migration, because the tables are the only state.
 
 ## Rendering
 
@@ -352,9 +360,9 @@ One set of Jinja2 partials drives every output: `export` (static files plus a sm
 
 Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cases, ports as `typing.Protocol` classes in `src/slarc/ports.py`, and adapters that implement them. Nothing in the domain or service layer imports `slack_sdk`, `duckdb`, `httpx`, `keyring` or touches the filesystem or environment, except reading packaged data through `importlib.resources`. `docs/architecture.md` describes the code in detail, with the full ports table; ADR 0003 records the decision.
 
-- **Domain**: value types (`MessageTs` with numeric ordering and permalink conversion, `ConversationSel`, `MessageSel` and `WorkspaceSel` selectors, envelopes, tracked items and run records), the hashed-subset functions, and pure renderers: rich_text and layout blocks to HTML, mrkdwn to HTML, and `meta.plain`.
+- **Domain**: value types (`MessageTs` with numeric ordering and permalink conversion, `ConversationSel`, `MessageSel` and `WorkspaceSel` selectors, envelopes, tracked items and run records), the hashed-subset functions, and pure renderers: rich_text and layout blocks to HTML, mrkdwn to HTML, and `plain`.
 - **Ports**: `SlackGateway` and `SlackConnector` (a gateway per workspace session), `CredentialSource`, `ArchiveStore`, `ArchiveLock` (the archive's read and write locks), `BlobStore`, `Downloader`, `ExportWriter` (writes export files), `QueryIndex` (what `search`, `list`, `sql` and `export` read), `Clock`, and `Reporter` (progress and warnings). Every port except `QueryIndex` has an in-memory fake in `tests/fakes.py`; `QueryIndex` is tested through DuckDB over a temp archive.
-- **Unit of work**: one `UnitOfWork` class scopes one pull run over the archive store, blob store and clock; tests give it the in-memory stores. Pull commits after each page of results and each item, so an interrupted pull keeps what it committed; the run line is appended when the run ends, including on an exception, Ctrl-C or SIGTERM (a cron timeout or shutdown), after every appended file is fsynced, and is itself fsynced. A run killed outright loses only its run line, and the next pull re-reads without duplicating lines because hashes match. No message bus or domain events: the service layer collects download jobs during the pull and hands them to the `Downloader` at the end.
+- **Unit of work**: one `UnitOfWork` class scopes one pull run over the archive store, blob store and clock; tests give it the in-memory stores. Pull commits after each page of results and each item, so an interrupted pull keeps what it committed; the run row is committed when the run ends, including on an exception, Ctrl-C or SIGTERM (a cron timeout or shutdown), followed by maintenance. A run killed outright loses its uncommitted batch and writes no run row, and the next pull re-reads without duplicating rows because hashes match. No message bus or domain events: the service layer collects download jobs during the pull and hands them to the `Downloader` at the end.
 - **Service layer**: one module per use case, taking its ports as arguments.
 - **Composition**: `bootstrap.py` is the only place real adapters are built; the Typer CLI takes them from it, and tests swap in fakes with `override()`. A `Settings` value from the layered loader in `config.py` configures each command.
 
@@ -362,16 +370,16 @@ Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cas
 
 - Service tests run against the fakes: no network, no disk, milliseconds each.
 - Renderer tests are golden-file tests over recorded messages covering every subtype, block and element type in the fixtures.
-- Adapter contract tests run the same test module against the fake and the real adapter: `DuckLakeArchiveStore` and `DuckDbQueryIndex` against a temp directory; `SessionTokenGateway` against recorded HTTP responses with credentials scrubbed.
+- Adapter contract tests run the same test module against the fake and the real adapter: `DuckLakeArchiveStore` and `DuckDbQueryIndex` against a lake in a temp directory; `SessionTokenGateway` against recorded HTTP responses with credentials scrubbed.
 - The LevelDB reader and cookie decryption are tested against synthetic files built by a small writer in the test code (Snappy allows literal-only streams, so no compressor is needed). Real credentials are never committed.
-- Property tests (Hypothesis) for link parsing, `ts` ordering, and idempotency: pulling the same fixture twice appends no lines and leaves the views identical.
+- Property tests (Hypothesis) for link parsing, `ts` ordering, and idempotency: pulling the same fixture twice adds no message or directory rows and leaves the views identical.
 
 **Test workspace**
 
 - `naleidworkspace` (team `T0CB5LYPVFA`) is the only workspace that may ever be written to, and only by `scripts/seed-test-workspace.py`: a uv-shebang developer script outside the package that takes a workspace and channel, refuses any team id other than `T0CB5LYPVFA`, and posts into a dedicated channel such as `#slarc-fixtures`. It covers what one user can create: thread replies (also sent to the channel), edits, deletes with and without replies, rich text, reactions, file uploads (PDF, video, several files on one message), pins, a private channel, topic and name changes, a Slack-archived channel.
 - Content it cannot create is made by hand: anything posted as jim, a group DM with a third user, custom and animated emoji uploads, jim's display name change, huddles, canvases.
 - Agents may use the developer's desktop session for read-only calls to the test workspace without asking.
-- `just record-fixtures` pulls the test workspace into committed fixtures under `tests/fixtures/`. Names stay; tokens and secrets are scrubbed and emails become `@example.invalid`. Tests never need workspace access.
+- `just record-fixtures` pulls the test workspace into committed fixtures under `tests/fixtures/`. The recorded archive stays JSONL so it is reviewable in git, and test code loads it into a lake. Names stay; tokens and secrets are scrubbed and emails become `@example.invalid`. Tests never need workspace access.
 
 ## Toolchain
 
@@ -383,7 +391,7 @@ Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cas
 ## Phases
 
 1. **Phase 0, spike.** Done; see `phase0-spike-findings.md`.
-2. **Phase 1, MVP.** Project skeleton and tooling; link parsing; settings and archive lookup; desktop session (macOS and Linux) with env and paste fallbacks; `auth`; the JSONL store, blob store and run lines; `pull` for conversations, threads and single messages with date ranges, the search-based reply discovery, active-thread re-reads, `--full`, delete inference, file and image downloads; users, emoji, usergroups and bots directory; `meta.plain`; DuckDB views; `list`, `search`, `sql`; a minimal static `export` covering threads, reactions, images, snippets, previews and giphy; the seed script and recorded fixtures. Ships when: pulling the same channel twice changes no file; a new reply in a dormant thread is found by a bare `pull` and lands as exactly one new line; an edit to an old message lands as exactly one new line under `--full`; and the export of the test channel matches the Slack client in substance.
+2. **Phase 1, MVP.** Project skeleton and tooling; link parsing; settings and archive lookup; desktop session (macOS and Linux) with env and paste fallbacks; `auth`; the DuckLake store, blob store and run rows; `pull` for conversations, threads and single messages with date ranges, the search-based reply discovery, active-thread re-reads, `--full`, delete inference, file and image downloads; users, emoji, usergroups and bots directory; `plain`; DuckDB views; `list`, `search`, `sql`; a minimal static `export` covering threads, reactions, images, snippets, previews and giphy; the seed script and recorded fixtures. Ships when: pulling the same channel twice adds no message or directory rows; a new reply in a dormant thread is found by a bare `pull` and lands as exactly one new message row; an edit to an old message lands as exactly one new version row under `--full`; and the export of the test channel matches the Slack client in substance.
 3. **Phase 2.** `serve` with HTMX; full-text search with filters; observed-version history in the viewer; `import` (likely `slarc pull <export.zip>`) from Slack export ZIPs and slackdump SQLite; Slack export ZIP output so slarchive and slack-export-viewer can read archives; generated JSON Schema and a `validate` check; a probe that warns if Slack starts limiting session tokens; Slack Connect `source_team` resolution; obfuscated fixture recording from real workspaces.
 
 Someday items and Phase 1 leftovers are in `docs/plans/backlog.md`.

@@ -254,7 +254,7 @@ The recorded fixture archive (`tests/fixtures/workspace/`) stays JSONL, so it st
 
 The other readers of JSONL change with the store:
 - **`scripts/acceptance.py`** reads and edits `raw/*.jsonl` and `runs.jsonl` directly, so it moves to querying the lake.
-- **The Phase 1 criterion** "pulling the same channel twice changes no file" becomes: "pulling the same channel twice adds only a run row".
+- **The Phase 1 criterion** "pulling the same channel twice changes no file" becomes: "pulling the same channel twice adds no message or directory rows".
 
 ## Known limits
 
@@ -279,7 +279,7 @@ The other readers of JSONL change with the store:
   - a stale pull's commit after an rm of its item rolls back;
   - two pulls of one item, where the second commit rolls back;
   - a download result for a removed target rolls back, and its blob is deleted at the next idle maintenance;
-  - an rm that removes a file a concurrent pull's batch assumed was stored: the pull's commit restores the directory row and queues the download;
+  - an rm that removes a file a concurrent pull's batch assumed was stored: the pull's batch rolls back, and the next pull restores the directory row and queues the download;
   - an rm whose prompt is open while a pull commits more messages for the item: the recomputed plan removes them too;
   - physical deletion is skipped while another process holds the read lock;
   - a command on another host is refused, and a takeover with a missing data file stops before writing;
@@ -317,7 +317,7 @@ The other readers of JSONL change with the store:
 - A pull's commit fails if a file or image row it assumed was stored has been deleted by a concurrent rm, and the next pull repairs it.
 - The download drain commits once per result.
 - The directory-refresh guard is "any item not removed".
-- The `run` view keeps its `tracked` and `downloads` columns, which are empty.
+- The `run` view drops its `tracked` and `downloads` columns.
 - Missing blobs keep today's re-download-on-read behavior.
 - The test fixtures stay JSONL.
 

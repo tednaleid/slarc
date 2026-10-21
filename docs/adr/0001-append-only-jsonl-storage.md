@@ -1,5 +1,7 @@
 # Append-only JSONL files are the only stored state
 
+Status: superseded by ADR 0004 (`0004-ducklake-archive.md`). The text below records the decision as it stood when it was made.
+
 An archive stores Slack data as append-only JSONL files split by month, plus downloaded files named by their content hash. There is no database file. DuckDB queries the JSONL directly at read time, and any index it builds lives in `~/.cache/slarc`, outside the archive. We chose this over SQLite or a persisted DuckDB file so an archive can be kept in git with small, readable diffs, and so `rg`, `jq` and agents can search it with no slarc code at all. Every edit, reaction change or delete becomes a new line; existing lines are never rewritten.
 
 ## Considered Options
