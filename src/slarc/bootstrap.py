@@ -9,28 +9,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-import duckdb
-import httpx
-import keyring
+lazy import duckdb
+lazy import httpx
+lazy import keyring
 
-from slarc.adapters.blob_store import FsBlobStore
-from slarc.adapters.credentials import CompositeSource, EnvSource, KeyringSource
-from slarc.adapters.desktop_session import DesktopSessionSource
-from slarc.adapters.downloader import HttpDownloader
-from slarc.adapters.duckdb_index import DuckDbQueryIndex
-from slarc.adapters.export_writer import FsExportWriter
-from slarc.adapters.host import host_name, machine_id
-from slarc.adapters.lake import (
-    CATALOG,
-    cache_home,
-    check_owner,
-    connect_lake,
-    extension_directory,
-    read_owner,
-)
-from slarc.adapters.lake_store import DuckLakeArchiveStore
-from slarc.adapters.locks import FlockArchiveLock
-from slarc.adapters.slack_gateway import USER_AGENT, SessionConnector, session_gateway
 from slarc.ports import (
     BlobStore,
     Clock,
@@ -40,6 +22,24 @@ from slarc.ports import (
     Session,
     SlackGateway,
 )
+lazy from slarc.adapters.blob_store import FsBlobStore
+lazy from slarc.adapters.credentials import CompositeSource, EnvSource, KeyringSource
+lazy from slarc.adapters.desktop_session import DesktopSessionSource
+lazy from slarc.adapters.downloader import HttpDownloader
+lazy from slarc.adapters.duckdb_index import DuckDbQueryIndex
+lazy from slarc.adapters.export_writer import FsExportWriter
+lazy from slarc.adapters.host import host_name, machine_id
+lazy from slarc.adapters.lake import (
+    CATALOG,
+    cache_home,
+    check_owner,
+    connect_lake,
+    extension_directory,
+    read_owner,
+)
+lazy from slarc.adapters.lake_store import DuckLakeArchiveStore
+lazy from slarc.adapters.locks import FlockArchiveLock
+lazy from slarc.adapters.slack_gateway import USER_AGENT, SessionConnector, session_gateway
 
 DOWNLOAD_TIMEOUT_S = 60.0
 

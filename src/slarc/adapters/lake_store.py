@@ -9,7 +9,7 @@ import duckdb
 import msgspec
 
 from slarc import archive_state
-from slarc.adapters.lake import CATALOG, connect_lake, failure_reason, lake_errors
+from slarc.adapters.lake import CATALOG, METADATA, connect_lake, failure_reason, lake_errors
 from slarc.archive_state import LatestMessages
 from slarc.domain.envelope import Envelope, Kind, Meta
 from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem, run_envelope
@@ -350,6 +350,12 @@ class DuckLakeArchiveStore:
                 "SELECT count(*) FROM ducklake_expire_snapshots('lake', versions => ?)",
                 [[snapshot for (snapshot,) in snapshots[:-1]]],
             ).fetchall()
+        # Expiring a snapshot leaves its change rows behind, which grow the catalog by a few
+        # rows per commit; nothing reads the changes of a snapshot that no longer exists.
+        self._con.execute(
+            f"DELETE FROM {METADATA}.ducklake_snapshot_changes WHERE snapshot_id NOT IN "
+            f"(SELECT snapshot_id FROM {METADATA}.ducklake_snapshot)"
+        )
         cleanups = ["ducklake_cleanup_old_files"]
         if not self._cautious:
             cleanups.append("ducklake_delete_orphaned_files")

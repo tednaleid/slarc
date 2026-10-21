@@ -6,7 +6,7 @@ What slarc does. `docs/architecture.md` describes how the code is built.
 
 slarc is a read-only CLI that logs into Slack with the session the user's Slack desktop app already holds, pulls channels, DMs, threads and single messages into an archive that is a DuckLake (Parquet data files plus a SQLite catalog) with a content-addressed blob store, and renders them as static HTML (a local web viewer and PDF are planned). The archive is queried by DuckDB through slarc's views and is meant to live on one machine's local disk. slarc is a client, not a Slack app: nothing is installed in the workspace, no admin approval is needed, and it sees exactly what the user's account sees.
 
-Python 3.14 with uv, `slack_sdk`, Typer and DuckDB. Hexagonal architecture in the Cosmic Python style so every Slack interaction is behind a port with an in-memory fake for tests. Terms follow `GLOSSARY.md`; the larger decisions have ADRs in `docs/adr/`; facts verified against a real workspace are in `docs/slack-facts.md`.
+Python 3.15 with uv, `slack_sdk`, Typer and DuckDB. Hexagonal architecture in the Cosmic Python style so every Slack interaction is behind a port with an in-memory fake for tests. Terms follow `GLOSSARY.md`; the larger decisions have ADRs in `docs/adr/`; facts verified against a real workspace are in `docs/slack-facts.md`.
 
 ## Goals and non-goals
 
@@ -388,7 +388,7 @@ Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cas
 
 ## Toolchain
 
-- Python 3.14, uv, Typer + Rich, `slack_sdk` ≥ 3.45, `httpx`, DuckDB, msgspec, `cryptography`, `keyring`, Jinja2; pytest, Hypothesis, ruff (lint and format), ty (pinned).
+- Python 3.15, uv, Typer + Rich, `slack_sdk` ≥ 3.45, `httpx`, DuckDB, msgspec, `cryptography`, `keyring`, Jinja2; pytest, Hypothesis, ruff (lint and format), ty (pinned).
 - Installed with `uv tool install` (`uv tool install git+https://github.com/tednaleid/slarc`); `just install` does an editable install. Developer scripts use a uv shebang.
 - `just` recipes follow the just-bootstrap conventions: `check`, `test`, `lint`, `fmt`, `build`, `install`, `clean`, `bump`, `retag`, `install-hooks`. A pre-commit hook runs `just check`. GitHub Actions CI runs `just check` on macOS and Linux.
 - Public repo at `tednaleid/slarc`, MIT license.

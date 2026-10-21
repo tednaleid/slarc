@@ -25,13 +25,13 @@ from slarc.config import (
 )
 from slarc.domain.links import WorkspaceSel, parse_selector
 from slarc.ports import NoArchive, NoSession, SlarcError
-from slarc.service.auth import AuthStatus, auth_status, store_pasted
-from slarc.service.export import export
-from slarc.service.listing import ArchiveListing, RemoteRow, list_archive, list_remote
-from slarc.service.pull import PullOptions, PullReport, pull
-from slarc.service.remove import Removal, apply_removal, plan_removal
-from slarc.service.search import search
-from slarc.unit_of_work import UnitOfWork
+lazy from slarc.service.auth import AuthStatus, auth_status, store_pasted
+lazy from slarc.service.export import export
+lazy from slarc.service.listing import ArchiveListing, RemoteRow, list_archive, list_remote
+lazy from slarc.service.pull import PullOptions, PullReport, pull
+lazy from slarc.service.remove import Removal, apply_removal, plan_removal
+lazy from slarc.service.search import search
+lazy from slarc.unit_of_work import UnitOfWork
 
 app = typer.Typer(
     help="Archive the Slack conversations you can see into searchable, re-renderable files.",
