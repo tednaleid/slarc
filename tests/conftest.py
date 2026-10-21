@@ -1,11 +1,12 @@
 # ABOUTME: Shared pytest configuration and fixtures for slarc's tests; it adds --update-golden,
-# ABOUTME: the shared DuckDB extension directory, a temporary lock cache and a fixed machine id.
+# ABOUTME: one DuckDB thread per connection, the extension directory, a lock cache, a machine id.
 import os
 from pathlib import Path
 
 import pytest
 
 from slarc import bootstrap
+from slarc.adapters import lake
 from slarc.adapters.lake import extension_directory
 
 
@@ -16,6 +17,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="rewrite tests/golden/ files from the current output",
     )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    lake.DUCKDB_THREADS = 1
 
 
 @pytest.fixture

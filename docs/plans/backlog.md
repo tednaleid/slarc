@@ -14,7 +14,7 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 ### Storage and query
 - Full-text search with filters.
 - A generated JSON Schema for the envelope and a `validate` check.
-- Every command pays a fixed cost that dominates on small archives: run the owner check on a connection the command already opens, cache the machine id between commands instead of running `ioreg` in each, and share one DuckDB instance between the store and the index (`bootstrap.py`, `adapters/lake.py`, `adapters/host.py`).
+- Every command pays a fixed cost that dominates on small archives: run the owner check on a connection the command already opens, cache the machine id between commands instead of running `ioreg` in each, and share one DuckDB instance between the store and the index (`bootstrap.py`, `adapters/lake.py`, `adapters/host.py`). DuckDB also starts a thread per core on every connection: on a small lake, an open plus 10 queries takes 118 ms with the default and 65 ms with `threads` set to 1. Pick a thread count per connection after re-running the 1M-message query timings (`DUCKDB_THREADS` in `adapters/lake.py`, which the tests set to 1).
 - `FsBlobStore.ids()` skips `.tmp-*` files, so a killed downloader's partial blobs are never deleted, against the design's goal of repair without judgment (`adapters/blob_store.py`).
 - On Linux a machine without `/etc/machine-id` raises `NoMachineId`; fall back to `/var/lib/dbus/machine-id` (`adapters/host.py` `machine_id`).
 
@@ -25,7 +25,6 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 
 ### Tests and tooling
 - Obfuscated fixture recording from real workspaces.
-- Run the test suite in parallel with `pytest-xdist`; it takes about 110 s serially.
 - No contract test pins the message view's `first_seen_at` and `last_seen_at` (`tests/contract/test_duckdb_index.py`).
 
 ## Someday

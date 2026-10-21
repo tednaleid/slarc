@@ -30,6 +30,7 @@ dev = [
     "hypothesis>=6",
     "ruff>=0.9",
     "ty==0.0.89",
+    "pytest-xdist>=3.8.0",
 ]
 
 [build-system]

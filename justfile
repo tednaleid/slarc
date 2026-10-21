@@ -8,9 +8,9 @@ default: check
 # Run all checks (test + lint + typecheck + format check)
 check: test lint typecheck fmt-check
 
-# Run tests; pass pytest args, e.g. `just test -k links`
+# Run tests in parallel; pass pytest args, e.g. `just test -k links`, or `-n0` to run serially
 test *ARGS:
-    uv run pytest "$@"
+    uv run pytest -n auto "$@"
 
 # Run ruff lints
 lint:

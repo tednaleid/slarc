@@ -45,6 +45,14 @@ def test_connect_creates_catalog_tables_and_settings(tmp_path: Path, ext_dir: Pa
         assert catalog.execute("PRAGMA journal_mode").fetchone() == ("wal",)
 
 
+def test_a_new_catalog_creates_its_tables_in_one_snapshot(tmp_path: Path, ext_dir: Path) -> None:
+    con = connect_lake(tmp_path, ext_dir)
+    query = "SELECT count(*) FROM __ducklake_metadata_lake.ducklake_snapshot"
+    snapshots = con.execute(query).fetchall()
+    con.close()
+    assert snapshots == [(2,)]  # the empty lake, then every table
+
+
 def test_a_new_catalog_appears_only_when_complete(
     tmp_path: Path, ext_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

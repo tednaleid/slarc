@@ -17,6 +17,10 @@ DATA_DIR = "data"
 BLOB_DIR = "blobs"
 EXTENSIONS = ("ducklake", "sqlite_scanner")
 
+# DuckDB's threads for each lake connection, or None for one per core. Tests use 1, since starting
+# a thread per core for each connection costs more than it saves on a small lake.
+DUCKDB_THREADS: int | None = None
+
 # DuckLake attaches the SQLite catalog under this name. The owner record is a table of the catalog
 # itself, outside the lake, so it never moves into a data file that has not synced yet.
 METADATA = "__ducklake_metadata_lake"
@@ -166,7 +170,7 @@ def connect_lake(
     a read-only one ArchiveReadFailed, when it cannot open the catalog. `autoinstall=False`
     skips the download and exists for tests.
     """
-    con = duckdb.connect(":memory:")
+    con = duckdb.connect(":memory:", config={"threads": DUCKDB_THREADS} if DUCKDB_THREADS else {})
     try:
         _load_extensions(con, ext_dir, autoinstall=autoinstall)
         if not read_only:
@@ -227,7 +231,10 @@ def _sql_string(text: str) -> str:
 
 
 def _create_missing(con: duckdb.DuckDBPyConnection) -> None:
+    """Creates missing tables in one transaction, so a new lake gets one snapshot for them."""
+    con.execute("BEGIN")
     con.execute(SCHEMA)
+    con.execute("COMMIT")
     con.execute(OWNER_SCHEMA)
     present = {row[0] for row in con.execute("SELECT option_name FROM lake.options()").fetchall()}
     for name, value in OPTIONS.items():
