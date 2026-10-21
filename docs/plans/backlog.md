@@ -14,6 +14,9 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 ### Storage and query
 - Full-text search with filters.
 - A generated JSON Schema for the envelope and a `validate` check.
+- Every command pays a fixed cost that dominates on small archives: run the owner check on a connection the command already opens, cache the machine id between commands instead of running `ioreg` in each, and share one DuckDB instance between the store and the index (`bootstrap.py`, `adapters/lake.py`, `adapters/host.py`).
+- `FsBlobStore.ids()` skips `.tmp-*` files, so a killed downloader's partial blobs are never deleted, against the design's goal of repair without judgment (`adapters/blob_store.py`).
+- On Linux a machine without `/etc/machine-id` raises `NoMachineId`; fall back to `/var/lib/dbus/machine-id` (`adapters/host.py` `machine_id`).
 
 ### Export and rendering
 - `slarc serve`: a local web viewer over one archive (Starlette and HTMX).
@@ -22,6 +25,8 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 
 ### Tests and tooling
 - Obfuscated fixture recording from real workspaces.
+- Run the test suite in parallel with `pytest-xdist`; it takes about 110 s serially.
+- No contract test pins the message view's `first_seen_at` and `last_seen_at` (`tests/contract/test_duckdb_index.py`).
 
 ## Someday
 
@@ -82,7 +87,6 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 - Hashing a message whose file entry has no `id` raises `KeyError`, and `files: []` hashes differently from a missing `files` key (`domain/hashing.py`).
 - Blobs are written with mode 0600 and not fsynced before the rename (`adapters/blob_store.py`).
 - `stored_messages` copies the whole map on every call (`adapters/jsonl_store.py`, `archive_state.py`).
-- `UnitOfWork.__exit__` can hide the original exception if `append_run` raises (`unit_of_work.py`).
 - Every message query rescans all raw files twice; consider a temp table per invocation (`adapters/duckdb_index.py`).
 - The message view breaks a same-second tie by the lower hash; a failing `CREATE VIEW` leaks the connection; helper views are visible to `slarc sql` (`adapters/duckdb_index.py`).
 - `slarc list` loads every message of each tracked item to count them, through raw SQL on `QueryIndex.sql` instead of a narrow method (`service/listing.py`).

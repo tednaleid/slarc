@@ -81,6 +81,8 @@ Two couplings remain, by design:
   blobs/sha256/...    unchanged
 ```
 
+A command that only reads, such as `search` or `sql`, cannot checkpoint the catalog through its read-only connection, so it may leave an empty `-wal` file and a small `-shm` file beside the catalog; they are harmless and expected.
+
 slarc does not read `raw/`, `directory/` or `runs.jsonl` (Archives written before the lake, below).
 
 ### Tables

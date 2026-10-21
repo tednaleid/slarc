@@ -227,6 +227,8 @@ The archive is a DuckLake: Parquet data files plus a SQLite catalog, written and
   blobs/sha256/ab/cd/<hash>             # files, snippets, avatars, emoji and other images
 ```
 
+A command that only reads, such as `search` or `sql`, cannot checkpoint the catalog through its read-only connection, so it may leave an empty `-wal` file and a small `-shm` file beside the catalog; they are harmless and expected.
+
 Exports go wherever `--out` points (default: a new directory named after the export under the current directory).
 
 **Tables**

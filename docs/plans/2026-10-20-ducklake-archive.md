@@ -92,7 +92,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
   - `test_extension_directory_follows_xdg_cache_home`.
 - [x] **Step 2: Run `just test tests/adapters/test_lake.py` and watch them fail.**
 - [x] **Step 3: Implement `lake.py`.** `SET extension_directory` comes before `ATTACH`. Turn DuckDB's download and not-found errors on `INSTALL`/`LOAD` into `ExtensionsMissing`.
-- [x] **Step 4: Add the extension install to `just install`:** `uv run python -c "from slarc.adapters.lake import install_extensions, extension_directory; import os, pathlib; install_extensions(extension_directory(os.environ, pathlib.Path.home()))"`. Pin duckdb and run `uv lock`.
+- [x] **Step 4: Add the extension install to `just install`:** a named script, `scripts/install-extensions.py`, calls `install_extensions(extension_directory(os.environ, Path.home()))`, and `just install` runs it with `uv run python scripts/install-extensions.py`. Pin duckdb and run `uv lock`.
 - [x] **Step 5: Run `just check` and watch it pass.**
 - [x] **Step 6: Commit:** `Add the lake connection: SQLite catalog in WAL mode, schema and extensions`.
 
@@ -222,7 +222,7 @@ Service code never imports `duckdb` or `fcntl`. Every lake detail lives in `src/
 
 - [x] **Step 1: Delete the store and its tests.** Rewrite the import oracle on `archive_state`, and delete any `archive_state` function nothing calls.
 - [x] **Step 2: Run `just check` and watch it pass.**
-- [ ] **Step 3: Commit:** `Remove the JSONL archive store`.
+- [x] **Step 3: Commit:** `Remove the JSONL archive store`.
 
 ## Phase 2: commits
 

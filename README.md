@@ -40,6 +40,8 @@ An archive is a DuckLake: Parquet data files plus a SQLite catalog, read and wri
   blobs/sha256/...    downloaded files, avatars and emoji, named by content hash
 ```
 
+A command that only reads, such as `search` or `sql`, cannot checkpoint the catalog through its read-only connection, so it may leave an empty `-wal` file and a small `-shm` file beside the catalog; they are harmless and expected.
+
 The archive is read through slarc (`search`, `sql`, `export`) or through DuckDB, not with `rg` or `jq`, and it is not meant to be kept in git. Every pull commits in small steps, so a crash leaves exactly what was last committed. `slarc rm` deletes what only the removed items kept; the bytes are physically deleted when it exits, or by the next pull or rm that finds no other slarc command running. slarc does not read archives written in the earlier JSONL layout.
 
 The first run downloads two DuckDB extensions (`ducklake` and `sqlite_scanner`, about 27 MB each) into `~/.cache/slarc/duckdb`. `just install` fetches them too, so a machine set up while online works offline afterwards.
