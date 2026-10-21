@@ -11,14 +11,16 @@ from urllib.error import URLError
 
 import pytest
 from slack_sdk.errors import SlackApiError
-from slack_sdk.http_retry.builtin_handlers import (
-    ConnectionErrorRetryHandler,
-    RateLimitErrorRetryHandler,
-)
+from slack_sdk.http_retry.builtin_handlers import ConnectionErrorRetryHandler
+from slack_sdk.http_retry.request import HttpRequest
+from slack_sdk.http_retry.response import HttpResponse
+from slack_sdk.http_retry.state import RetryState
 
 from slarc import __version__
 from slarc.adapters.rate_limit import METHOD_TIERS
+from slarc.adapters.retry_after import RetryAfterHandler
 from slarc.adapters.slack_gateway import (
+    RATE_LIMIT_RETRIES,
     READ_METHODS,
     SessionConnector,
     SessionTokenGateway,
@@ -352,7 +354,58 @@ def test_web_api_sends_token_cookie_and_honest_user_agent():
     assert client.headers["Cookie"] == "d=xoxd-test-secret"
     assert client.headers["User-Agent"] == f"slarc/{__version__}"
     handlers = {type(handler) for handler in client.retry_handlers}
-    assert handlers == {RateLimitErrorRetryHandler, ConnectionErrorRetryHandler}
+    assert handlers == {RetryAfterHandler, ConnectionErrorRetryHandler}
+
+
+RATE_LIMITED_REQUEST = HttpRequest(
+    method="GET", url="https://slack.com/api/conversations.history", headers={}
+)
+
+
+@pytest.mark.parametrize(
+    ("headers", "waits"),
+    [({"Retry-After": "3"}, [3, 2, 1, 0]), ({}, [1, 0])],
+)
+def test_a_rate_limited_response_counts_down_the_wait_slack_asks_for(
+    headers: dict[str, str | list[str]], waits: list[int]
+):
+    shown: list[int] = []
+    slept: list[float] = []
+    handler = RetryAfterHandler(shown.append, RATE_LIMIT_RETRIES, slept.append)
+    state = RetryState()
+    response = HttpResponse(status_code=429, headers=headers)
+
+    assert handler.can_retry(state=state, request=RATE_LIMITED_REQUEST, response=response)
+    handler.prepare_for_next_attempt(state=state, request=RATE_LIMITED_REQUEST, response=response)
+
+    assert shown == waits
+    assert slept == [1] * (len(waits) - 1)
+    assert state.current_attempt == 1
+
+
+def test_rate_limited_retries_stop_after_the_limit():
+    handler = RetryAfterHandler(lambda _: None, RATE_LIMIT_RETRIES, lambda _: None)
+    state = RetryState(current_attempt=RATE_LIMIT_RETRIES)
+    response = HttpResponse(status_code=429, headers={"Retry-After": "1"})
+
+    assert not handler.can_retry(state=state, request=RATE_LIMITED_REQUEST, response=response)
+
+
+def test_web_api_counts_down_rate_limit_waits_with_the_callback_it_is_given():
+    shown: list[int] = []
+    [handler] = [
+        h
+        for h in web_api(make_session(), shown.append).client.retry_handlers
+        if isinstance(h, RetryAfterHandler)
+    ]
+    handler.sleep = lambda _: None
+    response = HttpResponse(status_code=429, headers={"Retry-After": "2"})
+
+    handler.prepare_for_next_attempt(
+        state=RetryState(), request=RATE_LIMITED_REQUEST, response=response
+    )
+
+    assert shown == [2, 1, 0]
 
 
 def test_session_repr_has_no_secrets():

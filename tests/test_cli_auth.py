@@ -18,7 +18,7 @@ def services(
     return bootstrap.Services(
         credentials=CompositeSource([source]),
         keychain=KeyringSource(keyring or FakeKeyring()),
-        gateway_factory=lambda _: gateway,
+        gateway_factory=lambda _, __: gateway,
     )
 
 

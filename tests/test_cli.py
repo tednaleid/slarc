@@ -67,7 +67,7 @@ def test_cli_take_ownership_option(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     services = bootstrap.Services(
         credentials=CompositeSource([]),
         keychain=KeyringSource(FakeKeyring()),
-        gateway_factory=lambda _: pytest.fail("this command never connects to Slack"),
+        gateway_factory=lambda _, __: pytest.fail("this command never connects to Slack"),
         env={},
         home=tmp_path,
     )
@@ -104,7 +104,7 @@ def test_cli_refuses_to_create_a_catalog_beside_synced_files(tmp_path: Path) -> 
     services = bootstrap.Services(
         credentials=CompositeSource([]),
         keychain=KeyringSource(FakeKeyring()),
-        gateway_factory=lambda _: pytest.fail("this command never connects to Slack"),
+        gateway_factory=lambda _, __: pytest.fail("this command never connects to Slack"),
         env={},
         home=tmp_path,
     )

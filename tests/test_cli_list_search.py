@@ -1,5 +1,6 @@
 # ABOUTME: Tests for the `slarc list` and `slarc search` commands over a copy of the recorded data.
 # ABOUTME: Credentials and Slack are fakes swapped in through bootstrap; only --remote uses them.
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -28,7 +29,7 @@ def archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def services(home: Path, sessions: list[Session], gateway: FakeSlackGateway | None = None):
-    def connect(_: Session) -> FakeSlackGateway:
+    def connect(_: Session, __: Callable[[int], None]) -> FakeSlackGateway:
         if gateway is None:
             pytest.fail("this command never connects to Slack")
         return gateway

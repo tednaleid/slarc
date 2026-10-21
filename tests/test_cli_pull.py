@@ -2,7 +2,7 @@
 # ABOUTME: Slack, credentials, the clock and the downloader are fakes swapped in through bootstrap.
 import io
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -81,18 +81,24 @@ class Fixture:
         self.downloader = FakeDownloader()
         self.download_sessions: list[dict[str, Session]] = []
         self.run_suffix = ""
+        self.rate_limited_for = 0  # seconds each gateway reports waiting when it is made
 
     def services(self) -> bootstrap.Services:
         def downloader(blobs: BlobStore, sessions: dict[str, Session]) -> nullcontext:
             self.download_sessions.append(sessions)
             return nullcontext(self.downloader)
 
+        def gateway(session: Session, waiting: Callable[[int], None]) -> FakeSlackGateway:
+            if self.rate_limited_for:
+                waiting(self.rate_limited_for)
+            return self.gateways.get(session.team_id, self.gateway)
+
         return bootstrap.Services(
             credentials=CompositeSource(
                 [FakeCredentialSource(self.sessions, self.credential_error)]
             ),
             keychain=KeyringSource(FakeKeyring()),
-            gateway_factory=lambda session: self.gateways.get(session.team_id, self.gateway),
+            gateway_factory=gateway,
             clock=self.clock,
             downloader=downloader,
             env=self.env,
@@ -412,6 +418,15 @@ def test_slarc_error_exits_1_without_traceback(f: Fixture):
     assert len(f.runs()) == 1
 
 
+def test_pull_shows_a_wait_slack_asked_for(f: Fixture):
+    f.rate_limited_for = 30
+
+    result = f.pull("--yes", BASE)
+
+    assert result.exit_code == 0, result.output
+    assert "rate limited, waiting 30s" in result.output
+
+
 def test_no_session_shows_credential_warnings(f: Fixture):
     error = CredentialReadError("desktop", "keychain read refused")
     f.sessions = []
@@ -587,3 +602,26 @@ def test_reporter_shows_no_archive_row_for_a_run_with_no_other_rows():
         reporter.archive("saved", finished=True)
 
     assert buffer.getvalue() == ""
+
+
+def test_reporter_counts_down_a_rate_limit_wait_and_then_drops_the_row():
+    buffer = io.StringIO()
+
+    with RichReporter(Console(file=buffer, width=80)) as reporter:
+        reporter.progress("#tgt_subslack", ItemProgress(3, 3))
+        reporter.waiting(28)
+        reporter.waiting(0)
+
+    rows = buffer.getvalue().splitlines()
+    assert [row.split()[0] for row in rows] == ["#tgt_subslack"]
+
+
+def test_reporter_shows_the_rate_limit_wait_it_is_counting_down():
+    buffer = io.StringIO()
+
+    with RichReporter(Console(file=buffer, width=80)) as reporter:
+        reporter.waiting(28)
+
+    [row] = buffer.getvalue().splitlines()
+    assert row.startswith("Slack")
+    assert row.rstrip().endswith("rate limited, waiting 28s")

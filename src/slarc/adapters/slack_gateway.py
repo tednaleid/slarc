@@ -2,14 +2,12 @@
 # ABOUTME: Also the connector that picks a session for a workspace and checks it with auth.test.
 import logging
 from collections.abc import Callable, Iterator
+from functools import partial
 from typing import Any, Protocol
 
 lazy from slack_sdk import WebClient
 lazy from slack_sdk.errors import SlackApiError
-lazy from slack_sdk.http_retry.builtin_handlers import (
-    ConnectionErrorRetryHandler,
-    RateLimitErrorRetryHandler,
-)
+lazy from slack_sdk.http_retry.builtin_handlers import ConnectionErrorRetryHandler
 
 from slarc import __version__
 from slarc.adapters.rate_limit import METHOD_TIERS, TieredLimiter
@@ -24,6 +22,7 @@ from slarc.ports import (
     SlarcError,
     ThreadNotFound,
 )
+lazy from slarc.adapters.retry_after import RetryAfterHandler
 
 READ_METHODS = frozenset(METHOD_TIERS)
 USER_AGENT = f"slarc/{__version__}"
@@ -62,7 +61,11 @@ class SlackWebApi:
         return data
 
 
-def web_api(session: Session) -> SlackWebApi:
+def no_wait_shown(seconds: int) -> None:
+    """A waiting callback for callers that show no rate limit waits."""
+
+
+def web_api(session: Session, waiting: Callable[[int], None] = no_wait_shown) -> SlackWebApi:
     sdk_logger = logging.getLogger(SDK_LOGGER)
     sdk_logger.setLevel(logging.INFO)
     client = WebClient(
@@ -70,7 +73,7 @@ def web_api(session: Session) -> SlackWebApi:
         logger=sdk_logger,
         headers={"Cookie": f"d={session.xoxd}"},
         retry_handlers=[
-            RateLimitErrorRetryHandler(max_retry_count=RATE_LIMIT_RETRIES),
+            RetryAfterHandler(waiting, RATE_LIMIT_RETRIES),
             ConnectionErrorRetryHandler(),
         ],
     )
@@ -186,8 +189,11 @@ class SessionTokenGateway:
         return SlarcError(f"Slack returned {code} for {method}.")
 
 
-def session_gateway(session: Session) -> SlackGateway:
-    return SessionTokenGateway(session, TieredLimiter())
+def session_gateway(
+    session: Session, waiting: Callable[[int], None] = no_wait_shown
+) -> SlackGateway:
+    """A gateway for the session that calls waiting while it waits out a rate-limited call."""
+    return SessionTokenGateway(session, TieredLimiter(), partial(web_api, waiting=waiting))
 
 
 class SessionConnector:

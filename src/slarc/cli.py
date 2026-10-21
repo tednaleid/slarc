@@ -60,6 +60,7 @@ TARGET = "⌖"  # crosshairs, before the date history reads back to
 FETCHED_AT = "%Y-%m-%dT%H:%M:%SZ"
 DOWNLOADS_ROW = "Downloads"
 ARCHIVE_ROW = "Archive"
+WAITING_ROW = "Slack"
 DIRECTORY_KINDS = "(users, emoji, files)"
 NOTHING_TO_REMOVE = "Nothing to remove."
 NOTHING_REMOVED = "Nothing removed."
@@ -141,7 +142,7 @@ def auth(
         xoxc = typer.prompt("Token (xoxc-...)", hide_input=True)
         xoxd = typer.prompt("d cookie (xoxd-...)", hide_input=True)
         try:
-            session = store_pasted(services.keychain, xoxc, xoxd, services.gateway_factory)
+            session = store_pasted(services.keychain, xoxc, xoxd, services.gateway)
         except SlarcError as error:
             _fail(str(error))
         out.print(
@@ -182,6 +183,7 @@ class RichReporter:
             console=console,
         )
         self._tasks: dict[str, TaskID] = {}
+        self._started = False
 
     def __enter__(self) -> RichReporter:
         return self
@@ -192,7 +194,7 @@ class RichReporter:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        if self._tasks:
+        if self._started:
             self._progress.stop()
 
     def info(self, msg: str) -> None:
@@ -219,13 +221,21 @@ class RichReporter:
         self._show(DOWNLOADS_ROW, done, total, ", ".join(parts))
 
     def archive(self, step: str, *, finished: bool = False) -> None:
-        if self._tasks:
+        if self._tasks.keys() - {WAITING_ROW}:
             self._show(ARCHIVE_ROW, 1 if finished else 0, 1 if finished else None, step)
+
+    def waiting(self, seconds: int) -> None:
+        """Counts down a wait Slack asked for; 0 ends the wait and drops its row."""
+        if seconds:
+            self._show(WAITING_ROW, 0, None, f"rate limited, waiting {seconds}s")
+        elif WAITING_ROW in self._tasks:
+            self._progress.remove_task(self._tasks.pop(WAITING_ROW))
 
     def _show(self, label: str, done: float, total: float | None, detail: str) -> None:
         if label not in self._tasks:
-            if not self._tasks:
+            if not self._started:
                 self._progress.start()
+                self._started = True
             self._tasks[label] = self._progress.add_task(label, total=total, detail=detail)
         self._progress.update(self._tasks[label], completed=done, total=total, detail=detail)
 
@@ -394,23 +404,26 @@ def pull_command(
             max_file_bytes=settings.max_file_size_mb * MB,
             active_thread_days=settings.active_thread_days,
         )
-        connector = services.connector()
-        with (
-            bootstrap.archive_stores(archive_root, services.take_ownership) as (archive, blobs),
-            services.downloader(blobs, connector.authenticated) as downloader,
-            RichReporter(err) as reporter,
-            UnitOfWork(
-                archive,
-                blobs,
-                services.clock,
-                "pull",
-                args,
-                __version__,
-                services.run_suffix,
-                reporter,
-            ) as uow,
-        ):
-            report = pull(parsed, options, uow, connector, downloader, reporter)
+        with RichReporter(err) as reporter:
+            connector = services.connector(reporter.waiting)
+            with (
+                bootstrap.archive_stores(archive_root, services.take_ownership) as (
+                    archive,
+                    blobs,
+                ),
+                services.downloader(blobs, connector.authenticated) as downloader,
+                UnitOfWork(
+                    archive,
+                    blobs,
+                    services.clock,
+                    "pull",
+                    args,
+                    __version__,
+                    services.run_suffix,
+                    reporter,
+                ) as uow,
+            ):
+                report = pull(parsed, options, uow, connector, downloader, reporter)
     except NoSession as error:
         _warn([str(e) for e in services.credentials.errors])
         _fail(str(error))

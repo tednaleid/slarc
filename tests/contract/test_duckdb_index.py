@@ -487,7 +487,7 @@ def cli_services(home: Path) -> bootstrap.Services:
     return bootstrap.Services(
         credentials=CompositeSource([]),
         keychain=KeyringSource(FakeKeyring()),
-        gateway_factory=lambda _: pytest.fail("sql never connects to Slack"),
+        gateway_factory=lambda _, __: pytest.fail("sql never connects to Slack"),
         env={},
         home=home,
     )

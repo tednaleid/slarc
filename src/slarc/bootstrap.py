@@ -7,6 +7,7 @@ from collections.abc import Callable, Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 
 lazy import duckdb
@@ -50,6 +51,10 @@ DOWNLOAD_TIMEOUT_S = 60.0
 type DownloaderFactory = Callable[
     [BlobStore, dict[str, Session]], AbstractContextManager[Downloader]
 ]
+
+
+def _no_wait_shown(seconds: int) -> None:
+    pass
 
 
 class SystemClock:
@@ -199,7 +204,8 @@ def export_writer() -> ExportWriter:
 class Services:
     credentials: CompositeSource
     keychain: KeyringSource
-    gateway_factory: Callable[[Session], SlackGateway]
+    # Builds a session's gateway, which calls its second argument while it waits out a rate limit.
+    gateway_factory: Callable[[Session, Callable[[int], None]], SlackGateway]
     clock: Clock = field(default_factory=SystemClock)
     downloader: DownloaderFactory = http_downloader
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
@@ -207,8 +213,15 @@ class Services:
     run_suffix: str = ""  # ends the run id, telling apart commands started in the same second
     take_ownership: bool = False  # the global --take-ownership option
 
-    def connector(self) -> SessionConnector:
-        return SessionConnector(self.credentials, self.gateway_factory)
+    def gateway(
+        self, session: Session, waiting: Callable[[int], None] = _no_wait_shown
+    ) -> SlackGateway:
+        return self.gateway_factory(session, waiting)
+
+    def connector(self, waiting: Callable[[int], None] = _no_wait_shown) -> SessionConnector:
+        """A connector whose gateways call waiting with the seconds left of each rate limit
+        wait, and with 0 when it ends."""
+        return SessionConnector(self.credentials, partial(self.gateway, waiting=waiting))
 
 
 def real_services() -> Services:
