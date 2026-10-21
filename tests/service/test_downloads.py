@@ -20,8 +20,8 @@ from slarc.ports import (
 )
 from slarc.service.downloads import (
     drain_downloads,
+    image_types,
     image_urls,
-    named_images,
     outstanding_downloads,
     queue_downloads,
 )
@@ -723,7 +723,7 @@ def test_report_counts_too_large_as_skipped_and_images_saved(h: Harness):
     assert (report.downloads_pending, report.downloads_skipped) == (0, 1)
 
 
-def test_named_images_names_custom_emoji_and_avatars():
+def test_image_types_tells_apart_custom_emoji_and_avatars():
     view = DirectoryView(
         users={"U0TIM000001": {"profile": {"display_name": "Tim", "image_512": "https://a/t.png"}}},
         conversations={},
@@ -737,8 +737,8 @@ def test_named_images_names_custom_emoji_and_avatars():
         "attachments": [{"image_url": "https://i/preview.png"}],
     }
 
-    assert named_images(message, view) == {
-        "https://i/preview.png": None,
-        "https://e/party.png": ":party:",
-        "https://a/t.png": "@Tim",
+    assert image_types(message, view) == {
+        "https://i/preview.png": "image",
+        "https://e/party.png": "emoji",
+        "https://a/t.png": "avatar",
     }

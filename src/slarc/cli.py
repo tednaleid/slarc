@@ -5,13 +5,13 @@ import shlex
 import signal
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from itertools import groupby
 from pathlib import Path
 from types import FrameType, TracebackType
 from typing import Annotated, Any, NoReturn
 
 import typer
 from rich import box
+from rich.cells import cell_len
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TaskID, TextColumn
 from rich.style import Style
@@ -32,7 +32,7 @@ lazy from slarc.service.auth import AuthStatus, auth_status, store_pasted
 lazy from slarc.service.export import export
 lazy from slarc.service.listing import (
     ArchiveListing,
-    ListRow,
+    ListedDownload,
     RemoteRow,
     list_archive,
     list_remote,
@@ -72,8 +72,6 @@ FETCHED_AT = "%Y-%m-%dT%H:%M:%SZ"
 DOWNLOADS_ROW = "Downloads"
 ARCHIVE_ROW = "Archive"
 REMOTE_TAKES_NO_LINKS = "slarc list --remote lists every conversation; it takes no links."
-# Download statuses a list shows with their attempts.
-ATTEMPTS_SHOWN = ("failed", "gave_up", "pending")
 WAITING_ROW = "Slack"
 DIRECTORY_KINDS = "(users, emoji, files)"
 NOTHING_TO_REMOVE = "Nothing to remove."
@@ -556,39 +554,45 @@ def _print_listing(listing: ArchiveListing) -> None:
             for row in listing.rows
         ]
         out.print(_table(headers, rows))
-        if any(row.outstanding for row in listing.rows):
-            _print_outstanding(listing.rows)
+        if listing.downloads:
+            _print_downloads(listing.downloads)
             out.print()
     else:
         out.print(NO_TRACKED_ITEMS, markup=False)
     out.print(f"Downloads: {listing.pending} pending, {listing.skipped} skipped.", markup=False)
 
 
-def _print_outstanding(rows: list[ListRow]) -> None:
-    """Each row's downloads that are not saved, grouped by status and error. A URL prints whole
-    on its own line, as a terminal link, so it copies and opens even where the terminal wraps it."""
-    for row in rows:
-        if not row.outstanding:
-            continue
-        out.print()
-        out.print(f"{row.conversation} in {row.workspace}", markup=False)
-        groups = groupby(row.outstanding, key=lambda o: (o.status, o.attempts, o.error))
-        for (status, attempts, error), downloads in groups:
-            reason = _download_status(status, attempts)
-            out.print(f"  {reason}: {error}" if error else f"  {reason}", markup=False)
-            for download in downloads:
-                name = f"{download.name}  " if download.name else ""
-                line = Text.assemble(
-                    f"    {download.kind:<5}  {name}", (download.url, Style(link=download.url))
-                )
-                out.print(line, soft_wrap=True)
+def _print_downloads(downloads: list[ListedDownload]) -> None:
+    """One line per download, columns aligned as in _table. The URL comes last, unpadded and as
+    a terminal link, so it is never wrapped or cut and copies and opens whole."""
+    headers = ["Workspace", "Conversation", "Type", "Status", "Attempts", "Error"]
+    cells = [
+        [
+            d.workspace,
+            d.conversation,
+            d.type,
+            d.status.replace("_", " "),
+            "" if d.attempts is None else str(d.attempts),
+            d.error or "",
+        ]
+        for d in downloads
+    ]
+    widths = [max(cell_len(row[i]) for row in [headers, *cells]) for i in range(len(headers))]
 
+    def columns(values: list[str]) -> str:
+        padded = (
+            value + " " * (width - cell_len(value))
+            for value, width in zip(values, widths, strict=True)
+        )
+        return "  " + "   ".join(padded) + "   "
 
-def _download_status(status: str, attempts: int) -> str:
-    text = status.replace("_", " ")
-    if status in ATTEMPTS_SHOWN and attempts:
-        return f"{text} after {_plural(attempts, 'attempt')}"
-    return f"{text}, not tried yet" if status == "pending" else text
+    heading = columns(headers) + "URL"
+    out.print()
+    out.print(heading, markup=False, soft_wrap=True)
+    out.print(" " + "\u2500" * (cell_len(heading) - 1), markup=False, soft_wrap=True)
+    for values, download in zip(cells, downloads, strict=True):
+        line = Text.assemble(columns(values), (download.url, Style(link=download.url)))
+        out.print(line, soft_wrap=True)
 
 
 def _print_remote(rows: list[RemoteRow]) -> None:

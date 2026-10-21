@@ -127,7 +127,7 @@ def test_cli_search_and_sql_in_an_empty_archive(
     assert "0" in queried.output
 
 
-def test_cli_list_of_a_link_shows_each_download_not_saved_on_one_line(
+def test_cli_list_of_a_link_shows_each_download_on_one_line_with_failures_last(
     archive: Path, tmp_path: Path, ext_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(cli.out, "width", 60)  # narrower than the URLs, which must not wrap
@@ -142,11 +142,24 @@ def test_cli_list_of_a_link_shows_each_download_not_saved_on_one_line(
     assert result.exit_code == 0, result.output
     lines = result.output.splitlines()
     assert "#slarc-fixtures" not in result.output
-    assert "#all-naleid in naleidworkspace" in lines
-    assert "  forbidden: Slack returned HTTP 403 for the image." in lines
-    assert f"    image  {GIPHY}" in lines
-    assert "  failed after 2 attempts: Could not reach secure.gravatar.com." in lines
-    assert f"    image  @Tim Naleid  {AVATAR}" in lines
+    header = next(line for line in lines if line.rstrip().endswith("URL"))
+    assert header.split() == [
+        "Workspace",
+        "Conversation",
+        "Type",
+        "Status",
+        "Attempts",
+        "Error",
+        "URL",
+    ]
+    giphy = next(line for line in lines if line.endswith(GIPHY))
+    assert giphy.split()[:5] == ["naleidworkspace", "#all-naleid", "image", "forbidden", "1"]
+    assert "Slack returned HTTP 403 for the image." in giphy
+    avatar = next(line for line in lines if line.endswith(AVATAR))
+    assert avatar.split()[:5] == ["naleidworkspace", "#all-naleid", "avatar", "failed", "2"]
+    saved = [line for line in lines if " saved " in line]
+    assert saved
+    assert lines.index(saved[-1]) < lines.index(giphy) < lines.index(avatar)
     assert lines[-1] == "Downloads: 1 pending, 1 skipped."
 
 

@@ -31,6 +31,7 @@ from slarc.unit_of_work import UnitOfWork
 
 TERMINAL_STATUSES = ("forbidden", "deleted", "external", "gave_up")
 QUEUED_STATUSES = ("pending", "failed")
+type ImageType = Literal["image", "emoji", "avatar"]
 SKIPPED_STATUSES = ("too_large", "forbidden", "gave_up")
 OUTSIDE_MAX_ATTEMPTS = 3
 DOWNLOAD_API = "download"
@@ -85,7 +86,7 @@ def queue_downloads(
     retry_skipped queues forbidden and gave_up outside-site images afresh.
     """
     referenced = message.get("files") or []
-    urls = list(named_images(message, view))
+    urls = list(image_types(message, view))
     if not referenced and not urls:
         return []
     stored = uow.archive.directory_state(team_id, "file") if files is None else files
@@ -198,20 +199,20 @@ def outstanding_downloads(archive: ArchiveStore) -> dict[DownloadKey, DownloadSt
     return outstanding
 
 
-def named_images(message: dict, view: DirectoryView | None) -> dict[str, str | None]:
+def image_types(message: dict, view: DirectoryView | None) -> dict[str, ImageType]:
     """The message's images plus, through view, its custom emoji and its authors' avatars, each
-    with its name: :name: for an emoji, @name for an avatar, None for the message's own."""
-    images: dict[str, str | None] = dict.fromkeys(image_urls(message))
+    URL with which of those it is."""
+    images: dict[str, ImageType] = dict.fromkeys(image_urls(message), "image")
     if view is not None:
         for name in _emoji_names(message):
             url = custom_emoji_url(name, view.emoji)
             if is_web_url(url):
-                images.setdefault(url, f":{name}:")
+                images.setdefault(url, "emoji")
         authors = [message.get("user"), *(message.get("reply_users") or [])]
         for user_id in authors:
             url = directory_image_url("user", view.users.get(user_id or "") or {})
             if url is not None:
-                images.setdefault(url, f"@{view.user_display(user_id or '')}")
+                images.setdefault(url, "avatar")
     return images
 
 

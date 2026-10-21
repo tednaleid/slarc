@@ -13,13 +13,7 @@ from slarc.config import load_settings, read_global_config
 from slarc.domain.links import parse_selector
 from slarc.domain.tracking import DownloadState, TrackedItem
 from slarc.ports import Commit, SlarcError
-from slarc.service.listing import (
-    ArchiveListing,
-    ListRow,
-    Outstanding,
-    list_archive,
-    list_remote,
-)
+from slarc.service.listing import ArchiveListing, ListRow, list_archive, list_remote
 from tests.fakes import FakeArchiveLock, FakeConnector, FakeSlackGateway
 from tests.recorded_fixtures import RECORDED_TEAM, recorded_lake
 from tests.service.pull_harness import NALEID, spike
@@ -171,7 +165,7 @@ def test_list_counts_messages_and_pending(
     assert (listing.pending, listing.skipped) == (2, 2)
 
 
-def test_a_list_scoped_to_a_link_shows_its_item_and_each_download_not_saved(
+def test_a_list_scoped_to_a_link_shows_its_item_and_every_download_with_failures_last(
     archive: Path, ext_dir: Path, store: DuckLakeArchiveStore
 ) -> None:
     leave_downloads_outstanding(store)
@@ -180,19 +174,25 @@ def test_a_list_scoped_to_a_link_shows_its_item_and_each_download_not_saved(
 
     [row] = listing.rows
     assert row.conversation == "#slarc-fixtures"
-    assert sorted(row.outstanding, key=lambda o: o.url) == [
-        Outstanding("file", "seed.mp4", f"https://files.slack.com/{VIDEO}", "pending", 0, None),
-        Outstanding(
+    assert {(d.workspace, d.conversation) for d in listing.downloads} == {
+        ("naleidworkspace", "#slarc-fixtures")
+    }
+    saved = [d for d in listing.downloads if d.status == "saved"]
+    assert saved
+    assert listing.downloads[: len(saved)] == saved
+    assert {(d.attempts, d.error) for d in saved} == {(None, None)}
+    assert [
+        (d.type, d.status, d.attempts, d.error, d.url) for d in listing.downloads[len(saved) :]
+    ] == [
+        ("file", "pending", 0, None, f"https://files.slack.com/{VIDEO}"),
+        (
             "file",
-            "seed.pdf",
-            f"https://files.slack.com/{PDF}",
             "too_large",
             1,
             "seed.pdf is over the size limit.",
+            f"https://files.slack.com/{PDF}",
         ),
-        Outstanding(
-            "image", "@Tim Naleid", AVATAR, "failed", 2, "Could not reach secure.gravatar.com."
-        ),
+        ("avatar", "failed", 2, "Could not reach secure.gravatar.com.", AVATAR),
     ]
 
 
@@ -201,14 +201,15 @@ def test_a_list_scoped_to_a_workspace_shows_every_item_in_it_with_its_downloads(
 ) -> None:
     leave_downloads_outstanding(store)
 
-    rows = rows_by_item(listing_of(archive, ext_dir, store, "naleidworkspace"))
+    listing = listing_of(archive, ext_dir, store, "naleidworkspace")
 
-    assert rows.keys() == rows_by_item(listing_of(archive, ext_dir, store)).keys()
-    channel = rows[("#all-naleid", "conversation")]
-    assert {(o.name, o.status) for o in channel.outstanding} == {
-        (None, "forbidden"),
-        ("@Tim Naleid", "failed"),
+    assert rows_by_item(listing).keys() == rows_by_item(listing_of(archive, ext_dir, store)).keys()
+    unsaved = {
+        (d.type, d.status)
+        for d in listing.downloads
+        if d.conversation == "#all-naleid" and d.status != "saved"
     }
+    assert unsaved == {("file", "deleted"), ("image", "forbidden"), ("avatar", "failed")}
 
 
 def test_an_unscoped_list_leaves_out_the_downloads(
@@ -216,9 +217,7 @@ def test_an_unscoped_list_leaves_out_the_downloads(
 ) -> None:
     leave_downloads_outstanding(store)
 
-    rows = listing_of(archive, ext_dir, store).rows
-
-    assert [row.outstanding for row in rows] == [()] * len(rows)
+    assert listing_of(archive, ext_dir, store).downloads == []
 
 
 def test_a_list_scoped_to_something_untracked_fails(
