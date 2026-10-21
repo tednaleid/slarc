@@ -207,10 +207,11 @@ class RichReporter:
 
     def progress(self, label: str, update: ItemProgress) -> None:
         parts = [f"{update.read:,} read, {update.new:,} new"]
+        # A target alone, when history returned nothing new, would only look like a gap.
         if update.at is not None:
             parts.append(f"@{_local_date(update.at)}")
-        if update.target is not None:
-            parts.append(f"{TARGET} {_local_date(update.target)}")
+            if update.target is not None:
+                parts.append(f"{TARGET} {_local_date(update.target)}")
         total = None if update.share is None else 1
         self._show(label, update.share or 0, total, "  ".join(parts))
 

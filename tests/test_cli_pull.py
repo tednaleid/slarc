@@ -625,3 +625,13 @@ def test_reporter_shows_the_rate_limit_wait_it_is_counting_down():
     [row] = buffer.getvalue().splitlines()
     assert row.startswith("Slack")
     assert row.rstrip().endswith("rate limited, waiting 28s")
+
+
+def test_reporter_shows_no_target_date_until_history_reaches_a_message():
+    buffer = io.StringIO()
+
+    with RichReporter(Console(file=buffer, width=80)) as reporter:
+        reporter.progress("#tgt_subslack", ItemProgress(0, 0, target="1685620800", share=1))
+
+    [row] = buffer.getvalue().splitlines()
+    assert row.rstrip().endswith("0 read, 0 new")
