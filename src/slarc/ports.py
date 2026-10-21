@@ -63,16 +63,22 @@ class ThreadNotFound(SlarcError):
         super().__init__(f"Thread {ts} was not found in conversation {channel}.")
 
 
-class ArchiveWriteFailed(SlarcError):
-    def __init__(self, path: Path, reason: str | None) -> None:
+class ArchiveFailed(SlarcError):
+    """The archive could not be read or written; a pull stops rather than skip items."""
+
+    def __init__(self, path: Path, message: str) -> None:
         self.path = path
-        super().__init__(f"Could not write to {path}: {reason}.")
+        super().__init__(message)
 
 
-class ArchiveReadFailed(SlarcError):
+class ArchiveWriteFailed(ArchiveFailed):
     def __init__(self, path: Path, reason: str | None) -> None:
-        self.path = path
-        super().__init__(f"Could not read {path}: {reason}.")
+        super().__init__(path, f"Could not write to {path}: {reason}.")
+
+
+class ArchiveReadFailed(ArchiveFailed):
+    def __init__(self, path: Path, reason: str | None) -> None:
+        super().__init__(path, f"Could not read {path}: {reason}.")
 
 
 class FileDeleted(SlarcError):

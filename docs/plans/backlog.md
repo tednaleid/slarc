@@ -86,7 +86,6 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 - `int(ts.split(".")[0])` is repeated in `cli._ts_time`, `export._seconds` and `threads.active_threads`; give `MessageTs` a `seconds` property and a `from_datetime` constructor.
 - Hashing a message whose file entry has no `id` raises `KeyError`, and `files: []` hashes differently from a missing `files` key (`domain/hashing.py`).
 - Blobs are written with mode 0600 and not fsynced before the rename (`adapters/blob_store.py`).
-- `stored_messages` copies the whole map on every call (`adapters/jsonl_store.py`, `archive_state.py`).
 - Every message query rescans all raw files twice; consider a temp table per invocation (`adapters/duckdb_index.py`).
 - The message view breaks a same-second tie by the lower hash; a failing `CREATE VIEW` leaks the connection; helper views are visible to `slarc sql` (`adapters/duckdb_index.py`).
 - `slarc list` loads every message of each tracked item to count them, through raw SQL on `QueryIndex.sql` instead of a narrow method (`service/listing.py`).
@@ -95,7 +94,7 @@ Future work, grouped by phase and then by theme. Each line says what is wrong or
 - `slarc search --in @user` is refused although the spec gives `search` pull's selectors (`service/search.py`, `SEARCH` in `adapters/duckdb_index.py`).
 - With `--root DIR` and no `slarc.toml`, `NoArchive` still says "here or in any parent directory" (`ports.py`, `cli.py`).
 - The global config dict carries a `_path` sentinel key, and `_pick`'s error would print "None:" without it (`config.py`).
-- Write failures other than opening a month file surface as a raw `OSError` traceback: `JsonlArchiveStore` write and flush, `FsBlobStore`; `export_writer.py` raises a plain `SlarcError` rather than `ArchiveWriteFailed` (`adapters/jsonl_store.py`, `adapters/blob_store.py`, `adapters/export_writer.py`).
+- `FsBlobStore` write failures surface as a raw `OSError` traceback, and `export_writer.py` raises a plain `SlarcError` rather than `ArchiveWriteFailed` (`adapters/blob_store.py`, `adapters/export_writer.py`).
 
 ### Export and rendering
 - Emoji and image assets with no recorded content type take their extension from the URL, or `bin`; detect the type from the file signature instead (`service/export.py` `_image_extension`).

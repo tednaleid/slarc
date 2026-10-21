@@ -20,7 +20,7 @@ from slarc.domain.links import (
 from slarc.domain.plain import plain_text
 from slarc.domain.tracking import ItemKey, TrackedItem, item_label
 from slarc.ports import (
-    ArchiveWriteFailed,
+    ArchiveFailed,
     AuthFailed,
     CommitConflict,
     Downloader,
@@ -269,7 +269,7 @@ class _PullRun:
         except ThreadNotFound:
             self._warn(_missing_message(connection.domain, channel, ts))
             return None
-        except AuthFailed, ArchiveWriteFailed:
+        except AuthFailed, ArchiveFailed:
             raise
         except SlarcError as error:
             link = message_link(connection.domain, channel, ts)
@@ -371,7 +371,7 @@ class _PullRun:
         except ThreadNotFound:
             self._skip(item, _missing_message(connection.domain, item.channel, ts))
             return None
-        except AuthFailed, ArchiveWriteFailed:
+        except AuthFailed, ArchiveFailed:
             raise
         except SlarcError as error:
             link = message_link(connection.domain, item.channel, ts)
@@ -389,7 +389,7 @@ class _PullRun:
         self.progress = _ItemProgress(self.reporter, item_label(item, view))
         try:
             self._read_conversation(connection, held, item, view)
-        except AuthFailed, ArchiveWriteFailed:
+        except AuthFailed, ArchiveFailed:
             raise
         except SlarcError as error:
             self.uow.discard()
@@ -589,7 +589,7 @@ class _PullRun:
         Progress is reported after the page and after each thread. A thread whose
         read fails with NotVisible or a plain SlarcError is kept in held.failed_threads;
         NotVisible then propagates, and a plain SlarcError skips the thread with a warning.
-        AuthFailed and ArchiveWriteFailed propagate.
+        AuthFailed and ArchiveFailed propagate.
         """
         if page:
             self._append_bots(connection, page, view)
@@ -606,7 +606,7 @@ class _PullRun:
             except NotVisible:
                 held.failed_threads.add(ts)
                 raise
-            except AuthFailed, ArchiveWriteFailed:
+            except AuthFailed, ArchiveFailed:
                 raise
             except SlarcError as error:
                 link = message_link(connection.domain, channel, ts)

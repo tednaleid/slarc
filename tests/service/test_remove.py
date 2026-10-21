@@ -1,13 +1,22 @@
 # ABOUTME: Tests for the removal use case: pull spike fixtures into an in-memory archive, then rm.
 # ABOUTME: Each removal is checked to delete exactly the lines, files, images and blobs planned.
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
 from slarc import __version__
+from slarc.domain.envelope import Kind
 from slarc.domain.links import parse_selector
 from slarc.domain.tracking import TrackedItem
-from slarc.ports import Commit, CommitConflict, Committed, SearchHit, SlarcError
+from slarc.ports import (
+    ArchiveReadFailed,
+    Commit,
+    CommitConflict,
+    Committed,
+    SearchHit,
+    SlarcError,
+)
 from slarc.service.remove import Removal, apply_removal, plan_removal
 from slarc.unit_of_work import UnitOfWork
 from tests.service.pull_harness import (
@@ -313,6 +322,18 @@ def test_rm_of_untracked_selector_fails(h: Harness):
     assert str(raised.value) == f"Nothing tracked matches {SNIPPET_LINK}."
     with pytest.raises(SlarcError, match=r"^Nothing tracked matches other\.$"):
         plan(h, "other")
+
+
+def test_rm_by_name_reports_an_archive_read_failure(h: Harness, monkeypatch: pytest.MonkeyPatch):
+    h.pull(BASE)
+
+    def unreadable(team: str, kind: Kind) -> dict[str, dict]:
+        raise ArchiveReadFailed(Path("catalog.sqlite"), "disk I/O error")
+
+    monkeypatch.setattr(h.archive, "directory_objects", unreadable)
+
+    with pytest.raises(ArchiveReadFailed):
+        plan(h, "#all-naleid")
 
 
 def test_rm_reply_link_removes_its_thread_item(h: Harness):

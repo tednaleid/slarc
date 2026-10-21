@@ -5,12 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from slarc.domain.envelope import Envelope
+from slarc.domain.envelope import Envelope, Kind
 from slarc.ports import (
+    ArchiveReadFailed,
     ArchiveWriteFailed,
     AuthFailed,
     Commit,
     Committed,
+    DirectoryState,
     NotVisible,
     SlarcError,
     ThreadNotFound,
@@ -541,12 +543,26 @@ def test_archive_write_failure_aborts_the_pull(h: Harness, monkeypatch: pytest.M
 
     def failing_on_messages(env: Envelope) -> None:
         if env.meta.kind == "message":
-            raise ArchiveWriteFailed(Path("raw/2026-10.jsonl"), "No space left on device")
+            raise ArchiveWriteFailed(Path("data/"), "No space left on device")
         appended(env)
 
     monkeypatch.setattr(h.archive, "append", failing_on_messages)
 
     with pytest.raises(ArchiveWriteFailed):
+        h.pull(BASE)
+
+
+def test_archive_read_failure_aborts_the_pull(h: Harness, monkeypatch: pytest.MonkeyPatch):
+    read = h.archive.directory_state
+
+    def unreadable_files(team: str, kind: Kind) -> dict[str, DirectoryState]:
+        if kind == "file":
+            raise ArchiveReadFailed(Path("catalog.sqlite"), "disk I/O error")
+        return read(team, kind)
+
+    monkeypatch.setattr(h.archive, "directory_state", unreadable_files)
+
+    with pytest.raises(ArchiveReadFailed):
         h.pull(BASE)
 
 

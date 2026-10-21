@@ -10,6 +10,7 @@ from slarc.domain.envelope import Envelope
 from slarc.domain.links import ConversationSel, Selector, WorkspaceSel
 from slarc.domain.tracking import DownloadState, ItemKey, TrackedItem
 from slarc.ports import (
+    ArchiveFailed,
     ArchiveStore,
     BlobStore,
     CommitConflict,
@@ -326,6 +327,8 @@ def _named(
     if isinstance(selector, ConversationSel):
         try:
             channel = archived_conversation(selector, team, archive)
+        except ArchiveFailed:
+            raise
         except SlarcError:
             return []
         wanted = {("conversation", channel, "")}
