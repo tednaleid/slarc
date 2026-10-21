@@ -109,10 +109,6 @@ COMPACTION = (
     "ducklake_rewrite_data_files",
 )
 
-# The store reads one conversation or directory kind at a time, where a thread per core costs
-# more than it saves.
-STORE_THREADS = 1
-
 _decode = msgspec.json.Decoder()
 
 
@@ -142,7 +138,7 @@ class DuckLakeArchiveStore:
         lock.hold_shared()
         try:
             with lock.write():
-                self._con = connect_lake(root, ext_dir, threads=STORE_THREADS)
+                self._con = connect_lake(root, ext_dir)
                 try:
                     self._cautious = owner(self._con)
                 except BaseException:
