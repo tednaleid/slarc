@@ -1,6 +1,6 @@
 # slarc
 
-Read-only CLI that pulls Slack conversations into an archive of append-only JSONL files.
+Read-only CLI that pulls Slack conversations into a DuckLake archive (Parquet plus a SQLite catalog).
 Spec: `docs/specs/detailed-requirements.md`. Terms: `GLOSSARY.md`. Decisions: `docs/adr/`.
 Architecture: `docs/architecture.md`. Plan and progress: `docs/plans/`. Backlog: `docs/plans/backlog.md`.
 Verified Slack facts: `docs/specs/phase0-spike-findings.md`.

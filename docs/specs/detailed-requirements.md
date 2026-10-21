@@ -215,7 +215,7 @@ Items marked (spike) were confirmed against the test workspace; the rest come fr
 
 ## Storage
 
-The archive is a DuckLake: Parquet data files plus a SQLite catalog, written and read through the `duckdb` package, and a content-addressed blob store beside it (ADR 0004, design in `docs/specs/2026-10-20-ducklake-archive-design.md`). A commit is a catalog transaction, so a batch is part of the archive if and only if its transaction committed, and a crash leaves exactly the last committed state. slarc reads no JSONL: an archive with no `catalog.sqlite` gets an empty lake, and any `raw/`, `directory/` or `runs.jsonl` in it is ignored.
+The archive is a DuckLake: Parquet data files plus a SQLite catalog, written and read through the `duckdb` package, and a content-addressed blob store beside it (ADR 0004, design in `docs/specs/2026-10-20-ducklake-archive-design.md`). A commit is a catalog transaction, so a batch is part of the archive if and only if its transaction committed, and a crash leaves exactly the last committed state. slarc reads no JSONL: an archive with no `catalog.sqlite` and no files in `data/` or `blobs/` gets an empty lake, and any `raw/`, `directory/` or `runs.jsonl` in it is ignored.
 
 **Layout of one archive**
 
