@@ -401,7 +401,9 @@ class _Recorder:
         if self._held(key) is None:
             return None
         downloaded = None
-        if result.status != "ok":
+        if result.status == "not_tried":
+            self._not_tried(job, result.error)
+        elif result.status != "ok":
             self._settle(job, result.status, result.error)
         elif job.target_kind == "file":
             downloaded = self._record_file(result)
@@ -486,6 +488,13 @@ class _Recorder:
             status = "gave_up"
         settled = msgspec.structs.replace(held, status=status, attempts=attempts, last_error=error)
         self._replace(job, settled)
+
+    def _not_tried(self, job: DownloadJob, error: str | None) -> None:
+        """Keeps the job's status and attempts, recording only why it was not tried."""
+        held = self._held((job.team_id, job.target))
+        if held is None:
+            raise ValueError(f"No download state is queued for {job.target}")
+        self._replace(job, msgspec.structs.replace(held, last_error=error))
 
     def _replace(self, job: DownloadJob, state: DownloadState | None) -> None:
         """Replaces the run's state for the job's target; None settles it, as a download does,

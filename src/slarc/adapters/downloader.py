@@ -23,7 +23,7 @@ DEFAULT_RETRY_AFTER_S = 5.0
 MAX_RETRY_AFTER_S = 60
 SESSION_HINT = "The Slack session may have expired; sign in again and pull to retry."
 
-type FailedStatus = Literal["failed", "forbidden", "not_found", "too_large"]
+type FailedStatus = Literal["failed", "forbidden", "not_found", "too_large", "not_tried"]
 
 TERMINAL_HTTP_STATUSES: dict[int, FailedStatus] = {403: "forbidden", 404: "not_found"}
 
@@ -59,12 +59,16 @@ class HostHolds:
         with self._lock:
             self._until[host] = max(self._until.get(host, 0.0), self._clock() + seconds)
 
-    def wait(self, host: str, cancel: threading.Event) -> None:
-        """Pauses until the host's hold ends; raises Cancelled if cancel is set first."""
+    def wait(self, host: str, cancel: threading.Event) -> float:
+        """Pauses until the host's hold ends and returns 0, or returns the seconds left at once
+        when more than MAX_RETRY_AFTER_S are. Raises Cancelled if cancel is set first."""
         with self._lock:
             left = self._until.get(host, 0.0) - self._clock()
+        if left > MAX_RETRY_AFTER_S:
+            return left
         if left > 0:
             self._pause(left, cancel)
+        return 0
 
 
 class HttpDownloader:
@@ -124,8 +128,9 @@ class HttpDownloader:
         """Follows redirects itself, so each hop gets credentials only if it is a Slack file.
 
         A job outside Slack's file host gets a shorter timeout than the client's default. An
-        HTTP 429 holds its host for the Retry-After, up to MAX_RETRY_AFTER_S, then retries, up
-        to RATE_LIMIT_RETRIES times.
+        HTTP 429 holds its host for the Retry-After. Within MAX_RETRY_AFTER_S the download waits
+        and retries, up to RATE_LIMIT_RETRIES times; past it, the download fails, and later
+        requests to the host are not tried while the hold lasts.
         """
         url = job.url
         timeout = httpx.USE_CLIENT_DEFAULT if job.slack_auth else OUTSIDE_TIMEOUT_S
@@ -134,7 +139,9 @@ class HttpDownloader:
         while redirects <= MAX_REDIRECTS:
             _raise_if_set(cancel)
             host = _host(url)
-            self._holds.wait(host, cancel)
+            left = self._holds.wait(host, cancel)
+            if left:
+                return _result(job, "not_tried", f"Not tried: {host} asked to wait {left:.0f}s")
             headers = self._headers(job, url)
             with self._client.stream("GET", url, headers=headers, timeout=timeout) as response:
                 if response.is_redirect and "location" in response.headers:
@@ -144,13 +151,13 @@ class HttpDownloader:
                 code = response.status_code
                 if code == httpx.codes.TOO_MANY_REQUESTS:
                     seconds = _retry_after(response.headers.get("retry-after"))
+                    self._holds.hold(host, seconds)
                     if seconds > MAX_RETRY_AFTER_S:
                         error = f"{_http_error(code)}, asked to wait {seconds:.0f}s"
                         return _result(job, "failed", error)
                     if retries == RATE_LIMIT_RETRIES:
                         return _result(job, "failed", _http_error(code))
                     retries += 1
-                    self._holds.hold(host, seconds)
                     continue
                 if code in TERMINAL_HTTP_STATUSES:
                     return _result(job, TERMINAL_HTTP_STATUSES[code], _http_error(code))

@@ -332,6 +332,30 @@ def test_full_pull_retries_given_up_forbidden_and_not_found_outside_images(
     assert image_status(h, GITHUB_THUMB) == (status, 1)
 
 
+def test_a_retry_not_tried_stays_queued_with_its_attempts(h: Harness):
+    h.downloader.fail(GIPHY_URL, error="timed out")
+    h.pull(THREAD_LINK)
+    assert image_status(h, GIPHY_URL) == ("failed", 1)
+    held = "Not tried: media4.giphy.com asked to wait 900s"
+    h.downloader.fail(GIPHY_URL, status="not_tried", error=held)
+
+    h.pull()
+
+    state = outstanding_downloads(h.archive)[(TEAM, GIPHY_URL)]
+    assert (state.status, state.attempts, state.last_error) == ("pending", 1, held)
+
+
+def test_a_first_download_not_tried_stays_pending(h: Harness):
+    held = "Not tried: media4.giphy.com asked to wait 900s"
+    h.downloader.fail(GIPHY_URL, status="not_tried", error=held)
+
+    report = h.pull(THREAD_LINK)
+
+    state = outstanding_downloads(h.archive)[(TEAM, GIPHY_URL)]
+    assert (state.status, state.attempts, state.last_error) == ("pending", 0, held)
+    assert report.downloads_pending >= 1
+
+
 def test_retry_skipped_queues_given_up_and_not_found_images_afresh(h: Harness):
     h.downloader.fail(GIPHY_URL, error="timed out")
     h.downloader.fail(GITHUB_THUMB, status="not_found", error="HTTP 404 Not Found")

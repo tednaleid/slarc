@@ -400,9 +400,9 @@ def test_a_held_host_makes_its_other_downloads_wait_out_the_rest():
 
     holds.hold("opengraph.githubassets.com", 30)
     time_.now += 10
-    holds.wait("opengraph.githubassets.com", cancel)
-    holds.wait("upload.wikimedia.org", cancel)
-    holds.wait("opengraph.githubassets.com", cancel)
+    assert holds.wait("opengraph.githubassets.com", cancel) == 0
+    assert holds.wait("upload.wikimedia.org", cancel) == 0
+    assert holds.wait("opengraph.githubassets.com", cancel) == 0
 
     assert time_.pauses == [20]
 
@@ -432,3 +432,50 @@ def test_closing_fetch_stops_a_download_waiting_out_a_retry_after():
     results.close()
 
     assert time.monotonic() - started < 1.0
+
+
+def test_a_host_that_asks_for_a_long_wait_is_not_tried_again_this_run():
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        if request.url.host == "opengraph.githubassets.com":
+            return httpx.Response(429, headers={"Retry-After": "900"})
+        return httpx.Response(200, content=b"ok")
+
+    jobs = [
+        job("https://opengraph.githubassets.com/first"),
+        job("https://opengraph.githubassets.com/second"),
+        job("https://upload.wikimedia.org/third"),
+    ]
+    time_ = FakeTime()
+    results = {
+        r.job.url.rsplit("/", 1)[1]: r
+        for r in downloader(handler, holds=held(time_)).fetch(jobs, 1)
+    }
+
+    assert sorted(requests) == [
+        "https://opengraph.githubassets.com/first",
+        "https://upload.wikimedia.org/third",
+    ]
+    assert time_.pauses == []
+    assert (results["first"].status, results["first"].error) == (
+        "failed",
+        "HTTP 429 Too Many Requests, asked to wait 900s",
+    )
+    assert (results["second"].status, results["second"].error) == (
+        "not_tried",
+        "Not tried: opengraph.githubassets.com asked to wait 900s",
+    )
+    assert results["third"].status == "ok"
+
+
+def test_a_hold_longer_than_the_most_slarc_waits_is_returned_without_pausing():
+    time_ = FakeTime()
+    holds = held(time_)
+
+    holds.hold("opengraph.githubassets.com", 900)
+    time_.now += 100
+
+    assert holds.wait("opengraph.githubassets.com", threading.Event()) == 800
+    assert time_.pauses == []
