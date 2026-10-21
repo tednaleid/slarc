@@ -203,20 +203,26 @@ def _create_catalog(con: duckdb.DuckDBPyConnection, root: Path) -> None:
 
 def _attach(con: duckdb.DuckDBPyConnection, root: Path, catalog: Path, *, read_only: bool) -> None:
     attach_options = [
-        f"DATA_PATH '{root / DATA_DIR}/'",
+        f"DATA_PATH {_sql_string(f'{root / DATA_DIR}/')}",
         "OVERRIDE_DATA_PATH true",
         "METADATA_PARAMETERS MAP {'journal_mode': 'wal'}",
     ]
     if read_only:
         attach_options.append("READ_ONLY")
     try:
-        con.execute(f"ATTACH 'ducklake:sqlite:{catalog}' AS lake ({', '.join(attach_options)})")
+        target = _sql_string(f"ducklake:sqlite:{catalog}")
+        con.execute(f"ATTACH {target} AS lake ({', '.join(attach_options)})")
     except duckdb.Error as error:
         # DuckDB's message ends with the cause, after the catalog path it already names.
         reason = str(error).splitlines()[0].rsplit(": ", 1)[-1]
         failure = ArchiveReadFailed if read_only else ArchiveWriteFailed
         raise failure(root / CATALOG, reason) from None
     con.execute("USE lake")
+
+
+def _sql_string(text: str) -> str:
+    """A SQL string literal of text, for statements such as ATTACH that take no parameters."""
+    return "'" + text.replace("'", "''") + "'"
 
 
 def _create_missing(con: duckdb.DuckDBPyConnection) -> None:

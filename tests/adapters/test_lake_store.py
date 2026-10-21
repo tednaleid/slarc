@@ -7,7 +7,9 @@ import msgspec
 import pytest
 
 from slarc.adapters import lake_store
-from slarc.adapters.lake import CATALOG, connect_lake
+from slarc.adapters.blob_store import FsBlobStore
+from slarc.adapters.duckdb_index import DuckDbQueryIndex
+from slarc.adapters.lake import CATALOG, check_owner, connect_lake
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.ports import ArchiveReadFailed, ArchiveWriteFailed, Commit
 from tests.contract.test_archive_store import (
@@ -126,6 +128,26 @@ def test_tracked_items_round_trip_every_field(tmp_path: Path, ext_dir: Path) -> 
         conversation.key: msgspec.structs.replace(conversation, revision=1),
     }
     reopened.close()
+
+
+def test_an_archive_path_with_an_apostrophe_works(tmp_path: Path, ext_dir: Path) -> None:
+    root = tmp_path / "Ted's archive"
+    store = DuckLakeArchiveStore(root, ext_dir, FakeArchiveLock())
+    store.append(message(TS, "Hello", T1, R1))
+    store.commit(Commit(items=[tracked(TS)]))
+    store.close()
+
+    reopened = DuckLakeArchiveStore(root, ext_dir, FakeArchiveLock())
+    assert list(reopened.stored_messages(TEAM, CHANNEL)) == [TS]
+    assert reopened.maintain(FsBlobStore(root)) is True
+    reopened.close()
+    with DuckDbQueryIndex(root, ext_dir, FakeArchiveLock()) as index:
+        assert index.conversation_counts() == {(TEAM, CHANNEL): 1}
+    con = connect_lake(root, ext_dir)
+    try:
+        assert check_owner(con, "machine", "host", take_ownership=True) is True
+    finally:
+        con.close()
 
 
 def assert_one_plain_sentence(message: str, path: Path) -> None:
