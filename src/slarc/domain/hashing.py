@@ -65,7 +65,7 @@ def _message_subset(obj: dict) -> dict:
         if key in subset:
             subset[key] = _without_block_ids(subset[key])
     if obj.get("files") is not None:
-        subset["files"] = [{"id": f["id"], "mode": f.get("mode")} for f in obj["files"]]
+        subset["files"] = [{"id": f.get("id"), "mode": f.get("mode")} for f in obj["files"]]
     return subset
 
 

@@ -80,6 +80,13 @@ def test_message_files_hash_id_and_mode_only():
     assert content_hash("message", a) != content_hash("message", tombstone)
 
 
+def test_message_hash_takes_a_file_entry_without_an_id():
+    with_entry = {"text": "x", "files": [{"mode": "hidden_by_limit"}]}
+
+    assert content_hash("message", with_entry) == content_hash("message", dict(with_entry))
+    assert content_hash("message", with_entry) != content_hash("message", {"text": "x"})
+
+
 def test_message_hash_ignores_fields_outside_subset():
     parent = thread_parent()
     other = {**parent, "client_msg_id": "other", "team": "T9", "thread_ts": "1.0"}

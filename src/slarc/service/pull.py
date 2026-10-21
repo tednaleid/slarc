@@ -668,7 +668,7 @@ class _PullRun:
         self, held: HeldConversation, messages: list[dict], api: str, view: DirectoryView
     ) -> None:
         uow, team_id, channel = self.uow, held.team_id, held.channel
-        files = {f["id"]: f for m in messages for f in m.get("files") or []}
+        files = {f["id"]: f for m in messages for f in m.get("files") or [] if f.get("id")}
         appended = append_directory(uow, team_id, "file", files, api, keep_blob=True)
         held.files.update(appended)
         for message in messages:

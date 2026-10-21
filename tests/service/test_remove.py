@@ -206,6 +206,17 @@ def test_rm_conversation_deletes_its_lines_and_unreferenced_files(h: Harness):
     }
 
 
+def test_rm_reads_past_a_file_entry_without_an_id(h: Harness):
+    no_id = {**message(ts_on(18, 9)), "files": [{"mode": "hidden_by_limit"}]}
+    h.gateway.conversations[SECOND_CHANNEL] = [no_id]
+    pull_and_download(h, BASE, SECOND_LINK)
+
+    rm(h, BASE)
+
+    assert stored(h, TEAM, CHANNEL) == set()
+    assert stored(h, TEAM, SECOND_CHANNEL) == {ts_on(18, 9)}
+
+
 def test_rm_thread_inside_tracked_conversation_keeps_its_messages(h: Harness):
     pull_and_download(h, BASE, THREAD_LINK)
     before = inventory(h)

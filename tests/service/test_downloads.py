@@ -356,6 +356,17 @@ def test_a_first_download_not_tried_stays_pending(h: Harness):
     assert report.downloads_pending >= 1
 
 
+def test_a_file_entry_without_an_id_is_stored_and_its_neighbours_downloaded(h: Harness):
+    [snippet] = [m for m in h.gateway.conversations[CHANNEL] if m["ts"] == SNIPPET_TS]
+    h.change_message(SNIPPET_TS, files=[{"mode": "hidden_by_limit"}, *snippet["files"]])
+
+    h.pull(SNIPPET_LINK)
+
+    [stored] = [env for env in h.lines("message") if env.meta.ts == SNIPPET_TS]
+    assert len((stored.object or {})["files"]) == 2
+    assert SNIPPET in {job.target for job in h.downloader.jobs}
+
+
 def test_retry_skipped_queues_given_up_and_not_found_images_afresh(h: Harness):
     h.downloader.fail(GIPHY_URL, error="timed out")
     h.downloader.fail(GITHUB_THUMB, status="not_found", error="HTTP 404 Not Found")

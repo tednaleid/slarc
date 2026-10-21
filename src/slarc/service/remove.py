@@ -231,7 +231,7 @@ def _team_deletion(
         for ts in covered:
             for env in versions[ts]:
                 message = env.object or {}
-                file_refs.update(file["id"] for file in message.get("files") or [])
+                file_refs.update(f["id"] for f in message.get("files") or [] if f.get("id"))
                 image_refs.update(image_urls(message))
     if tracked:
         image_refs |= _directory_images(team, archive)

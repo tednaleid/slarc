@@ -87,7 +87,7 @@ def queue_downloads(
     known, the archive's file, image and download state, are read here when not given.
     retry_skipped queues skipped downloads afresh, as requeue_skipped describes.
     """
-    referenced = message.get("files") or []
+    referenced = [file for file in message.get("files") or [] if file.get("id")]
     urls = list(image_types(message, view))
     if not referenced and not urls:
         return []
