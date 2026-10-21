@@ -1,6 +1,8 @@
 # ABOUTME: Tests for the top-level slarc CLI behavior.
 # ABOUTME: Runs the Typer app in-process with CliRunner.
 import signal
+import subprocess
+import sys
 from io import StringIO
 from pathlib import Path
 
@@ -17,11 +19,27 @@ from tests.recorded_fixtures import recorded_lake
 
 runner = CliRunner()
 
+STARTUP_IMPORTS = """
+import sys
+from slarc import bootstrap, cli
+bootstrap.real_services()
+loaded = {name.split(".")[0] for name in sys.modules}
+print(" ".join(sorted(loaded & {"cryptography", "httpx", "keyring", "slack_sdk"})))
+"""
+
 
 def test_version_prints_installed_version():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
     assert result.stdout.strip() == f"slarc {__version__}"
+
+
+def test_startup_leaves_the_slack_and_credential_libraries_unloaded():
+    """A command that reads only the archive never pays for importing them."""
+    result = subprocess.run(
+        [sys.executable, "-c", STARTUP_IMPORTS], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == ""
 
 
 def test_progress_bar_shows_messages_read_and_new():

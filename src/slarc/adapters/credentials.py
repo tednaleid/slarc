@@ -4,7 +4,8 @@ import json
 from collections.abc import Mapping
 from typing import Protocol
 
-from keyring.errors import KeyringError
+lazy import keyring
+lazy from keyring.errors import KeyringError
 
 from slarc.ports import CredentialReadError, CredentialSource, Session
 
@@ -49,6 +50,16 @@ class KeyringBackend(Protocol):
     def get_password(self, service_name: str, username: str) -> str | None: ...
 
     def set_password(self, service_name: str, username: str, password: str) -> None: ...
+
+
+class SystemKeyring:
+    """The OS keychain through the keyring package, imported on the first call."""
+
+    def get_password(self, service_name: str, username: str) -> str | None:
+        return keyring.get_password(service_name, username)
+
+    def set_password(self, service_name: str, username: str, password: str) -> None:
+        keyring.set_password(service_name, username, password)
 
 
 class KeyringSource:

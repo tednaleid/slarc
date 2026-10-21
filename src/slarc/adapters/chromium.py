@@ -8,8 +8,8 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+lazy from cryptography.hazmat.primitives import padding
+lazy from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from slarc.adapters.leveldb import latest_values
 

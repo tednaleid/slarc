@@ -125,7 +125,7 @@ Known problems and future work, grouped by theme. Each line says what is wrong o
 ### Storage and query
 - Full-text search with filters.
 - A generated JSON Schema for the envelope and a `validate` check.
-- Every command imports every adapter, about 200 ms before any work, though `list`, `search` and `sql` never reach Slack; Python 3.15's `lazy import` would defer them (`bootstrap.py`, `cli.py`). One DuckDB thread would save about 55 ms per connection on a small archive but makes large scans several times slower; a thread count chosen from the archive's size could have both (`adapters/lake.py`).
+- `list` reads every message of each tracked item, one query per item, to match its pending and skipped downloads, so its time grows with the archive; counting them in one SQL query would not (`service/listing.py`). One DuckDB thread would save about 55 ms per connection on a small archive but makes large scans several times slower; a thread count chosen from the archive's size could have both (`adapters/lake.py`).
 - `FsBlobStore.ids()` skips `.tmp-*` files, so a killed downloader's partial blobs are never deleted, against the design's goal of repair without judgment (`adapters/blob_store.py`).
 - On Linux a machine without `/etc/machine-id` raises `NoMachineId`; fall back to `/var/lib/dbus/machine-id` (`adapters/host.py` `machine_id`).
 

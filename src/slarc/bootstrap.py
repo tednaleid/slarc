@@ -11,7 +11,6 @@ from pathlib import Path
 
 lazy import duckdb
 lazy import httpx
-lazy import keyring
 
 from slarc.ports import (
     BlobStore,
@@ -23,7 +22,12 @@ from slarc.ports import (
     SlackGateway,
 )
 lazy from slarc.adapters.blob_store import FsBlobStore
-lazy from slarc.adapters.credentials import CompositeSource, EnvSource, KeyringSource
+lazy from slarc.adapters.credentials import (
+    CompositeSource,
+    EnvSource,
+    KeyringSource,
+    SystemKeyring,
+)
 lazy from slarc.adapters.desktop_session import DesktopSessionSource
 lazy from slarc.adapters.downloader import HttpDownloader
 lazy from slarc.adapters.duckdb_index import DuckDbQueryIndex
@@ -208,7 +212,7 @@ class Services:
 
 
 def real_services() -> Services:
-    keyring_source = KeyringSource(keyring)
+    keyring_source = KeyringSource(SystemKeyring())
     desktop = DesktopSessionSource(Path.home(), sys.platform)
     return Services(
         credentials=CompositeSource([EnvSource(os.environ), keyring_source, desktop]),
