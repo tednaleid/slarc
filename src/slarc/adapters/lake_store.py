@@ -253,9 +253,9 @@ class DuckLakeArchiveStore:
         Holding the read lock exclusively proves no other process reads an older snapshot,
         has data files in flight or has written a blob it has not committed, so the deletion
         uses no time windows: it expires every snapshot but the newest, deletes every old and
-        orphaned data file and every blob no directory row references, and vacuums the
-        catalog once over a quarter of its pages are free. A cautious store skips the orphaned
-        files and the blobs. Returns whether the deletion ran.
+        orphaned data file, every blob no directory row references and every partly written
+        blob, and vacuums the catalog once over a quarter of its pages are free. A cautious
+        store skips the orphaned files and the blobs. Returns whether the deletion ran.
         Raises ValueError if the open batch is not empty, and MaintenanceFailed when the lake,
         the catalog or the blob store fails.
         """
@@ -365,6 +365,7 @@ class DuckLakeArchiveStore:
                 f"SELECT count(*) FROM {function}('lake', cleanup_all => true)"
             ).fetchall()
         if not self._cautious:
+            blobs.delete_partial()
             rows = self._con.execute(
                 "SELECT DISTINCT blob FROM directory_entry WHERE blob IS NOT NULL"
             ).fetchall()

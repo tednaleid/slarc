@@ -153,6 +153,7 @@ class InMemoryArchiveStore:
         if not self.idle:
             return False
         deleting()
+        blobs.delete_partial()
         referenced = {blob for _, _, _, blob in self.blob_references()}
         for blob in sorted(set(blobs.ids()) - referenced):
             blobs.delete(blob)
@@ -286,6 +287,9 @@ class InMemoryBlobStore:
 
     def delete(self, sha256: str) -> None:
         self.blobs.pop(sha256, None)
+
+    def delete_partial(self) -> None:
+        pass
 
 
 class InMemoryExportWriter:

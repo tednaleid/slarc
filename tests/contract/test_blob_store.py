@@ -39,6 +39,26 @@ def test_fs_blob_path_and_no_leftover_temp_files(tmp_path: Path):
     assert files == [path]
 
 
+def test_fs_delete_partial_removes_what_a_killed_writer_left(tmp_path: Path):
+    blobs = FsBlobStore(tmp_path)
+    digest, _ = blobs.write([b"whole"])
+    partial = tmp_path / "blobs" / "sha256" / ".tmp-killed"
+    partial.write_bytes(b"half")
+
+    blobs.delete_partial()
+
+    assert not partial.exists()
+    assert list(blobs.ids()) == [digest]
+
+
+def test_delete_partial_keeps_every_blob(blobs: BlobStore):
+    digest, _ = blobs.write([b"whole"])
+
+    blobs.delete_partial()
+
+    assert list(blobs.ids()) == [digest]
+
+
 def test_fs_concurrent_writes_of_the_same_content_leave_one_blob(tmp_path: Path):
     blobs = FsBlobStore(tmp_path)
     data = b"same bytes " * 10_000

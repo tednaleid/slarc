@@ -198,6 +198,7 @@ class BlobStore(Protocol):
     def read(self, sha256: str) -> bytes: ...
     def ids(self) -> Iterator[str]: ...
     def delete(self, sha256: str) -> None: ...  # a missing blob is not an error
+    def delete_partial(self) -> None: ...  # what killed writers left; none may be running
 
 
 class ExportWriter(Protocol):

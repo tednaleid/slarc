@@ -107,6 +107,8 @@ def test_maintain_physically_deletes_dropped_rows_and_unreferenced_blobs(
     store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
     kept, _ = blobs.write([b"kept"])
     blobs.write([b"unreferenced"])
+    partial = tmp_path / "blobs" / "sha256" / ".tmp-killed"
+    partial.write_bytes(b"half")
     for env in messages(50):
         store.append(env)
     store.append(file_line("F1", T1, R1, kept))
@@ -119,6 +121,7 @@ def test_maintain_physically_deletes_dropped_rows_and_unreferenced_blobs(
     assert written
     assert written.isdisjoint(data_files(tmp_path))
     assert sorted(blobs.ids()) == [kept]
+    assert not partial.exists()
     assert store.channels(TEAM) == []
     store.close()
 
@@ -130,6 +133,8 @@ def test_maintain_defers_deletion_while_another_command_holds_the_archive(
     lock = FakeArchiveLock()
     store = DuckLakeArchiveStore(tmp_path, ext_dir, lock)
     unreferenced, _ = blobs.write([b"unreferenced"])
+    partial = tmp_path / "blobs" / "sha256" / ".tmp-writing"
+    partial.write_bytes(b"half")
     for env in messages(50):
         store.append(env)
     store.commit(Commit(items=[tracked(TS)]))
@@ -144,6 +149,7 @@ def test_maintain_defers_deletion_while_another_command_holds_the_archive(
     assert written
     assert written <= data_files(tmp_path)
     assert list(blobs.ids()) == [unreferenced]
+    assert partial.exists()
     assert store.channels(TEAM) == []
     store.close()
 

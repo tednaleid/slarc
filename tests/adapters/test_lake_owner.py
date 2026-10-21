@@ -123,6 +123,8 @@ def test_takeover_run_skips_orphan_and_blob_deletion(tmp_path: Path, ext_dir: Pa
     blobs = FsBlobStore(tmp_path)
     connect_lake(tmp_path, ext_dir).close()
     unreferenced, _ = blobs.write([b"synced ahead of the catalog"])
+    partial = tmp_path / "blobs" / "sha256" / ".tmp-synced"
+    partial.write_bytes(b"maybe still arriving")
     store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock(), owner=lambda con: True)
     for env in messages(50):
         store.append(env)
@@ -138,12 +140,14 @@ def test_takeover_run_skips_orphan_and_blob_deletion(tmp_path: Path, ext_dir: Pa
     assert written.isdisjoint(data_files(tmp_path))
     assert orphan.exists()
     assert list(blobs.ids()) == [unreferenced]
+    assert partial.exists()
     store.close()
 
     store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
     assert store.maintain(blobs) is True
     assert not orphan.exists()
     assert list(blobs.ids()) == []
+    assert not partial.exists()
     store.close()
 
 

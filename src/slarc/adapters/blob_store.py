@@ -6,6 +6,8 @@ import tempfile
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
+TEMP_PREFIX = ".tmp-"
+
 
 class FsBlobStore:
     def __init__(self, root: Path) -> None:
@@ -15,7 +17,7 @@ class FsBlobStore:
         self._dir.mkdir(parents=True, exist_ok=True)
         digest = hashlib.sha256()
         size = 0
-        with tempfile.NamedTemporaryFile(dir=self._dir, prefix=".tmp-", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(dir=self._dir, prefix=TEMP_PREFIX, delete=False) as tmp:
             try:
                 for chunk in chunks:
                     tmp.write(chunk)
@@ -51,6 +53,10 @@ class FsBlobStore:
         for parent in (path.parent, path.parent.parent):
             if parent.exists() and not any(parent.iterdir()):
                 parent.rmdir()
+
+    def delete_partial(self) -> None:
+        for path in self._dir.glob(f"{TEMP_PREFIX}*"):
+            path.unlink(missing_ok=True)
 
     def _path(self, sha256: str) -> Path:
         return self._dir / sha256[:2] / sha256[2:4] / sha256
