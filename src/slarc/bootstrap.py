@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+import duckdb
 import httpx
 import keyring
 
@@ -103,54 +104,61 @@ def ensure_lake(root: Path) -> None:
         lock.release_shared()
 
 
-def _check_owner(root: Path, take_ownership: bool) -> bool:
-    """Checks the existing lake's owner record against this machine; returns whether the run
-    is cautious. See check_owner.
+def _owner_check(
+    root: Path, take_ownership: bool, *, writable: bool
+) -> Callable[[duckdb.DuckDBPyConnection], bool]:
+    """A check of the archive's owner record, for a store or index to run on the connection it
+    opens; it returns whether the run is cautious. See check_owner.
 
-    A record naming this machine is read under the read lock alone. Recording this machine, on
-    the first open or when taking ownership, takes the write lock as well. A check that has
-    passed for this archive and machine in this process is not repeated.
+    A check that has passed for this archive and machine in this process is not repeated.
     """
-    machine, host = _this_host()
-    key = (root.resolve(), machine)
-    if key in _owner_checked:
+
+    def check(con: duckdb.DuckDBPyConnection) -> bool:
+        machine, host = _this_host()
+        key = (root.resolve(), machine)
+        if key not in _owner_checked:
+            _owner_checked[key] = _check_owner(con, root, machine, host, take_ownership, writable)
         return _owner_checked[key]
-    cautious = _check_owner_once(root, machine, host, take_ownership)
-    _owner_checked[key] = cautious
-    return cautious
+
+    return check
 
 
-def _check_owner_once(root: Path, machine: str, host: str, take_ownership: bool) -> bool:
-    lock = archive_lock(root)
-    lock.hold_shared()
-    try:
-        if not take_ownership:
-            con = connect_lake(root, _extension_directory(), read_only=True)
-            try:
-                if read_owner(con) is not None:
-                    return check_owner(con, machine, host, take_ownership=False)
-            finally:
-                con.close()
-        with lock.write():
-            con = connect_lake(root, _extension_directory())
-            try:
-                return check_owner(con, machine, host, take_ownership)
-            finally:
-                con.close()
-    finally:
-        lock.release_shared()
+def _check_owner(
+    con: duckdb.DuckDBPyConnection,
+    root: Path,
+    machine: str,
+    host: str,
+    take_ownership: bool,
+    writable: bool,
+) -> bool:
+    """Checks the owner record on con, which is writable and under the write lock, or read-only.
+
+    A read-only connection settles a record that names a machine, so a read command on an
+    archive this machine owns never waits for the write lock. Recording this machine, on the
+    first open or when taking ownership, then opens a writable connection under the write lock.
+    """
+    if writable or (not take_ownership and read_owner(con) is not None):
+        return check_owner(con, machine, host, take_ownership)
+    with archive_lock(root).write():
+        recording = connect_lake(root, _extension_directory())
+        try:
+            return check_owner(recording, machine, host, take_ownership)
+        finally:
+            recording.close()
 
 
 @contextmanager
 def archive_stores(
     root: Path, take_ownership: bool = False
 ) -> Generator[tuple[DuckLakeArchiveStore, FsBlobStore]]:
-    """The archive's lake and blob stores, with ensure_lake and the owner check run first;
-    closed on exit."""
+    """The archive's lake and blob stores, with ensure_lake run first and the owner checked on
+    the store's connection; closed on exit."""
     ensure_lake(root)
-    cautious = _check_owner(root, take_ownership)
     archive = DuckLakeArchiveStore(
-        root, _extension_directory(), archive_lock(root), cautious=cautious
+        root,
+        _extension_directory(),
+        archive_lock(root),
+        owner=_owner_check(root, take_ownership, writable=True),
     )
     try:
         yield archive, FsBlobStore(root)
@@ -160,11 +168,22 @@ def archive_stores(
 
 @contextmanager
 def query_index(root: Path, take_ownership: bool = False) -> Generator[QueryIndex]:
-    """Views over the archive's lake, with ensure_lake and the owner check run first; closed on
-    exit."""
+    """Views over the archive's lake, attached read-only, with ensure_lake run first and the
+    owner checked on the index's connection; closed on exit."""
     ensure_lake(root)
-    _check_owner(root, take_ownership)
-    with DuckDbQueryIndex(root, _extension_directory(), archive_lock(root)) as index:
+    owner = _owner_check(root, take_ownership, writable=False)
+    with DuckDbQueryIndex(root, _extension_directory(), archive_lock(root), owner=owner) as index:
+        yield index
+
+
+@contextmanager
+def shared_index(root: Path, archive: DuckLakeArchiveStore) -> Generator[QueryIndex]:
+    """Views over the lake through the open store's DuckDB instance, so a command that reads
+    through both attaches the lake once; closed on exit, leaving the store open."""
+    connection = archive.shared_connection()
+    with DuckDbQueryIndex(
+        root, _extension_directory(), archive_lock(root), connection=connection
+    ) as index:
         yield index
 
 

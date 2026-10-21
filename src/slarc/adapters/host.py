@@ -1,16 +1,14 @@
 # ABOUTME: Identifies this machine for the archive's owner record: a stable machine id, read with
-# ABOUTME: ioreg on macOS or from /etc/machine-id on Linux, and the host name for messages.
-import re
+# ABOUTME: gethostuuid on macOS or from /etc/machine-id on Linux, and the host name for messages.
+import ctypes
 import socket
-import subprocess
 import sys
+import uuid
 from functools import cache
 from pathlib import Path
 
 from slarc.ports import SlarcError
 
-IOREG = ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]
-PLATFORM_UUID = re.compile(r'"IOPlatformUUID" = "([^"]+)"')
 LINUX_MACHINE_ID = Path("/etc/machine-id")
 
 
@@ -23,14 +21,15 @@ class NoMachineId(SlarcError):
 
 @cache
 def machine_id(platform: str = sys.platform, linux_machine_id: Path = LINUX_MACHINE_ID) -> str:
-    """The IOPlatformUUID on macOS, or the contents of /etc/machine-id elsewhere.
+    """The host UUID on macOS, which is the IOPlatformUUID, or the contents of /etc/machine-id
+    elsewhere.
 
     Raises NoMachineId when neither yields an id.
     """
     if platform == "darwin":
-        found = PLATFORM_UUID.search(_ioreg())
-        if found:
-            return found.group(1)
+        found = _host_uuid()
+        if found is not None:
+            return str(found).upper()
     else:
         try:
             text = linux_machine_id.read_text().strip()
@@ -45,9 +44,14 @@ def host_name() -> str:
     return socket.gethostname()
 
 
-def _ioreg() -> str:
+def _host_uuid() -> uuid.UUID | None:
+    """The UUID macOS's gethostuuid(2) returns, or None when the call fails."""
     try:
-        result = subprocess.run(IOREG, capture_output=True, text=True, check=False)
+        libc = ctypes.CDLL(None)
     except OSError:
-        return ""
-    return result.stdout if result.returncode == 0 else ""
+        return None
+    buffer = (ctypes.c_ubyte * 16)()
+    no_wait = (ctypes.c_long * 2)(0, 0)
+    if libc.gethostuuid(buffer, no_wait) != 0:
+        return None
+    return uuid.UUID(bytes=bytes(buffer))

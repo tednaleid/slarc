@@ -541,7 +541,7 @@ def list_command(
         settings = load_settings(archive_root, global_config, services.env, {})
         with (
             bootstrap.archive_stores(archive_root, services.take_ownership) as (archive, _),
-            bootstrap.query_index(archive_root, services.take_ownership) as index,
+            bootstrap.shared_index(archive_root, archive) as index,
         ):
             listing = list_archive(settings, archive, index)
     except NoSession as error:
@@ -639,7 +639,7 @@ def export_command(
         settings = load_settings(archive_root, global_config, services.env, {"tz": tz})
         with (
             bootstrap.archive_stores(archive_root, services.take_ownership) as (archive, blobs),
-            bootstrap.query_index(archive_root, services.take_ownership) as index,
+            bootstrap.shared_index(archive_root, archive) as index,
         ):
             written = export(
                 parsed,
@@ -737,7 +737,7 @@ def rm_command(
     try:
         archive_root = _existing_archive(root, services.env, services.home)
         with bootstrap.archive_stores(archive_root, services.take_ownership) as (archive, blobs):
-            with bootstrap.query_index(archive_root, services.take_ownership) as index:
+            with bootstrap.shared_index(archive_root, archive) as index:
                 removal = plan_removal(parsed, channel, archive, blobs, index)
             if removal.nothing_to_do:
                 out.print(NOTHING_TO_REMOVE, markup=False)

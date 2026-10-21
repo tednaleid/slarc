@@ -1,6 +1,7 @@
 # ABOUTME: QueryIndex over an archive's lake: the lake attached read-only plus one view per entity.
 # ABOUTME: Current-state views take the latest row per key by (fetched_at, run).
 import json
+from collections.abc import Callable
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -351,21 +352,37 @@ class DuckDbQueryIndex:
     lake table it reads can share a name. The lake's catalog must exist. The index holds the
     archive's read lock from open to close. A lake failure in any query but sql raises
     ArchiveReadFailed.
+
+    connection, when given, is a connection to a DuckDB instance that already has the lake
+    attached, such as a store's shared_connection; otherwise the index attaches the lake
+    read-only. owner checks the archive's owner record on that connection.
     """
 
-    def __init__(self, root: Path, ext_dir: Path, lock: ArchiveLock) -> None:
+    def __init__(
+        self,
+        root: Path,
+        ext_dir: Path,
+        lock: ArchiveLock,
+        *,
+        connection: duckdb.DuckDBPyConnection | None = None,
+        owner: Callable[[duckdb.DuckDBPyConnection], object] = lambda con: None,
+    ) -> None:
         self._catalog = root / CATALOG
         self._lock = lock
         lock.hold_shared()
         try:
-            self._db = connect_lake(root, ext_dir, read_only=True)
+            self._db = connection or connect_lake(root, ext_dir, read_only=True)
         except BaseException:
             lock.release_shared()
             raise
         try:
+            owner(self._db)
             self._db.execute("USE memory")
-            for name, query in ENTITY_VIEWS.items():
-                self._db.execute(f'CREATE VIEW "{name}" AS {query}')
+            self._db.execute(
+                ";\n".join(
+                    f'CREATE VIEW "{name}" AS {query}' for name, query in ENTITY_VIEWS.items()
+                )
+            )
         except BaseException:
             self.close()
             raise

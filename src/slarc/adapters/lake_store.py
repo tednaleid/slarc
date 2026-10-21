@@ -109,26 +109,45 @@ COMPACTION = (
     "ducklake_rewrite_data_files",
 )
 
+# The store reads one conversation or directory kind at a time, where a thread per core costs
+# more than it saves.
+STORE_THREADS = 1
+
 _decode = msgspec.json.Decoder()
+
+
+def _no_owner_check(con: duckdb.DuckDBPyConnection) -> bool:
+    return False
 
 
 class DuckLakeArchiveStore:
     """Holds the archive's read lock from open to close, and the write lock for each write.
 
-    A cautious store, opened by the run that takes ownership of the archive, keeps orphaned
-    files and unreferenced blobs, because files that synced ahead of the catalog look the same.
+    owner checks the archive's owner record on the store's writable connection, under the write
+    lock, and returns whether the store is cautious. A cautious store, opened by the run that
+    takes ownership of the archive, keeps orphaned files and unreferenced blobs, because files
+    that synced ahead of the catalog look the same.
     """
 
     def __init__(
-        self, root: Path, ext_dir: Path, lock: ArchiveLock, *, cautious: bool = False
+        self,
+        root: Path,
+        ext_dir: Path,
+        lock: ArchiveLock,
+        *,
+        owner: Callable[[duckdb.DuckDBPyConnection], bool] = _no_owner_check,
     ) -> None:
         self._catalog = root / CATALOG
         self._lock = lock
-        self._cautious = cautious
         lock.hold_shared()
         try:
             with lock.write():
-                self._con = connect_lake(root, ext_dir)
+                self._con = connect_lake(root, ext_dir, threads=STORE_THREADS)
+                try:
+                    self._cautious = owner(self._con)
+                except BaseException:
+                    self._con.close()
+                    raise
         except BaseException:
             lock.release_shared()
             raise
@@ -167,6 +186,11 @@ class DuckLakeArchiveStore:
     def discard(self) -> None:
         self._batch.clear()
         self._drops.clear()
+
+    def shared_connection(self) -> duckdb.DuckDBPyConnection:
+        """A second connection to the store's DuckDB instance, for an index opened beside the
+        store, so the command attaches the lake once."""
+        return self._con.cursor()
 
     def close(self) -> None:
         try:

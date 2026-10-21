@@ -8,6 +8,7 @@ import duckdb
 import pytest
 
 from slarc import bootstrap
+from slarc.adapters import duckdb_index, lake_store
 from slarc.adapters.blob_store import FsBlobStore
 from slarc.adapters.lake import (
     CATALOG,
@@ -122,7 +123,7 @@ def test_takeover_run_skips_orphan_and_blob_deletion(tmp_path: Path, ext_dir: Pa
     blobs = FsBlobStore(tmp_path)
     connect_lake(tmp_path, ext_dir).close()
     unreferenced, _ = blobs.write([b"synced ahead of the catalog"])
-    store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock(), cautious=True)
+    store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock(), owner=lambda con: True)
     for env in messages(50):
         store.append(env)
     store.commit(Commit(items=[tracked(TS)]))
@@ -182,6 +183,66 @@ def test_one_process_checks_the_owner_once_per_archive(
         with bootstrap.archive_stores(root, take_ownership=True):
             pass
     assert calls == [True]
+    assert owner_rows(root) == [("test-machine", "test-host")]
+
+
+def spy_connections(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """Records whether each lake connection bootstrap, the store or the index opens is
+    read-only."""
+    opened: list[bool] = []
+    for module in (bootstrap, lake_store, duckdb_index):
+        real = module.connect_lake
+
+        def spy(*args, _real=real, **kwargs) -> duckdb.DuckDBPyConnection:
+            opened.append(kwargs.get("read_only", False))
+            return _real(*args, **kwargs)
+
+        monkeypatch.setattr(module, "connect_lake", spy)
+    return opened
+
+
+def test_an_owned_archive_opens_one_connection_per_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "archive"
+    with bootstrap.archive_stores(root):
+        pass
+    opened = spy_connections(monkeypatch)
+
+    bootstrap._owner_checked.clear()
+    with bootstrap.archive_stores(root):
+        pass
+    assert opened == [False]
+
+    opened.clear()
+    bootstrap._owner_checked.clear()
+    with bootstrap.query_index(root):
+        pass
+    assert opened == [True]
+
+    opened.clear()
+    bootstrap._owner_checked.clear()
+    with (
+        bootstrap.archive_stores(root) as (archive, _),
+        bootstrap.shared_index(root, archive) as index,
+    ):
+        assert archive.tracked_items() == {}
+        assert index.conversation_counts() == {}
+    assert opened == [False]
+
+
+def test_a_read_command_refuses_an_archive_owned_elsewhere(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "archive"
+    with bootstrap.archive_stores(root):
+        pass
+    monkeypatch.setattr(bootstrap, "_this_host", lambda: BETA)
+    bootstrap._owner_checked.clear()
+    with pytest.raises(OwnedElsewhere), bootstrap.query_index(root):
+        pass
+    with pytest.raises(OwnedElsewhere), bootstrap.archive_stores(root):
+        pass
     assert owner_rows(root) == [("test-machine", "test-host")]
 
 

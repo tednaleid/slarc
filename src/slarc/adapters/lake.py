@@ -17,8 +17,8 @@ DATA_DIR = "data"
 BLOB_DIR = "blobs"
 EXTENSIONS = ("ducklake", "sqlite_scanner")
 
-# DuckDB's threads for each lake connection, or None for one per core. Tests use 1, since starting
-# a thread per core for each connection costs more than it saves on a small lake.
+# DuckDB's threads for a lake connection that names no count, or None for one per core. Tests use
+# 1, since a thread per core for each connection costs more than it saves on a small lake.
 DUCKDB_THREADS: int | None = None
 
 # DuckLake attaches the SQLite catalog under this name. The owner record is a table of the catalog
@@ -159,6 +159,7 @@ def connect_lake(
     *,
     read_only: bool = False,
     autoinstall: bool = True,
+    threads: int | None = None,
 ) -> duckdb.DuckDBPyConnection:
     """Attach the archive's lake as `lake` and make it the default catalog.
 
@@ -168,9 +169,11 @@ def connect_lake(
     catalog. A new catalog is built under a temporary name and
     renamed into place, so a catalog that exists is complete. It raises ArchiveWriteFailed, and
     a read-only one ArchiveReadFailed, when it cannot open the catalog. `autoinstall=False`
-    skips the download and exists for tests.
+    skips the download and exists for tests. `threads` limits DuckDB's threads, falling back to
+    DUCKDB_THREADS.
     """
-    con = duckdb.connect(":memory:", config={"threads": DUCKDB_THREADS} if DUCKDB_THREADS else {})
+    threads = threads or DUCKDB_THREADS
+    con = duckdb.connect(":memory:", config={"threads": threads} if threads else {})
     try:
         _load_extensions(con, ext_dir, autoinstall=autoinstall)
         if not read_only:
