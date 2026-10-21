@@ -151,6 +151,8 @@ Known problems and future work, grouped by theme. Each line says what is wrong o
 
 ### Storage and query
 - A persisted query cache in `$XDG_CACHE_HOME/slarc/`, only if measurement shows the need.
+- Less space for link-preview images, if a large workspace shows the need. In a sample conversation (793 messages, 33 MB of blobs) uploads were 78% of the bytes (three PDFs alone 48%), link-preview images, thumbnails and site icons about 20%, and avatars and emoji 2%. Every skipped download was a preview image or site icon. zstd at level 19 saved 3.2% overall (0.2 to 0.5% on PDFs and JPEGs, 6% on PNGs, 10% on preview images), so compressing blobs is not worth it. Options: export loads preview images from their sites lazily instead of copying them (the export about 20% smaller, but viewing it contacts those sites); pull skips preview images behind a setting (the archive smaller too, but a rotted preview is lost for good); or keep downscaled copies (lossy, needs an image library).
+- Parquet data files use DuckLake's default Snappy compression; the `parquet_compression` option could set zstd for smaller data files.
 
 ### Export and rendering
 - PDF export (Playwright print-to-PDF over the static HTML).
