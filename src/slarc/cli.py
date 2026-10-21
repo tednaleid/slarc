@@ -376,6 +376,13 @@ def pull_command(
     full: Annotated[
         bool, typer.Option("--full", help="Re-read everything instead of only what is new.")
     ] = False,
+    retry_skipped: Annotated[
+        bool,
+        typer.Option(
+            "--retry-skipped",
+            help="Try again the downloads skipped as forbidden, not found, given up or too large.",
+        ),
+    ] = False,
     downloads: Annotated[
         int | None, typer.Option(metavar="N", min=1, help="Parallel file downloads.")
     ] = None,
@@ -406,7 +413,12 @@ def pull_command(
     _check_date("--until", until)
     all_workspaces = all(isinstance(selector, WorkspaceSel) for selector in parsed)
     services: bootstrap.Services = ctx.obj
-    flags = {"--channel": channel, "--full": full, "--downloads": downloads}
+    flags = {
+        "--channel": channel,
+        "--full": full,
+        "--retry-skipped": retry_skipped,
+        "--downloads": downloads,
+    }
     args = _run_args(texts, since, until, flags | {"--max-file-size": max_file_size})
     try:
         global_config = read_global_config(services.env, services.home)
@@ -420,6 +432,7 @@ def pull_command(
             since=since,
             until=until,
             full=full,
+            retry_skipped=retry_skipped,
             channel_mode=channel,
             downloads=settings.downloads,
             max_file_bytes=settings.max_file_size_mb * MB,

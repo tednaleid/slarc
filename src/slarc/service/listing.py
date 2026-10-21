@@ -24,6 +24,7 @@ from slarc.service.downloads import (
     SKIPPED_STATUSES,
     image_types,
     outstanding_downloads,
+    stored_directory,
 )
 from slarc.service.selectors import items_named
 
@@ -128,7 +129,7 @@ def list_archive(
     referenced: set[DownloadKey] = set()
     for item in _listed(archive, domains, selectors):
         if item.team_id not in views:
-            views[item.team_id] = _directory(archive, item.team_id)
+            views[item.team_id] = stored_directory(archive, item.team_id)
         messages = _messages(index, item)
         targets: dict[DownloadKey, _Target] = {}
         for message in messages:
@@ -263,17 +264,6 @@ def _saved(
         stored[kind_key] = archive.directory_state(*kind_key)
     held = stored[kind_key].get(target.key[1])
     return held is not None and held.blob is not None
-
-
-def _directory(archive: ArchiveStore, team_id: str) -> DirectoryView:
-    emoji = archive.directory_objects(team_id, "emoji")
-    return DirectoryView(
-        users=archive.directory_objects(team_id, "user"),
-        conversations=archive.directory_objects(team_id, "conversation"),
-        usergroups={},
-        emoji={name: obj.get("url", "") for name, obj in emoji.items()},
-        bots={},
-    )
 
 
 def _messages(index: QueryIndex, item: TrackedItem) -> list[dict]:

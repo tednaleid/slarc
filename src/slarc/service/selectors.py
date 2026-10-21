@@ -1,7 +1,8 @@
-# ABOUTME: Resolves a conversation selector to its channel id, and any selector to the tracked
-# ABOUTME: items it names without Slack; a selector without a link names the only workspace.
+# ABOUTME: Resolves a conversation selector to its channel id, any selector to the tracked items
+# ABOUTME: it names without Slack, and tracked items to the stored messages they cover.
 from collections.abc import Callable, Iterable
 
+from slarc.domain.envelope import Envelope
 from slarc.domain.links import ConversationSel, Selector, WorkspaceSel
 from slarc.domain.tracking import ItemKey, TrackedItem
 from slarc.ports import ArchiveFailed, ArchiveStore, SlackGateway, SlarcError
@@ -143,3 +144,28 @@ def _stored_thread_of(team: str, channel: str, ts: str, archive: ArchiveStore) -
     """The thread a stored message belongs to, as pull resolves a link to a reply."""
     stored = archive.stored_messages(team, channel).get(ts)
     return (stored.thread_ts if stored is not None else None) or ts
+
+
+def message_versions(lines: Iterable[Envelope]) -> dict[str, list[Envelope]]:
+    """Each stored message's lines by ts: every version and deleted marker."""
+    versions: dict[str, list[Envelope]] = {}
+    for env in lines:
+        if env.meta.ts is not None:
+            versions.setdefault(env.meta.ts, []).append(env)
+    return versions
+
+
+def covered_stamps(versions: dict[str, list[Envelope]], items: list[TrackedItem]) -> set[str]:
+    """The stored messages of one channel that its tracked items cover.
+
+    A conversation covers all of them. A thread or message covers the message at its ts and
+    every message whose thread_ts in any version is that ts, since pull stores its replies.
+    """
+    if any(item.kind == "conversation" for item in items):
+        return set(versions)
+    parents = {item.ts for item in items}
+    return {
+        ts
+        for ts, lines in versions.items()
+        if ts in parents or any((env.object or {}).get("thread_ts") in parents for env in lines)
+    }

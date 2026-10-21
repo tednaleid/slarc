@@ -516,6 +516,23 @@ def test_run_records_the_command_line(f: Fixture):
     assert run.args == [BASE, "--since", "2026-10-01", "--full"]
 
 
+def test_retry_skipped_downloads_again_what_a_pull_skipped(f: Fixture):
+    giphy = (
+        "https://media4.giphy.com/media/F9yAvk7Xpr0c/giphy.gif"
+        "?cid=6104955ee4adf136dcbbrjmn0qdsjgxzsga2bbxafvz2c6fe&ep=v1_gifs_translate&rid=giphy.gif&ct=g"
+    )
+    f.downloader.fail(giphy, status="not_found", error="HTTP 404 Not Found")
+    assert f.pull("--yes", BASE).exit_code == 0
+    f.downloader.jobs.clear()
+    assert f.pull(BASE).exit_code == 0
+    assert giphy not in {job.url for job in f.downloader.jobs}
+
+    assert f.pull("--retry-skipped", BASE).exit_code == 0
+
+    assert giphy in {job.url for job in f.downloader.jobs}
+    assert f.runs()[-1].args == [BASE, "--retry-skipped"]
+
+
 def test_env_session_for_another_workspace_exits_1(f: Fixture):
     f.sessions = [Session("", "", "", "env", "xoxc-env", "xoxd-env")]
     result = f.pull("--yes", f"https://other.slack.com/archives/{CHANNEL}")

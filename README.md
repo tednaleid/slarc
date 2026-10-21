@@ -17,6 +17,7 @@ slarc pull https://yourworkspace.slack.com/archives/C0123456789/p171234567800010
 slarc pull                                                                    # refresh everything tracked
 slarc pull acme                                                               # refresh everything tracked in workspace acme
 slarc pull --full                                                             # re-read everything tracked, catching edits and deletes
+slarc pull acme --retry-skipped                                               # also try again the downloads skipped in acme
 slarc list                                                                    # the archive, its config files and each tracked item
 slarc search "deploy" --in '#general'                                         # archived messages, newest first, with their Slack links
 slarc sql "SELECT channel_id, count(*) FROM message GROUP BY 1"               # DuckDB over the archive's views

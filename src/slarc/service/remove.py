@@ -1,12 +1,10 @@
 # ABOUTME: Removal use case behind slarc rm: resolves selectors to tracked items from the archive.
 # ABOUTME: Plans the removal and commits it with revision checks; maintenance frees the bytes.
-from collections.abc import Iterable
 from dataclasses import dataclass
 
 import msgspec
 
 from slarc.domain.directory import directory_image_url
-from slarc.domain.envelope import Envelope
 from slarc.domain.links import Selector
 from slarc.domain.tracking import DownloadState, ItemKey, TrackedItem
 from slarc.ports import (
@@ -19,7 +17,7 @@ from slarc.ports import (
 )
 from slarc.service.downloads import image_urls
 from slarc.service.listing import workspace_domains
-from slarc.service.selectors import items_named
+from slarc.service.selectors import covered_stamps, items_named, message_versions
 from slarc.unit_of_work import UnitOfWork
 
 REMOVAL_ATTEMPTS = 3
@@ -224,8 +222,8 @@ def _team_deletion(
     file_refs: set[str] = set()
     image_refs: set[str] = set()
     for channel in archive.channels(team):
-        versions = _versions(archive.message_lines(team, channel))
-        covered = _covered(versions, [item for item in tracked if item.channel == channel])
+        versions = message_versions(archive.message_lines(team, channel))
+        covered = covered_stamps(versions, [item for item in tracked if item.channel == channel])
         uncovered = set(versions) - covered
         if uncovered:
             stamps[channel] = uncovered
@@ -259,31 +257,6 @@ def _directory_images(team: str, archive: ArchiveStore) -> set[str]:
     return urls
 
 
-def _versions(lines: Iterable[Envelope]) -> dict[str, list[Envelope]]:
-    """Each stored message's lines by ts: every version and deleted marker."""
-    versions: dict[str, list[Envelope]] = {}
-    for env in lines:
-        if env.meta.ts is not None:
-            versions.setdefault(env.meta.ts, []).append(env)
-    return versions
-
-
-def _covered(versions: dict[str, list[Envelope]], items: list[TrackedItem]) -> set[str]:
-    """The stored messages of one channel that its tracked items cover.
-
-    A conversation covers all of them. A thread or message covers the message at its ts and
-    every message whose thread_ts in any version is that ts, since pull stores its replies.
-    """
-    if any(item.kind == "conversation" for item in items):
-        return set(versions)
-    parents = {item.ts for item in items}
-    return {
-        ts
-        for ts, lines in versions.items()
-        if ts in parents or any((env.object or {}).get("thread_ts") in parents for env in lines)
-    }
-
-
 def _kept_messages(
     items: list[TrackedItem], remaining: dict[ItemKey, TrackedItem], archive: ArchiveStore
 ) -> int:
@@ -291,8 +264,10 @@ def _kept_messages(
     kept = 0
     places = dict.fromkeys((item.team_id, item.channel) for item in items)
     for team, channel in places:
-        versions = _versions(archive.message_lines(team, channel))
-        named = _covered(versions, [i for i in items if (i.team_id, i.channel) == (team, channel)])
+        versions = message_versions(archive.message_lines(team, channel))
+        named = covered_stamps(
+            versions, [i for i in items if (i.team_id, i.channel) == (team, channel)]
+        )
         others = [i for i in remaining.values() if (i.team_id, i.channel) == (team, channel)]
-        kept += len(named & _covered(versions, others))
+        kept += len(named & covered_stamps(versions, others))
     return kept

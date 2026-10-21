@@ -16,7 +16,7 @@ Known problems and future work, grouped by theme. Each line says what is wrong o
 - A tracked DM may fail `search.messages` (DM search syntax is unverified) and warn on every pull; check `in:<#D...>` read-only and skip search for DMs if it fails (`service/pull.py` `_search_replies`).
 - `--max-file-size 0` is left out of the run row's args because `0 == False` (`cli.py` `_run_args`).
 - A skipped `not_visible` item shows a finished 0-message progress bar (`cli.py` `RichReporter`).
-- Images over the size limit stay `too_large` after the limit is raised; only files are retried (`service/downloads.py` `_image_state`).
+- Images over the size limit stay `too_large` after the limit is raised until a pull with `--retry-skipped`; files are retried on their own (`service/downloads.py` `_image_state`).
 - A file whose recorded `size` is missing or wrong is queued again on every read (`service/downloads.py` `_file_state`).
 - Bot directory entries never get a blob for the bot icon (`service/downloads.py`).
 - An uploaded HTML file served as `text/html` would be recorded `failed`, since the job lacks the file's mimetype; Slack serves the fixture upload as a snippet (`adapters/downloader.py`).

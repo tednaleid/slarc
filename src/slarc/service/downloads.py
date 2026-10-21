@@ -1,5 +1,6 @@
 # ABOUTME: Queues downloads of the files and images messages reference, then drains the queue.
 # ABOUTME: Each result commits a directory line with meta.blob or a download state change.
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -10,7 +11,7 @@ from slarc.domain.emoji import custom_emoji_url, shortcodes
 from slarc.domain.envelope import Envelope, Kind
 from slarc.domain.hashing import content_hash
 from slarc.domain.links import is_slack_file_url, is_web_url
-from slarc.domain.tracking import DownloadState
+from slarc.domain.tracking import DownloadState, TrackedItem
 from slarc.ports import (
     ArchiveStore,
     AuthFailed,
@@ -27,6 +28,7 @@ from slarc.ports import (
     SlarcError,
 )
 from slarc.service.appends import append_directory, append_line, stamped_meta
+from slarc.service.selectors import covered_stamps, message_versions
 from slarc.unit_of_work import UnitOfWork
 
 TERMINAL_STATUSES = ("forbidden", "not_found", "deleted", "external", "gave_up")
@@ -83,7 +85,7 @@ def queue_downloads(
     The next commit requires each file and image found downloaded to still be stored. The
     custom emoji and author avatars it shows are found through view. files, images and
     known, the archive's file, image and download state, are read here when not given.
-    retry_skipped queues forbidden, not_found and gave_up outside-site images afresh.
+    retry_skipped queues skipped downloads afresh, as requeue_skipped describes.
     """
     referenced = message.get("files") or []
     urls = list(image_types(message, view))
@@ -99,7 +101,8 @@ def queue_downloads(
         if _downloaded(uow, stored.get(file["id"])):
             uow.require((team_id, "file", file["id"]))
         else:
-            states.append(_file_state(file, team_id, max_bytes, known.get((team_id, file["id"]))))
+            prior = known.get((team_id, file["id"]))
+            states.append(_file_state(file, team_id, max_bytes, prior, retry_skipped))
     for url in urls:
         if _downloaded(uow, images.get(url)):
             uow.require((team_id, "image", url))
@@ -114,6 +117,54 @@ def queue_downloads(
         if state.status == "pending":
             jobs.append(_job(state, max_bytes))
     return jobs
+
+
+def requeue_skipped(uow: UnitOfWork, items: Sequence[TrackedItem], max_bytes: int) -> None:
+    """Queues afresh, with attempts reset, the skipped downloads the items' stored messages
+    reference, and commits them, without reading anything from Slack.
+
+    Skipped means forbidden, not_found, gave_up, or an image that was too_large; a file that is
+    too large is retried once its size fits.
+    """
+    archive = uow.archive
+    known = archive.downloads()
+    places: dict[tuple[str, str], list[TrackedItem]] = {}
+    for item in items:
+        places.setdefault((item.team_id, item.channel), []).append(item)
+    views: dict[str, DirectoryView] = {}
+    for (team_id, channel), held in places.items():
+        if team_id not in views:
+            views[team_id] = stored_directory(archive, team_id)
+        files = archive.directory_state(team_id, "file")
+        images = archive.directory_state(team_id, "image")
+        versions = message_versions(archive.message_lines(team_id, channel))
+        for ts in covered_stamps(versions, held):
+            message = versions[ts][-1].object
+            if message:
+                queue_downloads(
+                    message,
+                    team_id,
+                    uow,
+                    max_bytes,
+                    view=views[team_id],
+                    files=files,
+                    images=images,
+                    known=known,
+                    retry_skipped=True,
+                )
+    uow.commit()
+
+
+def stored_directory(archive: ArchiveStore, team_id: str) -> DirectoryView:
+    """The archive's users, conversations and custom emoji for a workspace."""
+    emoji = archive.directory_objects(team_id, "emoji")
+    return DirectoryView(
+        users=archive.directory_objects(team_id, "user"),
+        conversations=archive.directory_objects(team_id, "conversation"),
+        usergroups={},
+        emoji={name: obj.get("url", "") for name, obj in emoji.items()},
+        bots={},
+    )
 
 
 def drain_downloads(
@@ -236,9 +287,14 @@ def _block_emoji(node: object) -> list[str]:
 
 
 def _file_state(
-    file: dict, team_id: str, max_bytes: int, prior: DownloadState | None
+    file: dict, team_id: str, max_bytes: int, prior: DownloadState | None, retry_skipped: bool
 ) -> DownloadState | None:
-    """The state to record for a referenced file, or None when there is nothing to record."""
+    """The state to record for a referenced file, or None when there is nothing to record.
+
+    With retry_skipped, a file that was forbidden or not_found starts over.
+    """
+    if retry_skipped and prior is not None and prior.status in ("forbidden", "not_found"):
+        prior = None
     if prior is not None and prior.status in TERMINAL_STATUSES:
         return None
     url = file.get("url_private_download") or file.get("url_private")
@@ -269,15 +325,9 @@ def _image_state(
 ) -> DownloadState | None:
     """An image over the size limit stays too_large: its size is known only by fetching it.
 
-    With retry_skipped, an outside-site image that was forbidden, not_found or gave_up starts
-    over.
+    With retry_skipped, an image that was skipped starts over.
     """
-    if (
-        retry_skipped
-        and prior is not None
-        and prior.status in ("forbidden", "not_found", "gave_up")
-        and not is_slack_file_url(url)
-    ):
+    if retry_skipped and prior is not None and prior.status in SKIPPED_STATUSES:
         prior = None
     if prior is not None and prior.status in (*TERMINAL_STATUSES, "too_large"):
         return None

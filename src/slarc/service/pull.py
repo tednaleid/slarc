@@ -43,7 +43,7 @@ from slarc.service.appends import (
     stamped_meta,
 )
 from slarc.service.directory_refresh import BOTS_API, refresh_directory, unknown_bots
-from slarc.service.downloads import drain_downloads, queue_downloads
+from slarc.service.downloads import drain_downloads, queue_downloads, requeue_skipped
 from slarc.service.held_conversation import HeldConversation
 from slarc.service.selectors import only_workspace, resolve_conversation
 from slarc.service.threads import active_threads, discover_reply_threads, infer_deletes
@@ -67,6 +67,7 @@ class PullOptions:
     since: str | None = None
     until: str | None = None
     full: bool = False
+    retry_skipped: bool = False
     channel_mode: bool = False
     downloads: int = 4
     max_file_bytes: int = 100 * 1024 * 1024
@@ -132,6 +133,8 @@ def pull(
             except (NoSession, AuthFailed) as error:
                 run.skip_workspace(team_id, error)
                 unreachable.append(error)
+        if options.retry_skipped:
+            run.requeue_skipped(items)
         drained = drain_downloads(
             uow, downloader, options.downloads, options.max_file_bytes, run.workspaces, reporter
         )
@@ -191,6 +194,12 @@ class _PullRun:
         self.messages_new = 0
         self.not_visible = 0
         self._threads_counted: set[tuple[str, str, str]] = set()
+
+    def requeue_skipped(self, items: list[TrackedItem]) -> None:
+        try:
+            requeue_skipped(self.uow, items, self.options.max_file_bytes)
+        except CommitConflict as error:
+            self._warn(f"Could not queue skipped downloads again: {error}")
 
     def resolve(self, selectors: list[Selector]) -> list[TrackedItem]:
         """The items to pull, each committed before it is read; a thread read for its kind is

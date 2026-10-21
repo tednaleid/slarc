@@ -332,6 +332,62 @@ def test_full_pull_retries_given_up_forbidden_and_not_found_outside_images(
     assert image_status(h, GITHUB_THUMB) == (status, 1)
 
 
+def test_retry_skipped_queues_given_up_and_not_found_images_afresh(h: Harness):
+    h.downloader.fail(GIPHY_URL, error="timed out")
+    h.downloader.fail(GITHUB_THUMB, status="not_found", error="HTTP 404 Not Found")
+    h.pull(THREAD_LINK)
+    h.pull()
+    h.pull()
+    assert image_status(h, GIPHY_URL) == ("gave_up", 3)
+    assert image_status(h, GITHUB_THUMB) == ("not_found", 1)
+    h.downloader.fail(GIPHY_URL, error="timed out")
+    h.downloader.serve(GITHUB_THUMB, b"thumb", "image/png")
+
+    h.pull(options=PullOptions(retry_skipped=True))
+
+    assert image_status(h, GIPHY_URL) == ("failed", 1)
+    assert (TEAM, GITHUB_THUMB) not in outstanding_downloads(h.archive)
+
+
+def test_retry_skipped_retries_only_what_the_selectors_name(h: Harness):
+    h.downloader.fail(GIPHY_URL, error="timed out")
+    h.downloader.fail(SNIPPET_URL, status="forbidden", error="HTTP 403 Forbidden")
+    h.pull(THREAD_LINK, SNIPPET_LINK)
+    h.pull()
+    h.pull()
+    assert image_status(h, GIPHY_URL) == ("gave_up", 3)
+    assert image_status(h, SNIPPET) == ("forbidden", 1)
+    h.downloader.serve(GIPHY_URL, b"gif", "image/gif")
+    h.downloader.serve(SNIPPET_URL, snippet_bytes(), "text/plain")
+
+    h.pull(SNIPPET_LINK, options=PullOptions(retry_skipped=True))
+
+    assert (TEAM, SNIPPET) not in outstanding_downloads(h.archive)
+    assert image_status(h, GIPHY_URL) == ("gave_up", 3)
+
+
+def test_retry_skipped_retries_an_image_that_was_too_large(h: Harness):
+    h.downloader.serve(GIPHY_URL, b"x" * 100, "image/gif")
+    h.pull(THREAD_LINK, options=PullOptions(max_file_bytes=10))
+    assert image_status(h, GIPHY_URL) == ("too_large", 1)
+
+    h.pull(options=PullOptions(retry_skipped=True))
+
+    assert (TEAM, GIPHY_URL) not in outstanding_downloads(h.archive)
+
+
+def test_without_retry_skipped_skipped_downloads_stay_skipped(h: Harness):
+    h.downloader.fail(GITHUB_THUMB, status="not_found", error="HTTP 404 Not Found")
+    h.pull(THREAD_LINK)
+    h.downloader.serve(GITHUB_THUMB, b"thumb", "image/png")
+    h.downloader.jobs.clear()
+
+    h.pull()
+
+    assert GITHUB_THUMB not in {job.target for job in h.downloader.jobs}
+    assert image_status(h, GITHUB_THUMB) == ("not_found", 1)
+
+
 @pytest.mark.parametrize(
     "shown",
     [
