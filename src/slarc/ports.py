@@ -1,6 +1,6 @@
 # ABOUTME: Ports between slarc's service layer and its adapters, and the value types they pass.
 # ABOUTME: Also defines SlarcError and its subclasses, whose str() is the message shown to the user.
-from collections.abc import Collection, Iterable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -263,9 +263,10 @@ class ArchiveStore(Protocol):
     def drop_workspace(self, team: str) -> None: ...
     def drop_downloads(self, team: str, targets: set[str]) -> None: ...
     def blob_references(self) -> list[tuple[str, Kind, str, str]]: ...  # (team, kind, id, blob)
-    def maintain(self, blobs: BlobStore) -> bool:
-        """Compacts the archive, then, only if no other command has it open, deletes what no
-        current row uses: old and orphaned data and every blob no directory row references.
+    def maintain(self, blobs: BlobStore, deleting: Callable[[], None] = ...) -> bool:
+        """Compacts the archive, then, only if no other command has it open, calls deleting and
+        deletes what no current row uses: old and orphaned data and every blob no directory row
+        references.
 
         Returns whether the deletion ran. Raises ValueError if the open batch is not empty.
         """
@@ -340,3 +341,4 @@ class Reporter(Protocol):
     def warn(self, msg: str) -> None: ...
     def progress(self, label: str, update: ItemProgress) -> None: ...
     def downloads(self, done: int, failed: int, skipped: int, total: int) -> None: ...
+    def archive(self, step: str, *, finished: bool = False) -> None: ...  # saving the archive

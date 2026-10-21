@@ -1,6 +1,7 @@
 # ABOUTME: Tests for the unit of work that scopes one run over the archive and blob stores.
 # ABOUTME: Covers commits that thread revisions and download states, and the run line written
 # ABOUTME: however the run ends: success, exception or Ctrl-C.
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -18,7 +19,7 @@ from slarc.ports import (
     SlarcError,
 )
 from slarc.unit_of_work import UnitOfWork
-from tests.fakes import FakeClock, InMemoryArchiveStore, InMemoryBlobStore
+from tests.fakes import FakeClock, InMemoryArchiveStore, InMemoryBlobStore, RecordingReporter
 
 START = datetime(2026, 10, 19, 13, 40, 11, tzinfo=UTC)
 TEAM = "T0CB5LYPVFA"
@@ -280,11 +281,11 @@ class MaintainedArchiveStore(InMemoryArchiveStore):
         self.calls.append("append_run")
         super().append_run(run, slarc_version)
 
-    def maintain(self, blobs: BlobStore) -> bool:
+    def maintain(self, blobs: BlobStore, deleting: Callable[[], None] = lambda: None) -> bool:
         self.calls.append("maintain")
         if self.error is not None:
             raise self.error
-        return super().maintain(blobs)
+        return super().maintain(blobs, deleting)
 
 
 @pytest.mark.parametrize("idle", [True, False])
@@ -300,6 +301,41 @@ def test_exit_maintains_the_archive_after_the_run_row(idle: bool):
     assert archive.calls == ["append_run", "maintain"]
     assert uow.maintained is idle
     assert blobs.exists(unreferenced) is not idle
+
+
+@pytest.mark.parametrize(
+    ("idle", "steps"),
+    [
+        (True, ["saving", "compacting", "deleting unused files", "saved"]),
+        (False, ["saving", "compacting", "saved"]),
+    ],
+)
+def test_exit_reports_each_step_of_saving_the_archive(idle: bool, steps: list[str]):
+    archive = InMemoryArchiveStore()
+    archive.idle = idle
+    reporter = RecordingReporter()
+    uow = UnitOfWork(
+        archive, InMemoryBlobStore(), FakeClock(START), "pull", [], "0.1.0", reporter=reporter
+    )
+    with uow:
+        pass
+
+    assert [step for step, _ in reporter.archive_steps] == steps
+    assert [finished for _, finished in reporter.archive_steps] == [False] * (len(steps) - 1) + [
+        True
+    ]
+
+
+def test_a_failed_maintenance_never_reports_the_archive_saved():
+    archive = MaintainedArchiveStore(SlarcError("maintenance failed"))
+    reporter = RecordingReporter()
+    uow = UnitOfWork(
+        archive, InMemoryBlobStore(), FakeClock(START), "pull", [], "0.1.0", reporter=reporter
+    )
+    with pytest.raises(SlarcError), uow:
+        pass
+
+    assert reporter.archive_steps == [("saving", False), ("compacting", False)]
 
 
 def test_a_maintenance_failure_after_a_clean_run_is_raised():

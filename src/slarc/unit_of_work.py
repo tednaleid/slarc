@@ -15,6 +15,7 @@ from slarc.ports import (
     CommitConflict,
     DirectoryRef,
     DownloadKey,
+    Reporter,
 )
 
 
@@ -34,6 +35,7 @@ class UnitOfWork:
         args: list[str],
         slarc_version: str,
         run_suffix: str = "",
+        reporter: Reporter | None = None,
     ) -> None:
         self.archive = archive
         self.blobs = blobs
@@ -42,6 +44,7 @@ class UnitOfWork:
         self.args = args
         self.slarc_version = slarc_version
         self.run_suffix = run_suffix
+        self.reporter = reporter
         self._revisions: dict[ItemKey, int] = {}
         self._committed_downloads: list[DownloadState] = []
         self._settled: set[DownloadKey] = set()
@@ -124,6 +127,7 @@ class UnitOfWork:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
+        self._report("saving")
         try:
             # A run that ends normally commits what is left open; a run that raised keeps
             # only what it committed.
@@ -140,11 +144,20 @@ class UnitOfWork:
                 # The run's own error is the one to report.
                 if exc is None:
                     raise
+        self._report("compacting")
         try:
-            self.maintained = self.archive.maintain(self.blobs)
+            self.maintained = self.archive.maintain(
+                self.blobs, lambda: self._report("deleting unused files")
+            )
         except Exception:
             if exc is None:
                 raise
+        else:
+            self._report("saved", finished=True)
+
+    def _report(self, step: str, *, finished: bool = False) -> None:
+        if self.reporter is not None:
+            self.reporter.archive(step, finished=finished)
 
     def _current(self, item: TrackedItem) -> TrackedItem:
         revision = self._revisions.get(item.key)

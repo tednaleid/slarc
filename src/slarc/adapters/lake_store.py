@@ -245,10 +245,10 @@ class DuckLakeArchiveStore:
                 self._con, "run", RUN_COLUMNS, [run_row(run_envelope(recorded, slarc_version))]
             )
 
-    def maintain(self, blobs: BlobStore) -> bool:
+    def maintain(self, blobs: BlobStore, deleting: Callable[[], None] = lambda: None) -> bool:
         """Compacts the lake under the write lock. Then, if no other store or index of this
-        process holds the read lock and it can be taken exclusively, deletes under the write
-        lock what nothing uses, and holds the read lock shared again.
+        process holds the read lock and it can be taken exclusively, calls deleting, deletes
+        under the write lock what nothing uses, and holds the read lock shared again.
 
         Holding the read lock exclusively proves no other process reads an older snapshot,
         has data files in flight or has written a blob it has not committed, so the deletion
@@ -271,6 +271,7 @@ class DuckLakeArchiveStore:
                 if self._lock.held_shared() or not self._lock.try_exclusive():
                     return False
                 try:
+                    deleting()
                     with self._lock.write():
                         self._delete_unused(blobs)
                 finally:

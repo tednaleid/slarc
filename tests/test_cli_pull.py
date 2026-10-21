@@ -564,3 +564,26 @@ def test_reporter_shows_the_date_reached_and_the_date_it_reads_back_to():
     [row] = buffer.getvalue().splitlines()
     assert row.startswith("#tgt_subslack")
     assert row.rstrip().endswith("1,840 read, 1,840 new  @ 2025-03-14  ⌖ 2023-06-01")
+
+
+def test_reporter_shows_the_archive_row_below_the_others_until_it_is_saved():
+    buffer = io.StringIO()
+
+    with RichReporter(Console(file=buffer, width=80)) as reporter:
+        reporter.downloads(7, 0, 0, 7)
+        reporter.archive("compacting")
+        reporter.archive("saved", finished=True)
+
+    downloads, archive = buffer.getvalue().splitlines()
+    assert downloads.startswith("Downloads")
+    assert archive.startswith("Archive")
+    assert archive.rstrip().endswith(" saved")
+
+
+def test_reporter_shows_no_archive_row_for_a_run_with_no_other_rows():
+    buffer = io.StringIO()
+
+    with RichReporter(Console(file=buffer, width=80)) as reporter:
+        reporter.archive("saved", finished=True)
+
+    assert buffer.getvalue() == ""

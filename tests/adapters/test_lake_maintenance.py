@@ -148,6 +148,18 @@ def test_maintain_defers_deletion_while_another_command_holds_the_archive(
     store.close()
 
 
+@pytest.mark.parametrize("idle", [True, False])
+def test_maintain_says_when_it_starts_deleting(tmp_path: Path, ext_dir: Path, idle: bool) -> None:
+    lock = FakeArchiveLock()
+    lock.exclusive_free = idle
+    store = DuckLakeArchiveStore(tmp_path, ext_dir, lock)
+    started: list[str] = []
+
+    assert store.maintain(FsBlobStore(tmp_path), lambda: started.append("deleting")) is idle
+    assert started == (["deleting"] if idle else [])
+    store.close()
+
+
 def test_maintain_holds_the_read_lock_again_and_close_releases_it(
     tmp_path: Path, ext_dir: Path
 ) -> None:

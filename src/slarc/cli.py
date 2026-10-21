@@ -59,6 +59,7 @@ LOCAL_DATE = "%Y-%m-%d"
 TARGET = "⌖"  # crosshairs, before the date history reads back to
 FETCHED_AT = "%Y-%m-%dT%H:%M:%SZ"
 DOWNLOADS_ROW = "Downloads"
+ARCHIVE_ROW = "Archive"
 DIRECTORY_KINDS = "(users, emoji, files)"
 NOTHING_TO_REMOVE = "Nothing to remove."
 NOTHING_REMOVED = "Nothing removed."
@@ -166,10 +167,11 @@ def auth(
 
 
 class RichReporter:
-    """Shows a progress bar per item and one for downloads on stderr, with warnings above them.
+    """Shows a progress bar per item, one for downloads and one for saving the archive on
+    stderr, with warnings above them.
 
-    The bars start with the first one shown, so a run that fails before then prints only its
-    error. Rich shares columns across rows, so each row carries its own detail text.
+    The bars start with the first item or downloads row, so a run that fails before then prints
+    only its error. Rich shares columns across rows, so each row carries its own detail text.
     """
 
     def __init__(self, console: Console) -> None:
@@ -215,6 +217,10 @@ class RichReporter:
         if skipped:
             parts.append(f"{skipped} skipped")
         self._show(DOWNLOADS_ROW, done, total, ", ".join(parts))
+
+    def archive(self, step: str, *, finished: bool = False) -> None:
+        if self._tasks:
+            self._show(ARCHIVE_ROW, 1 if finished else 0, 1 if finished else None, step)
 
     def _show(self, label: str, done: float, total: float | None, detail: str) -> None:
         if label not in self._tasks:
@@ -394,7 +400,14 @@ def pull_command(
             services.downloader(blobs, connector.authenticated) as downloader,
             RichReporter(err) as reporter,
             UnitOfWork(
-                archive, blobs, services.clock, "pull", args, __version__, services.run_suffix
+                archive,
+                blobs,
+                services.clock,
+                "pull",
+                args,
+                __version__,
+                services.run_suffix,
+                reporter,
             ) as uow,
         ):
             report = pull(parsed, options, uow, connector, downloader, reporter)

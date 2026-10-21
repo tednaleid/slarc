@@ -147,11 +147,12 @@ class InMemoryArchiveStore:
         ]
         return list(dict.fromkeys(references))
 
-    def maintain(self, blobs: BlobStore) -> bool:
+    def maintain(self, blobs: BlobStore, deleting: Callable[[], None] = lambda: None) -> bool:
         if self._batch or self._line_drops or self._download_drops:
             raise ValueError("Commit or discard the open batch before maintaining the archive")
         if not self.idle:
             return False
+        deleting()
         referenced = {blob for _, _, _, blob in self.blob_references()}
         for blob in sorted(set(blobs.ids()) - referenced):
             blobs.delete(blob)
@@ -546,6 +547,7 @@ class RecordingReporter:
         self.warnings: list[str] = []
         self.progress_updates: list[tuple[str, ItemProgress]] = []
         self.download_updates: list[tuple[int, int, int, int]] = []
+        self.archive_steps: list[tuple[str, bool]] = []
 
     def info(self, msg: str) -> None:
         self.infos.append(msg)
@@ -558,6 +560,9 @@ class RecordingReporter:
 
     def downloads(self, done: int, failed: int, skipped: int, total: int) -> None:
         self.download_updates.append((done, failed, skipped, total))
+
+    def archive(self, step: str, *, finished: bool = False) -> None:
+        self.archive_steps.append((step, finished))
 
 
 class FakeAssetResolver:
