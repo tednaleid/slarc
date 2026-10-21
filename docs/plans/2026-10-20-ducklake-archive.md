@@ -553,15 +553,50 @@ Ted decided (2026-10-20) that slarc will not import JSONL archives. slarc has on
 - [x] **Step 6: Run `just check` and watch it pass.**
 - [x] **Step 7: Commit:** `Document the DuckLake archive: ADR 0004, spec, architecture, README`.
 
-### Task 16: Measurements and acceptance
+### Task 16: Measurements and acceptance [done]
 
 **Files:**
 - Modify: this plan's completion notes (below)
 
-- [ ] **Step 1: Measure the queries.** Regenerate the synthetic JSONL archive with `.llm/spike3-ducklake/gen_synthetic.py`, adapted to write into a scratch directory, and build the synthetic lake from the generated JSONL with `load_jsonl` from `tests/jsonl_loader.py`. Time `search`, `conversation_counts`, `messages` (largest channel) and `thread` through `DuckDbQueryIndex`, with the median of 5 and 4 threads. The spec's budget: search at most 1.82 s and counts at most 1.38 s; messages at most 0.80 s and thread at most 0.194 s (today's 0.64 s and 0.155 s plus 25%). Record the numbers below, and delete the synthetic data.
-- [ ] **Step 2: Run `just acceptance`** and record its result below. A failure is fixed before the plan is called done.
-- [ ] **Step 3: Commit:** `Record DuckLake query timings and acceptance results`.
+- [x] **Step 1: Measure the queries.** Regenerate the synthetic JSONL archive with `.llm/spike3-ducklake/gen_synthetic.py`, adapted to write into a scratch directory, and build the synthetic lake from the generated JSONL with `load_jsonl` from `tests/jsonl_loader.py`. Time `search`, `conversation_counts`, `messages` (largest channel) and `thread` through `DuckDbQueryIndex`, with the median of 5 and 4 threads. The spec's budget: search at most 1.82 s and counts at most 1.38 s; messages at most 0.80 s and thread at most 0.194 s (today's 0.64 s and 0.155 s plus 25%). Record the numbers below, and delete the synthetic data.
+- [x] **Step 2: Run `just acceptance`** and record its result below. A failure is fixed before the plan is called done.
+- [x] **Step 3: Commit:** `Record DuckLake query timings and acceptance results`.
 
 ## Completion notes
 
-(Filled in by Task 16.)
+Measured at `49e9db5` on an Apple M1 Ultra (64 GB), APFS in /private/tmp, Python 3.14, DuckDB 1.5.6.
+
+### Query timings
+
+Spike 3's generator, run unchanged except that it writes into a scratch directory and leaves out the lines of the 20 uncommitted runs, as spike 3's load did: 984,576 message lines in 300 channels, 295,042 directory lines and 1,980 run lines (1.6 GB of JSONL). `load_jsonl` built the lake in 40 s, with 15.9 GB peak memory, since it commits every line in one batch. One `maintain` pass took 0.5 s and left 390 MB of Parquet in 15 data files. The queries ran through `DuckDbQueryIndex` with DuckDB at 4 threads, as the median of 5 rounds. A second full run agreed within 0.015 s on every query.
+
+| Query | Rows | Median | Budget | Spike 3, flat 16 MB files |
+|---|---|---|---|---|
+| Open index | | 78 ms | | 70 ms |
+| search (`rollback incident`, limit 50) | 50 | 1.071 s | 1.82 s | 1.73 s |
+| conversation_counts | 300 | 0.800 s | 1.38 s | 1.35 s |
+| messages, largest channel (87,918 rows read) | 79,137 | 0.658 s | 0.80 s | 0.78 s |
+| thread | 13 | 0.124 s | 0.194 s | 0.211 s |
+
+All four are within the budget. messages is 3% slower than the JSONL index's 0.64 s. thread is 20% faster than the JSONL index's 0.155 s, because it now reads only the rows whose ts or thread_ts names the thread. The synthetic data and lake were deleted afterwards.
+
+### Fixed cost of one command
+
+Wall time of one process on the recorded fixture (5 conversations, 35 messages), median of 5 after 2 warm-up runs (`hyperfine -N`). The lake column runs this tree with the fixture lake built by `load_jsonl`. The JSONL column runs `e818e93`, the last commit before the lake, in a worktree with the JSONL fixture.
+
+| Command | Lake | JSONL (`e818e93`) |
+|---|---|---|
+| `slarc --version` | 217 ms | 221 ms |
+| `slarc search seed` | 460 ms | 287 ms |
+| `slarc list` | 605 ms | 301 ms |
+
+On a small archive the lake adds about 170 ms to search and 300 ms to list. A profile of `list` shows three lake connections taking 150 ms together, extension loads included. The owner check, which opens one of them, takes 90 ms, and the per-conversation `messages` queries take 70 ms. Python startup and imports are the same in both, at about 200 ms.
+
+### Acceptance
+
+`just acceptance` passed on its first run, with no fixes needed, in 57 s against naleidworkspace:
+
+- (a) pulling the same channels twice adds no message or directory rows: 35 message and 62 directory rows after both pulls; first pull 14.9 s, second 8.6 s.
+- (d) the export shows the seeded messages, the giphy GIF from a local asset, the link preview, both snippets and the deleted file placeholder: 0.7 s.
+- (b) a new reply under an older parent lands as exactly one new line: found by the first bare pull, with `threads_read.search=5`.
+- (c) an edit lands as exactly one new line by `pull --full`: the bare pull added none, and `pull --full` added the one row with the edited text.
