@@ -1,7 +1,9 @@
 # ABOUTME: Connects to an archive's DuckLake: a SQLite catalog in WAL mode plus Parquet data files.
 # ABOUTME: Creates the tables and settings on first connect, manages the DuckDB extensions and
 # ABOUTME: keeps the record of the machine that owns the archive.
-from collections.abc import Mapping
+import sqlite3
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -95,6 +97,23 @@ class SyncNotFinished(SlarcError):
             "Some of this archive's files have not arrived yet; "
             "wait until your synced folder has finished syncing."
         )
+
+
+def failure_reason(error: BaseException) -> str:
+    """The error's first line without its closing punctuation, to quote inside a sentence."""
+    lines = str(error).splitlines() or [type(error).__name__]
+    return lines[0].rstrip(".!")
+
+
+@contextmanager
+def lake_errors(
+    catalog: Path, failure: type[ArchiveReadFailed] | type[ArchiveWriteFailed]
+) -> Generator[None]:
+    """Raises failure, naming the catalog, for a DuckDB, SQLite or OS error in the block."""
+    try:
+        yield
+    except (duckdb.Error, sqlite3.Error, OSError) as error:
+        raise failure(catalog, failure_reason(error)) from None
 
 
 def cache_home(env: Mapping[str, str], home: Path) -> Path:

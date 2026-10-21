@@ -1,6 +1,6 @@
 # ABOUTME: Tests for the DuckDB query index over a lake loaded from the recorded test workspace.
-# ABOUTME: Covers latest-wins views, deleted messages, repeated rows, and `slarc sql`.
-from collections.abc import Iterator
+# ABOUTME: Covers latest-wins views, deleted messages, repeated rows, lake errors and `slarc sql`.
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import msgspec
@@ -10,11 +10,13 @@ from typer.testing import CliRunner
 from slarc import bootstrap
 from slarc.adapters.credentials import CompositeSource, KeyringSource
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
+from slarc.adapters.lake import CATALOG
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.cli import app
 from slarc.domain.envelope import Envelope, Meta
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem, run_from_envelope
-from slarc.ports import Commit, SlarcError
+from slarc.ports import ArchiveReadFailed, Commit, SlarcError
+from tests.adapters.test_lake_store import assert_one_plain_sentence
 from tests.fakes import FakeArchiveLock, FakeKeyring
 from tests.jsonl_loader import jsonl_envelopes
 from tests.recorded_fixtures import RECORDED, RECORDED_TEAM, recorded_lake, recorded_lines
@@ -459,6 +461,26 @@ def test_bad_sql_raises_one_line_slarc_error(index: DuckDbQueryIndex) -> None:
         index.sql("SELEC 1")
     assert "syntax error" in str(caught.value)
     assert "\n" not in str(caught.value)
+
+
+QUERIES: dict[str, Callable[[DuckDbQueryIndex], object]] = {
+    "search": lambda index: index.search("wave", None, None, 10),
+    "conversation_counts": lambda index: index.conversation_counts(),
+    "messages": lambda index: index.messages(RECORDED_TEAM, ALL_NALEID, None, None, False),
+    "thread": lambda index: index.thread(RECORDED_TEAM, ALL_NALEID, WAVE_PARENT, False),
+}
+
+
+@pytest.mark.parametrize("query", QUERIES.values(), ids=QUERIES.keys())
+def test_a_lake_error_while_querying_is_an_archive_read_failure(
+    tmp_path: Path, ext_dir: Path, query: Callable[[DuckDbQueryIndex], object]
+) -> None:
+    DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock()).close()
+    with DuckDbQueryIndex(tmp_path, ext_dir, FakeArchiveLock()) as index:
+        index._db.close()
+        with pytest.raises(ArchiveReadFailed) as caught:
+            query(index)
+    assert_one_plain_sentence(str(caught.value), tmp_path / CATALOG)
 
 
 def cli_services(home: Path) -> bootstrap.Services:

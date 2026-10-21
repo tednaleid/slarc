@@ -1,14 +1,15 @@
 # ABOUTME: Tests for behavior only the lake store has: the open batch across connections, a run
-# ABOUTME: row that a failed append_run leaves unwritten, and tracked item round trips.
+# ABOUTME: row that a failed append_run leaves unwritten, tracked item round trips and lake errors.
+from collections.abc import Callable
 from pathlib import Path
 
 import msgspec
 import pytest
 
 from slarc.adapters import lake_store
-from slarc.adapters.lake import connect_lake
+from slarc.adapters.lake import CATALOG, connect_lake
 from slarc.adapters.lake_store import DuckLakeArchiveStore
-from slarc.ports import Commit
+from slarc.ports import ArchiveReadFailed, ArchiveWriteFailed, Commit
 from tests.contract.test_archive_store import (
     CHANNEL,
     R1,
@@ -125,3 +126,51 @@ def test_tracked_items_round_trip_every_field(tmp_path: Path, ext_dir: Path) -> 
         conversation.key: msgspec.structs.replace(conversation, revision=1),
     }
     reopened.close()
+
+
+def assert_one_plain_sentence(message: str, path: Path) -> None:
+    """Apart from the path it names, the message is one line with one full stop, at its end."""
+    rest = message.replace(str(path), "")
+    assert "\n" not in rest
+    assert rest.endswith(".")
+    assert not any(mark in rest[:-1] for mark in ".!?")
+
+
+WRITES: dict[str, Callable[[DuckLakeArchiveStore], object]] = {
+    "commit": lambda store: store.commit(Commit()),
+    "append_run": lambda store: store.append_run(run_record(R1, T1), VERSION),
+}
+READS: dict[str, Callable[[DuckLakeArchiveStore], object]] = {
+    "stored_messages": lambda store: store.stored_messages(TEAM, CHANNEL),
+    "directory_state": lambda store: store.directory_state(TEAM, "file"),
+    "directory_objects": lambda store: store.directory_objects(TEAM, "file"),
+    "tracked_items": lambda store: store.tracked_items(),
+    "removed_items": lambda store: store.removed_items(),
+    "downloads": lambda store: store.downloads(),
+    "channels": lambda store: store.channels(TEAM),
+    "message_lines": lambda store: store.message_lines(TEAM, CHANNEL),
+    "blob_references": lambda store: store.blob_references(),
+    "drop_messages": lambda store: store.drop_messages(TEAM, CHANNEL, {TS}),
+}
+
+
+@pytest.mark.parametrize("write", WRITES.values(), ids=WRITES.keys())
+def test_a_lake_error_while_writing_is_an_archive_write_failure(
+    tmp_path: Path, ext_dir: Path, write: Callable[[DuckLakeArchiveStore], object]
+) -> None:
+    store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
+    store._con.close()
+    with pytest.raises(ArchiveWriteFailed) as caught:
+        write(store)
+    assert_one_plain_sentence(str(caught.value), tmp_path / CATALOG)
+
+
+@pytest.mark.parametrize("read", READS.values(), ids=READS.keys())
+def test_a_lake_error_while_reading_is_an_archive_read_failure(
+    tmp_path: Path, ext_dir: Path, read: Callable[[DuckLakeArchiveStore], object]
+) -> None:
+    store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
+    store._con.close()
+    with pytest.raises(ArchiveReadFailed) as caught:
+        read(store)
+    assert_one_plain_sentence(str(caught.value), tmp_path / CATALOG)

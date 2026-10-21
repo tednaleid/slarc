@@ -6,7 +6,15 @@ from pathlib import Path
 import pytest
 
 from slarc.domain.envelope import Envelope
-from slarc.ports import ArchiveWriteFailed, AuthFailed, NotVisible, SlarcError, ThreadNotFound
+from slarc.ports import (
+    ArchiveWriteFailed,
+    AuthFailed,
+    Commit,
+    Committed,
+    NotVisible,
+    SlarcError,
+    ThreadNotFound,
+)
 from slarc.service.pull import PullOptions, date_to_ts
 from tests.service.pull_harness import (
     BASE,
@@ -537,6 +545,20 @@ def test_archive_write_failure_aborts_the_pull(h: Harness, monkeypatch: pytest.M
         appended(env)
 
     monkeypatch.setattr(h.archive, "append", failing_on_messages)
+
+    with pytest.raises(ArchiveWriteFailed):
+        h.pull(BASE)
+
+
+def test_a_failed_message_commit_aborts_the_pull(h: Harness, monkeypatch: pytest.MonkeyPatch):
+    committed = h.archive.commit
+
+    def failing_with_messages(change: Commit) -> Committed:
+        if any(env.meta.kind == "message" for env in h.archive._batch):
+            raise ArchiveWriteFailed(Path("catalog.sqlite"), "disk I/O error")
+        return committed(change)
+
+    monkeypatch.setattr(h.archive, "commit", failing_with_messages)
 
     with pytest.raises(ArchiveWriteFailed):
         h.pull(BASE)

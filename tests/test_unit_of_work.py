@@ -2,13 +2,21 @@
 # ABOUTME: Covers commits that thread revisions and download states, and the run line written
 # ABOUTME: however the run ends: success, exception or Ctrl-C.
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal
 
 import pytest
 
 from slarc.domain.envelope import Envelope, Meta
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
-from slarc.ports import BlobStore, Commit, CommitConflict, Committed, SlarcError
+from slarc.ports import (
+    ArchiveWriteFailed,
+    BlobStore,
+    Commit,
+    CommitConflict,
+    Committed,
+    SlarcError,
+)
 from slarc.unit_of_work import UnitOfWork
 from tests.fakes import FakeClock, InMemoryArchiveStore, InMemoryBlobStore
 
@@ -312,3 +320,25 @@ def test_a_maintenance_failure_does_not_mask_the_runs_own_error():
 
     assert archive.calls == ["append_run", "maintain"]
     assert len(run_lines(archive)) == 1
+
+
+class RunRowFailingArchiveStore(InMemoryArchiveStore):
+    """Raises ArchiveWriteFailed from append_run, writing nothing."""
+
+    def append_run(self, run: RunRecord, slarc_version: str) -> None:
+        raise ArchiveWriteFailed(Path("catalog.sqlite"), "disk I/O error")
+
+
+@pytest.mark.parametrize("error", [RuntimeError("boom"), KeyboardInterrupt()])
+def test_a_run_row_failure_does_not_mask_the_runs_own_error(error: BaseException):
+    archive = RunRowFailingArchiveStore()
+    uow = UnitOfWork(archive, InMemoryBlobStore(), FakeClock(START), "pull", [], "0.1.0")
+    with pytest.raises(type(error)), uow:
+        raise error
+
+
+def test_a_run_row_failure_after_a_clean_run_is_raised():
+    archive = RunRowFailingArchiveStore()
+    uow = UnitOfWork(archive, InMemoryBlobStore(), FakeClock(START), "pull", [], "0.1.0")
+    with pytest.raises(ArchiveWriteFailed), uow:
+        pass

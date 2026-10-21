@@ -134,11 +134,15 @@ class UnitOfWork:
         finally:
             self.discard()
             self.run.finished = fetched_at(self.clock.now())
-            self.archive.append_run(self.run, self.slarc_version)
+            try:
+                self.archive.append_run(self.run, self.slarc_version)
+            except Exception:
+                # The run's own error is the one to report.
+                if exc is None:
+                    raise
         try:
             self.maintained = self.archive.maintain(self.blobs)
         except Exception:
-            # The run's own error is the one to report.
             if exc is None:
                 raise
 

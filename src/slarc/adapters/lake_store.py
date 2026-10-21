@@ -9,12 +9,14 @@ import duckdb
 import msgspec
 
 from slarc import archive_state
-from slarc.adapters.lake import CATALOG, connect_lake
+from slarc.adapters.lake import CATALOG, connect_lake, failure_reason, lake_errors
 from slarc.archive_state import LatestMessages
 from slarc.domain.envelope import Envelope, Kind, Meta
 from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem, run_envelope
 from slarc.ports import (
     ArchiveLock,
+    ArchiveReadFailed,
+    ArchiveWriteFailed,
     BlobStore,
     Commit,
     CommitConflict,
@@ -147,10 +149,14 @@ class DuckLakeArchiveStore:
         """Writes the open batch and the change in one transaction, then empties the batch.
 
         On CommitConflict nothing is written and the batch is emptied; on any other failure
-        nothing is written and the batch is kept.
+        nothing is written and the batch is kept. A lake failure raises ArchiveWriteFailed.
         """
         try:
-            with self._lock.write(), self._transaction():
+            with (
+                lake_errors(self._catalog, ArchiveWriteFailed),
+                self._lock.write(),
+                self._transaction(),
+            ):
                 committed = self._commit(change)
         except CommitConflict:
             self.discard()
@@ -170,11 +176,11 @@ class DuckLakeArchiveStore:
 
     def stored_messages(self, team: str, channel: str) -> dict[str, StoredMessage]:
         latest = LatestMessages()
-        rows = self._con.execute(
+        rows = self._read(
             "SELECT kind, ts, fetched_at, run, hash, thread_ts FROM message_version "
             f"WHERE team = ? AND channel = ? ORDER BY {VERSION_ORDER}",
             [team, channel],
-        ).fetchall()
+        )
         for kind, ts, fetched, run, hash_, thread_ts in rows:
             meta = Meta(kind=kind, ts=ts, fetched_at=fetched, run=run, hash=hash_)
             latest.add(Envelope(meta=meta, object={"thread_ts": thread_ts} if thread_ts else None))
@@ -196,14 +202,13 @@ class DuckLakeArchiveStore:
 
     def downloads(self) -> dict[DownloadKey, DownloadState]:
         names = ", ".join(DOWNLOAD_COLUMNS)
-        rows = self._con.execute(
-            f"SELECT {names} FROM download_state ORDER BY team, target"
-        ).fetchall()
+        rows = self._read(f"SELECT {names} FROM download_state ORDER BY team, target")
         states = [download_state(dict(zip(DOWNLOAD_COLUMNS, row, strict=True))) for row in rows]
         return {(state.team_id, state.target): state for state in states}
 
     def append_run(self, run: RunRecord, slarc_version: str) -> None:
-        """Commits the run row alone; raises ValueError if the open batch is not empty.
+        """Commits the run row alone; raises ValueError if the open batch is not empty, and
+        ArchiveWriteFailed when the lake fails.
 
         The run row's tracked and downloads lists are empty: the tracked_item and
         download_state tables hold that state, and only commit writes them.
@@ -211,7 +216,11 @@ class DuckLakeArchiveStore:
         if self._batch or self._drops:
             raise ValueError("Commit or discard the open batch before appending the run")
         recorded = msgspec.structs.replace(run, tracked=[], downloads=[])
-        with self._lock.write(), self._transaction():
+        with (
+            lake_errors(self._catalog, ArchiveWriteFailed),
+            self._lock.write(),
+            self._transaction(),
+        ):
             insert_rows(
                 self._con, "run", RUN_COLUMNS, [run_row(run_envelope(recorded, slarc_version))]
             )
@@ -249,22 +258,20 @@ class DuckLakeArchiveStore:
             finally:
                 self._lock.hold_shared()
         except (duckdb.Error, sqlite3.Error, OSError) as error:
-            raise MaintenanceFailed(str(error).splitlines()[0].rstrip(".")) from None
+            raise MaintenanceFailed(failure_reason(error)) from None
 
     def channels(self, team: str) -> list[str]:
-        rows = self._con.execute(
-            "SELECT DISTINCT channel FROM message_version WHERE team = ?", [team]
-        ).fetchall()
+        rows = self._read("SELECT DISTINCT channel FROM message_version WHERE team = ?", [team])
         batched = {env.meta.channel for env in self._batch if self._is_message_of(env, team)}
         return sorted({row[0] for row in rows} | {c for c in batched if c is not None})
 
     def message_lines(self, team: str, channel: str) -> Iterator[Envelope]:
         names = ", ".join(f'"{name}"' for name in MESSAGE_COLUMNS)
-        rows = self._con.execute(
+        rows = self._read(
             f"SELECT {names} FROM message_version WHERE team = ? AND channel = ? "
             f"ORDER BY ts, {VERSION_ORDER}",
             [team, channel],
-        ).fetchall()
+        )
         lines = [message_envelope(dict(zip(MESSAGE_COLUMNS, row, strict=True))) for row in rows]
         return iter(lines + self._batch_messages(team, channel))
 
@@ -301,10 +308,10 @@ class DuckLakeArchiveStore:
         )
 
     def blob_references(self) -> list[tuple[str, Kind, str, str]]:
-        rows = self._con.execute(
+        rows = self._read(
             "SELECT team, kind, id, blob FROM directory_entry "
             "WHERE blob IS NOT NULL AND id IS NOT NULL ORDER BY team, kind, id, rowid"
-        ).fetchall()
+        )
         references: list[tuple[str, Kind, str, str]] = [tuple(row) for row in rows]
         for env in self._batch:
             meta = env.meta
@@ -349,11 +356,11 @@ class DuckLakeArchiveStore:
             con.close()
 
     def _directory_lines(self, team: str, kind: Kind, *, with_object: bool) -> list[Envelope]:
-        rows = self._con.execute(
+        rows = self._read(
             f"SELECT id, fetched_at, run, hash, blob, {'object' if with_object else 'NULL'} "
             f"FROM directory_entry WHERE team = ? AND kind = ? ORDER BY {VERSION_ORDER}",
             [team, kind],
-        ).fetchall()
+        )
         lines = [
             Envelope(
                 meta=Meta(kind=kind, id=id_, fetched_at=fetched, run=run, hash=hash_, blob=blob),
@@ -366,9 +373,9 @@ class DuckLakeArchiveStore:
 
     def _tracked_where(self, condition: str) -> dict[ItemKey, TrackedItem]:
         names = ", ".join(f'"{name}"' for name in TRACKED_COLUMNS)
-        rows = self._con.execute(
+        rows = self._read(
             f"SELECT {names} FROM tracked_item WHERE {condition} ORDER BY team, kind, channel, ts"
-        ).fetchall()
+        )
         items = {}
         for row in rows:
             item = tracked_item(dict(zip(TRACKED_COLUMNS, row, strict=True)))
@@ -458,14 +465,16 @@ class DuckLakeArchiveStore:
     def _stage_drop(self, table: str, condition: str, params: list) -> int:
         """Stages a DELETE for the next commit; returns the committed rows it matches now."""
         self._drops.append((table, condition, params))
-        matched = self._con.execute(
-            f"SELECT count(*) FROM {table} WHERE {condition}", params
-        ).fetchall()
-        return matched[0][0]
+        return self._read(f"SELECT count(*) FROM {table} WHERE {condition}", params)[0][0]
 
     def _apply_drops(self) -> None:
         for table, condition, params in self._drops:
             self._con.execute(f"DELETE FROM {table} WHERE {condition}", params).fetchall()
+
+    def _read(self, query: str, params: list | None = None) -> list[tuple]:
+        """The query's rows; a lake failure raises ArchiveReadFailed."""
+        with lake_errors(self._catalog, ArchiveReadFailed):
+            return self._con.execute(query, params).fetchall()
 
     @contextmanager
     def _transaction(self) -> Generator[None]:

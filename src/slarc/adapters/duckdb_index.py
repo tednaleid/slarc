@@ -7,10 +7,10 @@ from typing import Any
 
 import duckdb
 
-from slarc.adapters.lake import connect_lake
+from slarc.adapters.lake import CATALOG, connect_lake, lake_errors
 from slarc.domain.links import message_link
 from slarc.domain.plain import snippet
-from slarc.ports import ArchiveLock, SearchHit, SlarcError
+from slarc.ports import ArchiveLock, ArchiveReadFailed, SearchHit, SlarcError
 
 # Slack ts strings ordered as numbers.
 TS_ORDER = "TRY_CAST({} AS DECIMAL(18, 6))"
@@ -349,10 +349,12 @@ class DuckDbQueryIndex:
 
     The views live in the in-memory database, which queries use by default, so a view and the
     lake table it reads can share a name. The lake's catalog must exist. The index holds the
-    archive's read lock from open to close.
+    archive's read lock from open to close. A lake failure in any query but sql raises
+    ArchiveReadFailed.
     """
 
     def __init__(self, root: Path, ext_dir: Path, lock: ArchiveLock) -> None:
+        self._catalog = root / CATALOG
         self._lock = lock
         lock.hold_shared()
         try:
@@ -407,7 +409,8 @@ class DuckDbQueryIndex:
             "from_user": from_user,
             "limit": limit,
         }
-        rows = self._db.execute(SEARCH, params).fetchall()
+        with lake_errors(self._catalog, ArchiveReadFailed):
+            rows = self._db.execute(SEARCH, params).fetchall()
         return [
             SearchHit(
                 author=author,
@@ -420,10 +423,11 @@ class DuckDbQueryIndex:
         ]
 
     def conversation_counts(self) -> dict[tuple[str, str], int]:
-        rows = self._db.execute(
-            "SELECT team_id, channel_id, count(*) FROM message "
-            "WHERE deleted_at IS NULL GROUP BY ALL"
-        ).fetchall()
+        with lake_errors(self._catalog, ArchiveReadFailed):
+            rows = self._db.execute(
+                "SELECT team_id, channel_id, count(*) FROM message "
+                "WHERE deleted_at IS NULL GROUP BY ALL"
+            ).fetchall()
         return {(team, channel): count for team, channel, count in rows}
 
     def messages(
@@ -469,22 +473,23 @@ class DuckDbQueryIndex:
         """Runs the message views over the channel's own rows only, so a loop over
         conversations reads each conversation once instead of the whole archive each time."""
         deleted = "" if include_deleted else "AND deleted_at IS NULL"
-        cursor = self._db.execute(
-            f"""
-            WITH message_row AS (
-                    SELECT * FROM lake.main.message_version
-                    WHERE team = $team AND channel = $channel {in_thread}
-                ),
-                message_current AS ({ENTITY_VIEWS["message_current"]}),
-                message AS ({ENTITY_VIEWS["message"]})
-            SELECT {MESSAGE_COLUMNS} FROM message
-            WHERE team_id = $team AND channel_id = $channel AND {condition} {deleted}
-            ORDER BY {TS_ORDER.format("ts")}
-            """,
-            params,
-        )
-        columns = [column[0] for column in cursor.description or []]
-        rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+        with lake_errors(self._catalog, ArchiveReadFailed):
+            cursor = self._db.execute(
+                f"""
+                WITH message_row AS (
+                        SELECT * FROM lake.main.message_version
+                        WHERE team = $team AND channel = $channel {in_thread}
+                    ),
+                    message_current AS ({ENTITY_VIEWS["message_current"]}),
+                    message AS ({ENTITY_VIEWS["message"]})
+                SELECT {MESSAGE_COLUMNS} FROM message
+                WHERE team_id = $team AND channel_id = $channel AND {condition} {deleted}
+                ORDER BY {TS_ORDER.format("ts")}
+                """,
+                params,
+            )
+            columns = [column[0] for column in cursor.description or []]
+            rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
         for row in rows:
             if row["object"] is not None:
                 row["object"] = json.loads(row["object"])
