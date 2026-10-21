@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from rich.console import Console
+from rich.text import Text
 from typer.testing import CliRunner
 
 from slarc import __version__, bootstrap
@@ -67,7 +68,8 @@ def test_cli_take_ownership_option(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert taken.exit_code == 0, taken.output
     assert on("beta").exit_code == 0
     assert "This archive is owned by beta." in on("alpha").output
-    help_text = runner.invoke(app, ["--help"], env={"COLUMNS": "300"}).output
+    # Typer styles help with ANSI codes when GITHUB_ACTIONS is set, as it is in CI.
+    help_text = Text.from_ansi(runner.invoke(app, ["--help"], env={"COLUMNS": "300"}).output).plain
     assert "--take-ownership" in help_text
     assert (
         "Take this archive over from the machine that last used it, "
