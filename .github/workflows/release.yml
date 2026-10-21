@@ -1,5 +1,5 @@
-# ABOUTME: Release workflow: on a version tag, builds the sdist and wheel and publishes a GitHub release.
-# ABOUTME: Release notes come from the annotated tag that `just bump` creates.
+# ABOUTME: Release workflow: on a version tag, builds the sdist and wheel, publishes a GitHub release
+# ABOUTME: with notes from the annotated tag, and updates the formula in tednaleid/homebrew-slarc.
 name: Release
 
 on:
@@ -12,12 +12,32 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: astral-sh/setup-uv@v10.3.1
       - run: uv build
       - env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --notes-from-tag
+
+      # Skipped until the HOMEBREW_TAP_TOKEN secret is set; see scripts/setup-homebrew-tap.sh.
+      - name: Update the Homebrew formula
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          sha256=$(sha256sum "dist/slarc-${version}.tar.gz" | awk '{print $1}')
+          tap="$RUNNER_TEMP/homebrew-slarc"
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/tednaleid/homebrew-slarc.git" "$tap"
+          mkdir -p "$tap/Formula"
+          scripts/homebrew-formula.sh "$version" "$sha256" > "$tap/Formula/slarc.rb"
+          cd "$tap"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/slarc.rb
+          git diff --cached --quiet && echo "No formula changes" && exit 0
+          git commit -m "Update slarc to ${version}"
+          git push

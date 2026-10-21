@@ -37,6 +37,10 @@ dev = [
 requires = ["uv_build>=0.13,<0.14"]
 build-backend = "uv_build"
 
+# The Homebrew formula installs the locked dependency versions from the sdist.
+[tool.uv.build-backend]
+source-include = ["uv.lock"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py315"

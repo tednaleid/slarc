@@ -113,6 +113,10 @@ retag version:
     git tag -a "$tag" -F "$notes_file"
     git push && git push --tags
 
+# Create the tednaleid/homebrew-slarc tap and seed it from the latest release (run once)
+setup-homebrew-tap:
+    ./scripts/setup-homebrew-tap.sh
+
 # Compare slarc's LevelDB reader with ccl_chromium_reader on this machine's Slack Local Storage
 compare-leveldb:
     ./scripts/compare-leveldb.py

@@ -4,13 +4,23 @@ Archive the Slack conversations you can see into a local archive you own: search
 
 slarc logs in with the session your Slack desktop app already holds, so it needs no Slack app install and no admin approval. It only reads from Slack; it never posts, reacts or marks anything read.
 
-Status: early development, not yet released. `docs/spec.md` describes what slarc does and `docs/architecture.md` how it is built.
+Status: early development. `docs/spec.md` describes what slarc does and `docs/architecture.md` how it is built.
+
+## Install
+
+```sh
+brew install tednaleid/slarc/slarc
+```
+
+Or with uv, which needs Python 3.15:
+
+```sh
+uv tool install git+https://github.com/tednaleid/slarc
+```
 
 ## Usage
 
 ```sh
-uv tool install git+https://github.com/tednaleid/slarc
-
 slarc auth                                                                    # the Slack sessions found, and who you are in each workspace
 slarc pull https://yourworkspace.slack.com/archives/C0123456789              # pull a conversation and start tracking it
 slarc pull https://yourworkspace.slack.com/archives/C0123456789/p1712345678000100  # a thread or single message

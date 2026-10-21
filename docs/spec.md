@@ -390,7 +390,7 @@ Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cas
 
 - Python 3.15, uv, Typer + Rich, `slack_sdk` ≥ 3.45, `httpx`, DuckDB, msgspec, `cryptography`, `keyring`, Jinja2; pytest, Hypothesis, ruff (lint and format), ty (pinned).
 - Installed with `uv tool install` (`uv tool install git+https://github.com/tednaleid/slarc`); `just install` does an editable install. Developer scripts use a uv shebang.
-- `just` recipes follow the just-bootstrap conventions: `check`, `test`, `lint`, `fmt`, `build`, `install`, `clean`, `bump`, `retag`, `install-hooks`. A pre-commit hook runs `just check`. GitHub Actions CI runs `just check` on macOS and Linux.
+- `just` recipes follow the just-bootstrap conventions: `check`, `test`, `lint`, `fmt`, `build`, `install`, `clean`, `bump`, `retag`, `install-hooks`. A pre-commit hook runs `just check`. GitHub Actions CI runs `just check` on macOS and Linux. A `v*` tag, which `just bump` creates, makes the release workflow publish the sdist and wheel as a GitHub release and update the formula in the `tednaleid/homebrew-slarc` tap. The formula installs the dependency versions locked in the sdist's `uv.lock`, verified by hash, into a Python 3.15 virtualenv.
 - Public repo at `tednaleid/slarc`, MIT license.
 
 ## Status
