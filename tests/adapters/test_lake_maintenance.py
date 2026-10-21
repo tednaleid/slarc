@@ -190,13 +190,25 @@ def test_maintain_refuses_an_open_batch(tmp_path: Path, ext_dir: Path) -> None:
     store.close()
 
 
+def leave_free_pages(root: Path) -> None:
+    """Grows the catalog with a table and drops it, as expired snapshots leave it mostly free."""
+    con = sqlite3.connect(root / CATALOG)
+    try:
+        con.execute("CREATE TABLE filler (data BLOB)")
+        con.executemany("INSERT INTO filler VALUES (randomblob(4096))", [()] * 200)
+        con.commit()
+        con.execute("DROP TABLE filler")
+        con.commit()
+    finally:
+        con.close()
+
+
 def test_maintain_vacuums_a_catalog_left_mostly_free(tmp_path: Path, ext_dir: Path) -> None:
     store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
     store.commit(Commit(items=[tracked(TS)]))
-    for env in messages(300):
-        store.append(env)
-        store.commit(Commit())
-    _, before = catalog_pages(tmp_path)
+    leave_free_pages(tmp_path)
+    free, before = catalog_pages(tmp_path)
+    assert free * 4 > before
     assert store.maintain(FsBlobStore(tmp_path)) is True
     free, pages = catalog_pages(tmp_path)
     assert pages < before
