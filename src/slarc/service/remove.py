@@ -7,10 +7,9 @@ import msgspec
 
 from slarc.domain.directory import directory_image_url
 from slarc.domain.envelope import Envelope
-from slarc.domain.links import ConversationSel, Selector, WorkspaceSel
+from slarc.domain.links import Selector
 from slarc.domain.tracking import DownloadState, ItemKey, TrackedItem
 from slarc.ports import (
-    ArchiveFailed,
     ArchiveStore,
     BlobStore,
     CommitConflict,
@@ -20,7 +19,7 @@ from slarc.ports import (
 )
 from slarc.service.downloads import image_urls
 from slarc.service.listing import workspace_domains
-from slarc.service.selectors import archived_conversation, only_workspace
+from slarc.service.selectors import items_named
 from slarc.unit_of_work import UnitOfWork
 
 REMOVAL_ATTEMPTS = 3
@@ -73,7 +72,7 @@ def plan_removal(
     domains = {domain: team for team, domain in workspace_domains(index).items()}
     named: dict[ItemKey, TrackedItem] = {}
     for text, selector in selectors:
-        found = _named(selector, channel_mode, tracked, removed, domains, archive)
+        found = items_named(selector, channel_mode, tracked, removed, domains, archive)
         if not found:
             raise SlarcError(f"Nothing tracked matches {text}.")
         for item in found:
@@ -297,54 +296,3 @@ def _kept_messages(
         others = [i for i in remaining.values() if (i.team_id, i.channel) == (team, channel)]
         kept += len(named & _covered(versions, others))
     return kept
-
-
-def _named(
-    selector: Selector,
-    channel_mode: bool,
-    tracked: dict[ItemKey, TrackedItem],
-    removed: dict[ItemKey, TrackedItem],
-    domains: dict[str, str],
-    archive: ArchiveStore,
-) -> list[TrackedItem]:
-    """The tracked or removed items a selector names, resolved without Slack.
-
-    A selector without a link names the only workspace with tracked items, or with removed
-    items when nothing is tracked.
-    """
-    candidates = {**removed, **tracked}
-    if not candidates:
-        return []
-    if selector.domain is None:
-        team = only_workspace(tracked or removed)
-    else:
-        team = domains.get(selector.domain)
-    if team is None:
-        return []
-    in_team = [item for item in candidates.values() if item.team_id == team]
-    if isinstance(selector, WorkspaceSel):
-        return in_team
-    if isinstance(selector, ConversationSel):
-        try:
-            channel = archived_conversation(selector, team, archive)
-        except ArchiveFailed:
-            raise
-        except SlarcError:
-            return []
-        wanted = {("conversation", channel, "")}
-    elif channel_mode:
-        wanted = {("conversation", selector.channel, "")}
-    elif selector.thread_ts is not None:
-        wanted = {("thread", selector.channel, str(selector.thread_ts))}
-    else:
-        ts = str(selector.ts)
-        wanted = {(kind, selector.channel, ts) for kind in ("thread", "message")}
-        if not any(item.key[1:] in wanted for item in in_team):
-            wanted = {("thread", selector.channel, _thread_of(team, selector.channel, ts, archive))}
-    return [item for item in in_team if item.key[1:] in wanted]
-
-
-def _thread_of(team: str, channel: str, ts: str, archive: ArchiveStore) -> str:
-    """The thread a stored message belongs to, as pull resolves a link to a reply."""
-    stored = archive.stored_messages(team, channel).get(ts)
-    return (stored.thread_ts if stored is not None else None) or ts

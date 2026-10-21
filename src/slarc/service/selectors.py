@@ -1,10 +1,10 @@
-# ABOUTME: Resolves a conversation selector (channel id, #name or @user) to a channel id.
-# ABOUTME: Also picks the workspace a selector without a link refers to: the archive's only one.
+# ABOUTME: Resolves a conversation selector to its channel id, and any selector to the tracked
+# ABOUTME: items it names without Slack; a selector without a link names the only workspace.
 from collections.abc import Callable, Iterable
 
-from slarc.domain.links import ConversationSel
-from slarc.domain.tracking import TrackedItem
-from slarc.ports import ArchiveStore, SlackGateway, SlarcError
+from slarc.domain.links import ConversationSel, Selector, WorkspaceSel
+from slarc.domain.tracking import ItemKey, TrackedItem
+from slarc.ports import ArchiveFailed, ArchiveStore, SlackGateway, SlarcError
 
 
 def resolve_conversation(
@@ -90,3 +90,56 @@ def _user_handle(handle: str) -> Callable[[dict], bool]:
 
 def _find_id(objects: Iterable[dict], predicate: Callable[[dict], bool]) -> str | None:
     return next((obj["id"] for obj in objects if predicate(obj)), None)
+
+
+def items_named(
+    selector: Selector,
+    channel_mode: bool,
+    tracked: dict[ItemKey, TrackedItem],
+    removed: dict[ItemKey, TrackedItem],
+    domains: dict[str, str],
+    archive: ArchiveStore,
+) -> list[TrackedItem]:
+    """The tracked or removed items a selector names, resolved without Slack.
+
+    A selector without a link names the only workspace with tracked items, or with removed
+    items when nothing is tracked.
+    """
+    candidates = {**removed, **tracked}
+    if not candidates:
+        return []
+    if selector.domain is None:
+        team = only_workspace(tracked or removed)
+    else:
+        team = domains.get(selector.domain)
+    if team is None:
+        return []
+    in_team = [item for item in candidates.values() if item.team_id == team]
+    if isinstance(selector, WorkspaceSel):
+        return in_team
+    if isinstance(selector, ConversationSel):
+        try:
+            channel = archived_conversation(selector, team, archive)
+        except ArchiveFailed:
+            raise
+        except SlarcError:
+            return []
+        wanted = {("conversation", channel, "")}
+    elif channel_mode:
+        wanted = {("conversation", selector.channel, "")}
+    elif selector.thread_ts is not None:
+        wanted = {("thread", selector.channel, str(selector.thread_ts))}
+    else:
+        ts = str(selector.ts)
+        wanted = {(kind, selector.channel, ts) for kind in ("thread", "message")}
+        if not any(item.key[1:] in wanted for item in in_team):
+            wanted = {
+                ("thread", selector.channel, _stored_thread_of(team, selector.channel, ts, archive))
+            }
+    return [item for item in in_team if item.key[1:] in wanted]
+
+
+def _stored_thread_of(team: str, channel: str, ts: str, archive: ArchiveStore) -> str:
+    """The thread a stored message belongs to, as pull resolves a link to a reply."""
+    stored = archive.stored_messages(team, channel).get(ts)
+    return (stored.thread_ts if stored is not None else None) or ts
