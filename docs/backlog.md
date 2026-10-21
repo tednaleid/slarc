@@ -24,7 +24,6 @@ Known problems and future work, grouped by theme. Each line says what is wrong o
 - A bare `slarc pull --root DIR` where DIR has no `slarc.toml` says "No tracked items yet", which hides that DIR is not an archive; untested (`cli.py`).
 - A maintenance failure after a clean pull raises `MaintenanceFailed` out of the unit of work, so the command prints only the error and loses the pull summary and exit handling, although everything was committed (`unit_of_work.py` `__exit__`, `cli.py` `pull_command`).
 - `_skip` warns before it records the item, and `_record` can raise `CommitConflict`, which the caller reports a second time as "Could not finish pulling" (`service/pull.py` `_skip`).
-- `UnitOfWork.commit` finds changed downloads by comparing `run.downloads` with a shallow snapshot, and `DownloadState` is not frozen, so a state mutated in place would go unwritten; freeze the struct (`unit_of_work.py`, `domain/tracking.py`).
 - The rm run row's `blobs_deleted` is the planned count even when maintenance deferred the deletion (`service/remove.py` `apply_removal`).
 - When a normally ending run's last commit fails with an error other than `CommitConflict`, maintenance is skipped, and if writing the run row then fails too, that error replaces the commit's error (`unit_of_work.py` `__exit__`).
 - A run that raises, such as an rm that keeps conflicting, writes a run row with no `errors` entry, so `slarc sql` cannot say why it failed (`unit_of_work.py` `__exit__`, `service/remove.py`).

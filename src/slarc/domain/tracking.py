@@ -39,7 +39,7 @@ def item_label(item: TrackedItem, view: DirectoryView) -> str:
     return where if item.kind == "conversation" else f"{where} {item.kind} {item.ts}"
 
 
-class DownloadState(msgspec.Struct, kw_only=True):
+class DownloadState(msgspec.Struct, kw_only=True, frozen=True):
     team_id: str
     target_kind: Literal["file", "image"]
     target: str
