@@ -24,7 +24,7 @@ from slarc.adapters.lake_store import (
 from slarc.cli import RichReporter, _summary, app
 from slarc.config import create_archive
 from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem
-from slarc.ports import AuthFailed, BlobStore, CredentialReadError, Session
+from slarc.ports import AuthFailed, BlobStore, CredentialReadError, ItemProgress, Session
 from slarc.service.downloads import QUEUED_STATUSES
 from slarc.service.pull import PullReport
 from tests.fakes import (
@@ -393,7 +393,7 @@ def test_reporter_shows_item_and_download_rows(failed: int, skipped: int, detail
 
     with RichReporter(console) as reporter:
         reporter.downloads(0, 0, 0, 7)
-        reporter.progress("#all-naleid", 3, 2, 3)
+        reporter.progress("#all-naleid", ItemProgress(3, 2, share=1))
         reporter.downloads(7, failed, skipped, 7)
 
     downloads, item = buffer.getvalue().splitlines()
@@ -550,3 +550,17 @@ def test_pull_into_a_read_only_archive_exits_1_without_traceback(f: Fixture):
     assert result.exit_code == 1
     assert "Could not write to" in result.output
     assert "Traceback" not in result.output
+
+
+def test_reporter_shows_the_date_reached_and_the_date_it_reads_back_to():
+    buffer = io.StringIO()
+    update = ItemProgress(
+        1840, 1840, at="1741953600.000100", target="1685620800", share=0.4
+    )  # noon UTC on 2025-03-14 and 2023-06-01
+
+    with RichReporter(Console(file=buffer, width=80)) as reporter:
+        reporter.progress("#tgt_subslack", update)
+
+    [row] = buffer.getvalue().splitlines()
+    assert row.startswith("#tgt_subslack")
+    assert row.rstrip().endswith("1,840 read, 1,840 new  @ 2025-03-14  ⌖ 2023-06-01")

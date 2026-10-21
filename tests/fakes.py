@@ -27,6 +27,7 @@ from slarc.ports import (
     DownloadKey,
     DownloadResult,
     FileDeleted,
+    ItemProgress,
     NoSession,
     NotVisible,
     Session,
@@ -543,7 +544,7 @@ class RecordingReporter:
     def __init__(self) -> None:
         self.infos: list[str] = []
         self.warnings: list[str] = []
-        self.progress_updates: list[tuple[str, int, int, int | None]] = []
+        self.progress_updates: list[tuple[str, ItemProgress]] = []
         self.download_updates: list[tuple[int, int, int, int]] = []
 
     def info(self, msg: str) -> None:
@@ -552,8 +553,8 @@ class RecordingReporter:
     def warn(self, msg: str) -> None:
         self.warnings.append(msg)
 
-    def progress(self, label: str, done: int, new: int, total: int | None) -> None:
-        self.progress_updates.append((label, done, new, total))
+    def progress(self, label: str, update: ItemProgress) -> None:
+        self.progress_updates.append((label, update))
 
     def downloads(self, done: int, failed: int, skipped: int, total: int) -> None:
         self.download_updates.append((done, failed, skipped, total))

@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 from slarc import __version__, bootstrap
 from slarc.adapters.credentials import CompositeSource, KeyringSource
 from slarc.cli import RichReporter, app
+from slarc.ports import ItemProgress
 from tests.fakes import FakeKeyring
 from tests.recorded_fixtures import recorded_lake
 
@@ -45,7 +46,7 @@ def test_startup_leaves_the_slack_and_credential_libraries_unloaded():
 def test_progress_bar_shows_messages_read_and_new():
     output = StringIO()
     with RichReporter(Console(file=output, width=100)) as reporter:
-        reporter.progress("#general", 3, 0, 3)
+        reporter.progress("#general", ItemProgress(3, 0, share=1))
     assert "#general" in output.getvalue()
     assert "3 read, 0 new" in output.getvalue()
 

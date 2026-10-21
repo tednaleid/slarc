@@ -56,6 +56,11 @@ def ts_on(day: int, hour: int) -> str:
     return f"{OCT_17 + (day - 17) * 86400 + hour * 3600}.000100"
 
 
+def progress_counts(h: Harness) -> list[tuple[str, int, int]]:
+    """Each progress update as its label, messages read and lines new."""
+    return [(label, u.read, u.new) for label, u in h.reporter.progress_updates]
+
+
 def message(ts: str, **extra: object) -> dict:
     return {"type": "message", "user": ME, "text": f"message at {ts}", "ts": ts, **extra}
 

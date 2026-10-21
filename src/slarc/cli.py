@@ -24,7 +24,7 @@ from slarc.config import (
     read_global_config,
 )
 from slarc.domain.links import WorkspaceSel, parse_selector
-from slarc.ports import NoArchive, NoSession, SlarcError
+from slarc.ports import ItemProgress, NoArchive, NoSession, SlarcError
 lazy from slarc.service.auth import AuthStatus, auth_status, store_pasted
 lazy from slarc.service.export import export
 lazy from slarc.service.listing import ArchiveListing, RemoteRow, list_archive, list_remote
@@ -55,6 +55,8 @@ NO_WORKSPACE = "This archive tracks no workspace yet. Pull a Slack link first."
 NO_TRACKED_ITEMS = "No tracked items yet. Pull a Slack link to start tracking it."
 NO_MATCHES = "No messages match."
 LOCAL_TIME = "%Y-%m-%d %H:%M"
+LOCAL_DATE = "%Y-%m-%d"
+TARGET = "⌖"  # crosshairs, before the date history reads back to
 FETCHED_AT = "%Y-%m-%dT%H:%M:%SZ"
 DOWNLOADS_ROW = "Downloads"
 DIRECTORY_KINDS = "(users, emoji, files)"
@@ -197,8 +199,14 @@ class RichReporter:
     def warn(self, msg: str) -> None:
         self._progress.console.print(f"Warning: {msg}", style="yellow", markup=False)
 
-    def progress(self, label: str, done: int, new: int, total: int | None) -> None:
-        self._show(label, done, total, f"{done} read, {new} new")
+    def progress(self, label: str, update: ItemProgress) -> None:
+        parts = [f"{update.read:,} read, {update.new:,} new"]
+        if update.at is not None:
+            parts.append(f"@ {_local_date(update.at)}")
+        if update.target is not None:
+            parts.append(f"{TARGET} {_local_date(update.target)}")
+        total = None if update.share is None else 1
+        self._show(label, update.share or 0, total, "  ".join(parts))
 
     def downloads(self, done: int, failed: int, skipped: int, total: int) -> None:
         parts = [f"{done}/{total}"]
@@ -208,12 +216,16 @@ class RichReporter:
             parts.append(f"{skipped} skipped")
         self._show(DOWNLOADS_ROW, done, total, ", ".join(parts))
 
-    def _show(self, label: str, done: int, total: int | None, detail: str) -> None:
+    def _show(self, label: str, done: float, total: float | None, detail: str) -> None:
         if label not in self._tasks:
             if not self._tasks:
                 self._progress.start()
             self._tasks[label] = self._progress.add_task(label, total=total, detail=detail)
         self._progress.update(self._tasks[label], completed=done, total=total, detail=detail)
+
+
+def _local_date(ts: str) -> str:
+    return datetime.fromtimestamp(float(ts)).strftime(LOCAL_DATE)
 
 
 def _check_date(flag: str, value: str | None) -> None:

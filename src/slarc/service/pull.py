@@ -24,6 +24,7 @@ from slarc.ports import (
     AuthFailed,
     CommitConflict,
     Downloader,
+    ItemProgress,
     NoSession,
     NotVisible,
     Reporter,
@@ -480,7 +481,12 @@ class _PullRun:
         again.
         """
         newest = item.newest_ts
+        if self.progress is not None:
+            top = item.until or f"{self.uow.clock.now().timestamp():.6f}"
+            self.progress.paging(top, _history_floor(oldest, view, item.channel))
         for page in connection.gateway.history(item.channel, oldest, latest):
+            if self.progress is not None and page:
+                self.progress.at = _outermost(None, page, newest=False)
             self._append_history_page(connection, held, page, view, reason)
             newest = _outermost(newest, page, newest=True)
             oldest_ts = _outermost(item.oldest_ts, page, newest=False)
@@ -757,21 +763,40 @@ class _PullRun:
 
 class _ItemProgress:
     """Reports how many messages have been read for one item and how many lines were new for it,
-    ending with the item's total."""
+    and while history is paged, the oldest message reached and the part of the range read."""
 
     def __init__(self, reporter: Reporter, label: str, *, report_start: bool = True) -> None:
         self.reporter = reporter
         self.label = label
         self.seen = 0
         self.new = 0
+        self.at: str | None = None
+        self.target: str | None = None
+        self.top: str | None = None
         if report_start:
-            reporter.progress(label, 0, 0, None)
+            self.report()
+
+    def paging(self, top: str, target: str | None) -> None:
+        """History is paged from top, the newest ts in range, back to target."""
+        self.top, self.target = top, target
 
     def report(self) -> None:
-        self.reporter.progress(self.label, self.seen, self.new, None)
+        self._send(self._share())
 
     def end(self) -> None:
-        self.reporter.progress(self.label, self.seen, self.new, self.seen)
+        self._send(1)
+
+    def _send(self, share: float | None) -> None:
+        update = ItemProgress(self.seen, self.new, self.at, self.target, share)
+        self.reporter.progress(self.label, update)
+
+    def _share(self) -> float | None:
+        if self.at is None or self.target is None or self.top is None:
+            return None
+        span = float(self.top) - float(self.target)
+        if span <= 0:
+            return None
+        return min(max((float(self.top) - float(self.at)) / span, 0.0), 1.0)
 
 
 def _item_name(connection: Connection, item: TrackedItem) -> str:
@@ -800,6 +825,13 @@ def _two_days_before(timestamp: str) -> str:
     """
     moment = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
     return (moment - timedelta(days=2)).strftime("%Y-%m-%d")
+
+
+def _history_floor(oldest: str | None, view: DirectoryView, channel: str) -> str | None:
+    """The ts history pages back to: oldest, or the conversation's creation when later."""
+    created = view.conversations.get(channel, {}).get("created")
+    floors = [MessageTs(ts) for ts in (oldest, str(created) if created else None) if ts]
+    return str(max(floors)) if floors else None
 
 
 def _outermost(current: str | None, page: list[dict], *, newest: bool) -> str | None:

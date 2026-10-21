@@ -27,6 +27,7 @@ from tests.service.pull_harness import (
     THREAD_TS,
     Harness,
     other_gateway,
+    progress_counts,
     spike,
 )
 
@@ -476,9 +477,9 @@ def test_dm_user_resolves_to_their_dm(h: Harness):
 def test_progress_and_item_count_reported_per_thread(h: Harness):
     report = h.pull(THREAD_LINK, LONE_LINK)
 
-    assert h.reporter.progress_updates == [
-        (f"#all-naleid thread {PARENT_TS}", 4, 4, 4),
-        (f"#all-naleid message {LONE_TS}", 1, 1, 1),
+    assert progress_counts(h) == [
+        (f"#all-naleid thread {PARENT_TS}", 4, 4),
+        (f"#all-naleid message {LONE_TS}", 1, 1),
     ]
     assert report.items_pulled == 2
 

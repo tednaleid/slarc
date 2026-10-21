@@ -23,6 +23,7 @@ from tests.service.pull_harness import (
     CHANNEL,
     ME,
     NALEID,
+    OCT_17,
     OTHER,
     OTHER_CHANNEL,
     OTHER_LINK,
@@ -34,6 +35,7 @@ from tests.service.pull_harness import (
     channel_messages,
     message,
     other_gateway,
+    progress_counts,
     spike,
     ts_on,
 )
@@ -84,8 +86,7 @@ def test_thread_parent_read_in_history_and_replies_counts_once(h: Harness):
     unique = {m["ts"] for m in channel_messages()}
     assert report.messages_seen == len(unique)
     assert h.last_run().counts["messages_seen"] == len(unique)
-    label, read, _, total = h.reporter.progress_updates[-1]
-    assert (label, read, total) == ("#all-naleid", len(unique), len(unique))
+    assert progress_counts(h)[-1] == ("#all-naleid", len(unique), len(unique))
 
 
 def test_report_counts_message_and_deleted_lines_as_new_messages(h: Harness):
@@ -108,13 +109,14 @@ def test_progress_reported_per_page_and_item(h: Harness):
 
     report = h.pull(BASE)
 
-    assert h.reporter.progress_updates == [
-        ("#all-naleid", 0, 0, None),
-        ("#all-naleid", 3, 3, None),
-        ("#all-naleid", 6, 6, None),
-        ("#all-naleid", 7, 7, None),
-        ("#all-naleid", 7, 7, 7),
+    assert progress_counts(h) == [
+        ("#all-naleid", 0, 0),
+        ("#all-naleid", 3, 3),
+        ("#all-naleid", 6, 6),
+        ("#all-naleid", 7, 7),
+        ("#all-naleid", 7, 7),
     ]
+    assert h.reporter.progress_updates[-1][1].share == 1
     assert report.items_pulled == 1
 
 
@@ -129,12 +131,12 @@ def test_progress_reported_after_each_thread_under_a_page(h: Harness):
 
     h.pull(BASE)
 
-    assert h.reporter.progress_updates == [
-        ("#all-naleid", 0, 0, None),
-        ("#all-naleid", 2, 2, None),
-        ("#all-naleid", 3, 3, None),
-        ("#all-naleid", 4, 4, None),
-        ("#all-naleid", 4, 4, 4),
+    assert progress_counts(h) == [
+        ("#all-naleid", 0, 0),
+        ("#all-naleid", 2, 2),
+        ("#all-naleid", 3, 3),
+        ("#all-naleid", 4, 4),
+        ("#all-naleid", 4, 4),
     ]
 
 
@@ -147,7 +149,72 @@ def test_progress_counts_only_changed_messages_as_new(h: Harness):
 
     h.pull(options=PullOptions(full=True))
 
-    assert h.reporter.progress_updates[-1] == ("#all-naleid", 3, 1, 3)
+    assert progress_counts(h)[-1] == ("#all-naleid", 3, 1)
+
+
+def created_on(h: Harness, day: int) -> str:
+    """Sets the channel's creation to midnight UTC on the day of October 2026; returns its ts."""
+    seconds = OCT_17 + (day - 17) * 86400
+    h.gateway.infos[CHANNEL] = {**h.gateway.infos[CHANNEL], "created": seconds}
+    return str(seconds)
+
+
+def test_progress_shows_the_oldest_message_reached_and_reads_back_to_the_channel_creation(
+    h: Harness,
+):
+    stamps = [ts_on(18, hour) for hour in range(6)]
+    h.serve(stamps, page_size=3)
+    created = created_on(h, 17)
+
+    h.pull(BASE)
+
+    updates = [update for _, update in h.reporter.progress_updates]
+    assert [(u.at, u.target) for u in updates] == [
+        (None, None),
+        (stamps[3], created),
+        (stamps[0], created),
+        (stamps[0], created),
+    ]
+    shares = [u.share for u in updates]
+    assert shares[0] is None
+    assert shares[1] is not None and shares[2] is not None
+    assert 0 < shares[1] < shares[2] < 1
+    assert shares[3] == 1
+
+
+def test_progress_reads_back_to_since_when_the_channel_was_created_earlier(h: Harness):
+    h.serve([ts_on(19, 12)])
+    created_on(h, 17)
+
+    h.pull(BASE, options=PullOptions(since="2026-10-18"))
+
+    assert h.reporter.progress_updates[-1][1].target == "1792281600.000000"
+
+
+def test_progress_of_a_later_pull_reads_back_to_the_newest_message_stored(h: Harness):
+    stamps = [ts_on(18, hour) for hour in range(3)]
+    h.serve(stamps)
+    created_on(h, 17)
+    h.pull(BASE)
+    h.serve([*stamps, ts_on(19, 1)])
+    h.reporter.progress_updates.clear()
+
+    h.pull()
+
+    assert {u.target for _, u in h.reporter.progress_updates if u.target} == {stamps[-1]}
+
+
+def test_progress_has_no_share_without_a_date_to_read_back_to(h: Harness):
+    h.serve([ts_on(18, 1)])
+    info = dict(h.gateway.infos[CHANNEL])
+    del info["created"]
+    h.gateway.infos[CHANNEL] = info
+
+    h.pull(BASE)
+
+    [_, (_, page), (_, end)] = h.reporter.progress_updates
+    assert (page.at, page.target, page.share) == (ts_on(18, 1), None, None)
+    assert end.share == 1
 
 
 def test_since_until_bound_history(h: Harness):
@@ -713,7 +780,8 @@ def test_newly_archived_conversation_is_refreshed_once_then_skipped(h: Harness):
 
     assert read_calls(h) == []
     assert message_ts_since(h, lines_before) == []
-    assert h.reporter.progress_updates[-1][1:] == (0, 0, 0)
+    assert progress_counts(h)[-1][1:] == (0, 0)
+    assert h.reporter.progress_updates[-1][1].share == 1
     [item] = h.tracked()
     assert item.status == "ok"
     assert item.last_pull_at is not None

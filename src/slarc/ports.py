@@ -321,8 +321,22 @@ class Clock(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class ItemProgress:
+    """How far a pull has read one item: messages read and lines new for it. While history is
+    read, at is the ts of the oldest message reached and target the ts paging reads back to.
+    share is the part of the item read, from 0 to 1, or None while it is unknown; 1 when the
+    item is finished."""
+
+    read: int
+    new: int
+    at: str | None = None
+    target: str | None = None
+    share: float | None = None
+
+
 class Reporter(Protocol):
     def info(self, msg: str) -> None: ...
     def warn(self, msg: str) -> None: ...
-    def progress(self, label: str, done: int, new: int, total: int | None) -> None: ...
+    def progress(self, label: str, update: ItemProgress) -> None: ...
     def downloads(self, done: int, failed: int, skipped: int, total: int) -> None: ...
