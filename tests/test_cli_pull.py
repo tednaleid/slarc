@@ -298,6 +298,7 @@ def test_pull_reports_summary(f: Fixture):
         f"Pulled 1 item: {messages} new messages, {directory} new directory lines "
         "(users, emoji, files).",
         f"Downloads: {pending} pending for the next pull.",
+        f"Run slarc list {BASE} to see why.",
     ]
 
 
@@ -346,6 +347,7 @@ def report(**counts: int) -> PullReport:
             [
                 "Pulled 1 item: 608 new messages, 1862 new directory lines (users, emoji, files).",
                 "Downloads: 85 files and 74 images saved, 7 pending for the next pull, 8 skipped.",
+                "Run slarc list with a link or workspace to see why.",
             ],
         ),
         (
@@ -353,6 +355,7 @@ def report(**counts: int) -> PullReport:
             [
                 "Pulled 1 item: 0 new messages, 0 new directory lines.",
                 "Downloads: 1 file saved, 1 skipped.",
+                "Run slarc list with a link or workspace to see why.",
             ],
         ),
         (
@@ -382,6 +385,12 @@ def test_summary_names_messages_directory_lines_and_downloads(
     counts: dict[str, int], expected: list[str]
 ):
     assert _summary(report(**counts)).splitlines() == expected
+
+
+def test_summary_of_a_pull_of_links_points_to_the_list_of_them():
+    summary = _summary(report(downloads_pending=2), [BASE, "#general"])
+
+    assert summary.splitlines()[-1] == f"Run slarc list {BASE} '#general' to see why."
 
 
 @pytest.mark.parametrize(

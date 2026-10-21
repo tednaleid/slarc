@@ -85,7 +85,7 @@ def queue_downloads(
     retry_skipped queues forbidden and gave_up outside-site images afresh.
     """
     referenced = message.get("files") or []
-    urls = _shown_images(message, view)
+    urls = list(named_images(message, view))
     if not referenced and not urls:
         return []
     stored = uow.archive.directory_state(team_id, "file") if files is None else files
@@ -198,20 +198,21 @@ def outstanding_downloads(archive: ArchiveStore) -> dict[DownloadKey, DownloadSt
     return outstanding
 
 
-def _shown_images(message: dict, view: DirectoryView | None) -> list[str]:
-    """The message's images plus, through view, its custom emoji and its authors' avatars."""
-    urls = image_urls(message)
+def named_images(message: dict, view: DirectoryView | None) -> dict[str, str | None]:
+    """The message's images plus, through view, its custom emoji and its authors' avatars, each
+    with its name: :name: for an emoji, @name for an avatar, None for the message's own."""
+    images: dict[str, str | None] = dict.fromkeys(image_urls(message))
     if view is not None:
         for name in _emoji_names(message):
             url = custom_emoji_url(name, view.emoji)
             if is_web_url(url):
-                urls.append(url)
+                images.setdefault(url, f":{name}:")
         authors = [message.get("user"), *(message.get("reply_users") or [])]
         for user_id in authors:
             url = directory_image_url("user", view.users.get(user_id or "") or {})
             if url is not None:
-                urls.append(url)
-    return list(dict.fromkeys(urls))
+                images.setdefault(url, f"@{view.user_display(user_id or '')}")
+    return images
 
 
 def _emoji_names(message: dict) -> list[str]:

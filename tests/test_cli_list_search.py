@@ -9,14 +9,17 @@ from typer.testing import CliRunner
 
 from slarc import bootstrap, cli
 from slarc.adapters.credentials import CompositeSource, KeyringSource
+from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.cli import app
 from slarc.ports import Session
-from tests.fakes import FakeCredentialSource, FakeKeyring, FakeSlackGateway
+from tests.fakes import FakeArchiveLock, FakeCredentialSource, FakeKeyring, FakeSlackGateway
 from tests.recorded_fixtures import recorded_lake
 from tests.service.pull_harness import NALEID, spike
+from tests.service.test_listing import AVATAR, GIPHY, leave_downloads_outstanding
 
 runner = CliRunner()
 SEED_LINK = "https://naleidworkspace.slack.com/archives/C0CA7SNHTSP/p1792437061952039"
+ALL_NALEID_LINK = "https://naleidworkspace.slack.com/archives/C0CA5396G03"
 
 
 @pytest.fixture
@@ -122,3 +125,35 @@ def test_cli_search_and_sql_in_an_empty_archive(
     assert searched.output.strip() == "No messages match."
     assert queried.exit_code == 0, queried.output
     assert "0" in queried.output
+
+
+def test_cli_list_of_a_link_shows_each_download_not_saved_on_one_line(
+    archive: Path, tmp_path: Path, ext_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli.out, "width", 60)  # narrower than the URLs, which must not wrap
+    store = DuckLakeArchiveStore(archive, ext_dir, FakeArchiveLock())
+    try:
+        leave_downloads_outstanding(store)
+    finally:
+        store.close()
+
+    result = invoke(tmp_path, "list", ALL_NALEID_LINK)
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert "#slarc-fixtures" not in result.output
+    assert "#all-naleid in naleidworkspace" in lines
+    assert "  forbidden: Slack returned HTTP 403 for the image." in lines
+    assert f"    image  {GIPHY}" in lines
+    assert "  failed after 2 attempts: Could not reach secure.gravatar.com." in lines
+    assert f"    image  @Tim Naleid  {AVATAR}" in lines
+    assert lines[-1] == "Downloads: 1 pending, 1 skipped."
+
+
+def test_cli_list_remote_takes_no_links(archive: Path, tmp_path: Path) -> None:
+    result = invoke(tmp_path, "list", "--remote", ALL_NALEID_LINK)
+
+    assert result.exit_code == 1
+    assert (
+        result.output.strip() == "slarc list --remote lists every conversation; it takes no links."
+    )

@@ -1,9 +1,11 @@
 # ABOUTME: Typer entrypoint for the slarc command line.
 # ABOUTME: Each command takes its adapters from bootstrap and calls the service layer.
 import dataclasses
+import shlex
 import signal
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from itertools import groupby
 from pathlib import Path
 from types import FrameType, TracebackType
 from typing import Annotated, Any, NoReturn
@@ -12,6 +14,7 @@ import typer
 from rich import box
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TaskID, TextColumn
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
@@ -27,7 +30,13 @@ from slarc.domain.links import WorkspaceSel, parse_selector
 from slarc.ports import ItemProgress, NoArchive, NoSession, SlarcError
 lazy from slarc.service.auth import AuthStatus, auth_status, store_pasted
 lazy from slarc.service.export import export
-lazy from slarc.service.listing import ArchiveListing, RemoteRow, list_archive, list_remote
+lazy from slarc.service.listing import (
+    ArchiveListing,
+    ListRow,
+    RemoteRow,
+    list_archive,
+    list_remote,
+)
 lazy from slarc.service.pull import PullOptions, PullReport, pull
 lazy from slarc.service.remove import Removal, apply_removal, plan_removal
 lazy from slarc.service.search import search
@@ -62,6 +71,9 @@ TARGET = "⌖"
 FETCHED_AT = "%Y-%m-%dT%H:%M:%SZ"
 DOWNLOADS_ROW = "Downloads"
 ARCHIVE_ROW = "Archive"
+REMOTE_TAKES_NO_LINKS = "slarc list --remote lists every conversation; it takes no links."
+# Download statuses a list shows with their attempts.
+ATTEMPTS_SHOWN = ("failed", "gave_up", "pending")
 WAITING_ROW = "Slack"
 DIRECTORY_KINDS = "(users, emoji, files)"
 NOTHING_TO_REMOVE = "Nothing to remove."
@@ -260,8 +272,11 @@ def _plural(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
-def _summary(report: PullReport) -> str:
-    """The items pulled and lines appended, then this run's downloads and not-visible items."""
+def _summary(report: PullReport, selectors: list[str] | None = None) -> str:
+    """The items pulled and lines appended, then this run's downloads and not-visible items.
+
+    When downloads are left unsaved, it names the slarc list that shows why: of the pulled
+    selectors, or for a bare pull, of a link or workspace."""
     directory = report.lines_appended - report.messages_new
     pulled = (
         f"Pulled {_plural(report.items_pulled, 'item')}: "
@@ -281,6 +296,11 @@ def _summary(report: PullReport) -> str:
         parts.append(f"{report.downloads_skipped} skipped")
     if parts:
         lines.append(f"Downloads: {', '.join(parts)}.")
+    if report.downloads_pending or report.downloads_skipped:
+        if selectors:
+            lines.append(f"Run slarc list {shlex.join(selectors)} to see why.")
+        else:
+            lines.append("Run slarc list with a link or workspace to see why.")
     if report.not_visible:
         lines.append(
             f"{_plural(report.not_visible, 'item')} not visible to this account; see slarc list."
@@ -440,7 +460,7 @@ def pull_command(
     if not parsed and report.items_selected == 0:
         out.print(NO_TRACKED_ITEMS, markup=False)
     else:
-        out.print(_summary(report), markup=False)
+        out.print(_summary(report, texts), markup=False)
     if report.failed:
         raise typer.Exit(1)
 
@@ -536,9 +556,39 @@ def _print_listing(listing: ArchiveListing) -> None:
             for row in listing.rows
         ]
         out.print(_table(headers, rows))
+        if any(row.outstanding for row in listing.rows):
+            _print_outstanding(listing.rows)
+            out.print()
     else:
         out.print(NO_TRACKED_ITEMS, markup=False)
     out.print(f"Downloads: {listing.pending} pending, {listing.skipped} skipped.", markup=False)
+
+
+def _print_outstanding(rows: list[ListRow]) -> None:
+    """Each row's downloads that are not saved, grouped by status and error. A URL prints whole
+    on its own line, as a terminal link, so it copies and opens even where the terminal wraps it."""
+    for row in rows:
+        if not row.outstanding:
+            continue
+        out.print()
+        out.print(f"{row.conversation} in {row.workspace}", markup=False)
+        groups = groupby(row.outstanding, key=lambda o: (o.status, o.attempts, o.error))
+        for (status, attempts, error), downloads in groups:
+            reason = _download_status(status, attempts)
+            out.print(f"  {reason}: {error}" if error else f"  {reason}", markup=False)
+            for download in downloads:
+                name = f"{download.name}  " if download.name else ""
+                line = Text.assemble(
+                    f"    {download.kind:<5}  {name}", (download.url, Style(link=download.url))
+                )
+                out.print(line, soft_wrap=True)
+
+
+def _download_status(status: str, attempts: int) -> str:
+    text = status.replace("_", " ")
+    if status in ATTEMPTS_SHOWN and attempts:
+        return f"{text} after {_plural(attempts, 'attempt')}"
+    return f"{text}, not tried yet" if status == "pending" else text
 
 
 def _print_remote(rows: list[RemoteRow]) -> None:
@@ -553,6 +603,14 @@ def _print_remote(rows: list[RemoteRow]) -> None:
 @app.command("list")
 def list_command(
     ctx: typer.Context,
+    selectors: Annotated[
+        list[str] | None,
+        typer.Argument(
+            help="Slack links, conversation ids, #channel-name, @user or a workspace name, to "
+            "show only what they name, with each download not saved.",
+            show_default=False,
+        ),
+    ] = None,
     remote: Annotated[
         bool,
         typer.Option(
@@ -564,6 +622,13 @@ def list_command(
     ] = None,
 ) -> None:
     """Show the archive, its config files and each tracked item."""
+    texts = selectors or []
+    if remote and texts:
+        _fail(REMOTE_TAKES_NO_LINKS)
+    try:
+        named = [(text, parse_selector(text)) for text in texts]
+    except ValueError as error:
+        _fail(str(error))
     services: bootstrap.Services = ctx.obj
     try:
         archive_root = _existing_archive(root, services.env, services.home)
@@ -584,7 +649,7 @@ def list_command(
             bootstrap.archive_stores(archive_root, services.take_ownership) as (archive, _),
             bootstrap.shared_index(archive_root, archive) as index,
         ):
-            listing = list_archive(settings, archive, index)
+            listing = list_archive(settings, archive, index, named)
     except NoSession as error:
         _warn([str(e) for e in services.credentials.errors])
         _fail(str(error))
