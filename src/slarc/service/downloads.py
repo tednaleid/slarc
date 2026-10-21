@@ -29,16 +29,16 @@ from slarc.ports import (
 from slarc.service.appends import append_directory, append_line, stamped_meta
 from slarc.unit_of_work import UnitOfWork
 
-TERMINAL_STATUSES = ("forbidden", "deleted", "external", "gave_up")
+TERMINAL_STATUSES = ("forbidden", "not_found", "deleted", "external", "gave_up")
 QUEUED_STATUSES = ("pending", "failed")
 type ImageType = Literal["image", "emoji", "avatar"]
-SKIPPED_STATUSES = ("too_large", "forbidden", "gave_up")
+SKIPPED_STATUSES = ("too_large", "forbidden", "not_found", "gave_up")
 OUTSIDE_MAX_ATTEMPTS = 3
 DOWNLOAD_API = "download"
 FILES_INFO_API = "files.info"
 DIRECTORY_LIST_APIS: dict[Kind, str] = {"user": "users.list", "emoji": "emoji.list"}
 
-type SettledStatus = Literal["failed", "forbidden", "too_large", "deleted", "gave_up"]
+type SettledStatus = Literal["failed", "forbidden", "not_found", "too_large", "deleted", "gave_up"]
 
 
 @dataclass(frozen=True)
@@ -83,7 +83,7 @@ def queue_downloads(
     The next commit requires each file and image found downloaded to still be stored. The
     custom emoji and author avatars it shows are found through view. files, images and
     known, the archive's file, image and download state, are read here when not given.
-    retry_skipped queues forbidden and gave_up outside-site images afresh.
+    retry_skipped queues forbidden, not_found and gave_up outside-site images afresh.
     """
     referenced = message.get("files") or []
     urls = list(image_types(message, view))
@@ -269,12 +269,13 @@ def _image_state(
 ) -> DownloadState | None:
     """An image over the size limit stays too_large: its size is known only by fetching it.
 
-    With retry_skipped, an outside-site image that was forbidden or gave_up starts over.
+    With retry_skipped, an outside-site image that was forbidden, not_found or gave_up starts
+    over.
     """
     if (
         retry_skipped
         and prior is not None
-        and prior.status in ("forbidden", "gave_up")
+        and prior.status in ("forbidden", "not_found", "gave_up")
         and not is_slack_file_url(url)
     ):
         prior = None

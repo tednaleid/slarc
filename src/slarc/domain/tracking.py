@@ -48,6 +48,7 @@ class DownloadState(msgspec.Struct, kw_only=True):
         "pending",
         "failed",
         "forbidden",
+        "not_found",
         "too_large",
         "deleted",
         "external",

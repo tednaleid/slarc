@@ -181,7 +181,7 @@ class DownloadJob:
 @dataclass(frozen=True)
 class DownloadResult:
     job: DownloadJob
-    status: Literal["ok", "failed", "forbidden", "too_large", "deleted"]
+    status: Literal["ok", "failed", "forbidden", "not_found", "too_large", "deleted"]
     sha256: str | None
     size: int | None
     content_type: str | None

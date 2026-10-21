@@ -27,6 +27,7 @@ from slarc.service.downloads import (
 )
 from slarc.service.pull import PullOptions
 from slarc.unit_of_work import UnitOfWork
+from tests.fakes import FailedStatus
 from tests.service.pull_harness import BASE, CHANNEL, ME, TEAM, TOMBSTONE_FILE, Harness, spike
 from tests.service.test_pull_commits import remove_workspace
 
@@ -307,14 +308,20 @@ def test_slack_file_failures_never_give_up(h: Harness):
     assert image_status(h, SNIPPET) == ("failed", 5)
 
 
-def test_full_pull_retries_given_up_and_forbidden_outside_images(h: Harness):
+@pytest.mark.parametrize(
+    ("status", "error"),
+    [("forbidden", "HTTP 403 Forbidden"), ("not_found", "HTTP 404 Not Found")],
+)
+def test_full_pull_retries_given_up_forbidden_and_not_found_outside_images(
+    h: Harness, status: FailedStatus, error: str
+):
     h.downloader.fail(GIPHY_URL, error="timed out")
-    h.downloader.fail(GITHUB_THUMB, status="forbidden", error="HTTP 403")
+    h.downloader.fail(GITHUB_THUMB, status=status, error=error)
     h.pull(THREAD_LINK)
     h.pull()
     h.pull()
     assert image_status(h, GIPHY_URL) == ("gave_up", 3)
-    assert image_status(h, GITHUB_THUMB) == ("forbidden", 1)
+    assert image_status(h, GITHUB_THUMB) == (status, 1)
 
     h.downloader.jobs.clear()
     h.pull(options=PullOptions(full=True))
@@ -322,7 +329,7 @@ def test_full_pull_retries_given_up_and_forbidden_outside_images(h: Harness):
     retried = {job.target for job in h.downloader.jobs}
     assert {GIPHY_URL, GITHUB_THUMB} <= retried
     assert image_status(h, GIPHY_URL) == ("failed", 1)
-    assert image_status(h, GITHUB_THUMB) == ("forbidden", 1)
+    assert image_status(h, GITHUB_THUMB) == (status, 1)
 
 
 @pytest.mark.parametrize(

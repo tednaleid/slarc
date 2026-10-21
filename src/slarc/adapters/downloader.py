@@ -10,12 +10,13 @@ import httpx
 from slarc.domain.links import is_slack_file_url
 from slarc.ports import BlobStore, DownloadJob, DownloadResult, Session
 
-FORBIDDEN_STATUSES = (403, 404)
 MAX_REDIRECTS = 5
 OUTSIDE_TIMEOUT_S = 15.0
 SESSION_HINT = "The Slack session may have expired; sign in again and pull to retry."
 
-type FailedStatus = Literal["failed", "forbidden", "too_large"]
+type FailedStatus = Literal["failed", "forbidden", "not_found", "too_large"]
+
+TERMINAL_HTTP_STATUSES: dict[int, FailedStatus] = {403: "forbidden", 404: "not_found"}
 
 
 class TooLarge(Exception):
@@ -73,10 +74,11 @@ class HttpDownloader:
                 if response.is_redirect and "location" in response.headers:
                     url = str(response.url.join(response.headers["location"]))
                     continue
-                if response.status_code in FORBIDDEN_STATUSES:
-                    return _result(job, "forbidden", f"HTTP {response.status_code}")
-                if response.status_code >= 400:
-                    return _result(job, "failed", f"HTTP {response.status_code}")
+                code = response.status_code
+                if code in TERMINAL_HTTP_STATUSES:
+                    return _result(job, TERMINAL_HTTP_STATUSES[code], _http_error(code))
+                if code >= 400:
+                    return _result(job, "failed", _http_error(code))
                 content_type = response.headers.get("content-type", "").split(";")[0].strip()
                 refusal = _slack_refusal(job, url, content_type)
                 if refusal is not None:
@@ -109,6 +111,11 @@ def _slack_refusal(job: DownloadJob, url: str, content_type: str) -> str | None:
     if content_type == "text/html":
         return f"Slack answered the file download with a web page. {SESSION_HINT}"
     return None
+
+
+def _http_error(code: int) -> str:
+    """The status code with its standard reason phrase, when it has one."""
+    return f"HTTP {code} {httpx.codes.get_reason_phrase(code)}".rstrip()
 
 
 def _raise_if_set(cancel: threading.Event) -> None:

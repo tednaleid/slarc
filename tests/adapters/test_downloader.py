@@ -163,18 +163,31 @@ def test_downloader_aborts_over_max_bytes(tmp_path: Path):
     assert [p for p in tmp_path.rglob("*") if p.is_file()] == []
 
 
-def test_downloader_maps_403_and_404_to_forbidden_and_other_errors_to_failed():
+def test_downloader_maps_403_to_forbidden_404_to_not_found_and_other_errors_to_failed():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/down":
             raise httpx.ConnectError("connection refused")
         return httpx.Response(int(request.url.path.strip("/")))
 
-    jobs = [job(f"https://cdn.example.com/{path}") for path in ("403", "404", "500", "down")]
+    paths = ("403", "404", "410", "500", "599", "down")
+    jobs = [job(f"https://cdn.example.com/{path}") for path in paths]
     results = {r.job.url.rsplit("/", 1)[1]: r for r in downloader(handler).fetch(jobs, 2)}
 
     statuses = {path: r.status for path, r in results.items()}
-    assert statuses == {"403": "forbidden", "404": "forbidden", "500": "failed", "down": "failed"}
-    assert results["500"].error == "HTTP 500"
+    assert statuses == {
+        "403": "forbidden",
+        "404": "not_found",
+        "410": "failed",
+        "500": "failed",
+        "599": "failed",
+        "down": "failed",
+    }
+    errors = {path: r.error for path, r in results.items()}
+    assert errors["403"] == "HTTP 403 Forbidden"
+    assert errors["404"] == "HTTP 404 Not Found"
+    assert errors["410"] == "HTTP 410 Gone"
+    assert errors["500"] == "HTTP 500 Internal Server Error"
+    assert errors["599"] == "HTTP 599"
     assert results["down"].error
     assert all("xox" not in (r.error or "") for r in results.values())
 

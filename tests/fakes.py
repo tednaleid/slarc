@@ -474,7 +474,7 @@ class FakeConnector:
         raise NoSession(workspace)
 
 
-type FailedStatus = Literal["failed", "forbidden", "too_large", "deleted"]
+type FailedStatus = Literal["failed", "forbidden", "not_found", "too_large", "deleted"]
 
 
 class FakeDownloader:

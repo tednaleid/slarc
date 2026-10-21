@@ -78,7 +78,8 @@ class PullReport:
     """unreachable holds why each workspace that could not connect was skipped.
 
     messages_new counts the message and deleted lines appended; files_saved and images_saved
-    count this run's downloads, and downloads_skipped those too large, forbidden or given up.
+    count this run's downloads, and downloads_skipped those too large, forbidden, not found or
+    given up.
     not_visible counts the items this run recorded as not visible, whether or not it warned
     about them.
     """

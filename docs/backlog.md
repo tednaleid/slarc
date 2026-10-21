@@ -20,7 +20,7 @@ Known problems and future work, grouped by theme. Each line says what is wrong o
 - A file whose recorded `size` is missing or wrong is queued again on every read (`service/downloads.py` `_file_state`).
 - Bot directory entries never get a blob for the bot icon (`service/downloads.py`).
 - An uploaded HTML file served as `text/html` would be recorded `failed`, since the job lacks the file's mimetype; Slack serves the fixture upload as a snippet (`adapters/downloader.py`).
-- A 403 or 404 after an off-host redirect of a Slack file is recorded as terminal `forbidden` instead of `failed` with the session hint (`adapters/downloader.py`).
+- A 403 or 404 after an off-host redirect of a Slack file is recorded as terminal `forbidden` or `not_found` instead of `failed` with the session hint (`adapters/downloader.py`).
 - Waits inside slack_sdk's 429 retry handler are not counted in `rate_limit_wait_s`, and the spec's run row does not say so (`adapters/slack_gateway.py`).
 - The download status `Literal` is spelled out in `ports.py`, `domain/tracking.py`, `adapters/downloader.py` and `service/downloads.py`; `service/selectors.py` repeats the `ItemKey` type inline.
 - Under `--full` or a reopened backfill, a thread in `retry_threads` is read twice in one run: first as a retry, then again as a parent in the paged history, because `_append_history_page` does not skip threads already in `held.read_threads` (`service/pull.py`).

@@ -37,6 +37,7 @@ DOWNLOAD_ORDER = (
     "external",
     "too_large",
     "forbidden",
+    "not_found",
     "gave_up",
     "failed",
 )
