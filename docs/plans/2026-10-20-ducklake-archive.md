@@ -594,7 +594,7 @@ On a small archive the lake adds about 170 ms to search and 300 ms to list. A pr
 
 ### Acceptance
 
-`just acceptance` passed on its first run, with no fixes needed, in 56.5 s of wall time against naleidworkspace. The figures below are from the script's output:
+`just acceptance` passed on its first run, with no fixes needed, against naleidworkspace; shell `time` measured 56.5 s of wall time for it. The figures below are from the script's output:
 
 - (a) pulling the same channels twice adds no message or directory rows: 35 message and 62 directory rows both before and after the second pull; first pull 14.9 s, second 8.6 s.
 - (d) the export shows the seeded edited text 'seed: edited message, edited text', the giphy GIF from a local asset, the link preview, both snippets and the deleted file placeholder: 0.7 s.
