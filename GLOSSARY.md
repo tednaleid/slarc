@@ -32,6 +32,18 @@ _Avoid_: chunk, transaction
 The record that makes a batch part of the archive, together with the progress that batch earned. A batch without a commit is not part of the archive. Git's commits are always called "git commits".
 _Avoid_: checkpoint, save, flush
 
+**Directory**:
+What an archive knows about a workspace besides its messages: users, custom emoji, conversations, bots, usergroups, files and images.
+_Avoid_: metadata, catalog (the archive's catalog is a storage detail)
+
+**Maintenance**:
+The step at the end of a pull or removal that tidies the archive's files and, when no other command has the archive open, frees the space of what nothing needs any more.
+_Avoid_: cleanup, garbage collection, vacuum (except for the database step of that name)
+
+**Owning machine**:
+The one machine allowed to open an archive. Another machine must take ownership, once a synced folder has finished syncing, before it opens the archive.
+_Avoid_: host (except in messages naming it), owner (unqualified)
+
 ## Slack
 
 **Workspace**:

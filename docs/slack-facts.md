@@ -1,13 +1,13 @@
-# Phase 0 spike findings
+# Verified Slack facts
 
-Results of a throwaway script run on 2026-10-19 against the `naleidworkspace` test workspace (team `T0CB5LYPVFA`, channel `C0CA5396G03`) from macOS with the Mac App Store build of Slack. These correct or confirm the assumptions in `detailed-requirements.md`.
+Facts checked against the `naleidworkspace` test workspace (team `T0CB5LYPVFA`, channel `C0CA5396G03`) from macOS with the Mac App Store build of Slack. The spec marks the facts it relies on as (verified). The raw responses are in `tests/fixtures/spike/`.
 
 ## Credentials
 
 - The App Store build keeps its data in `~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack`.
 - Keychain item: service `Slack Safe Storage`, account `Slack App Store Key`, read with `/usr/bin/security find-generic-password -w`.
 - The `Cookies` DB has `meta.version = 24`, so the decrypted `d` cookie carries a 32-byte domain-hash prefix that must be stripped. Decryption is AES-128-CBC, PBKDF2-SHA1, salt `saltysalt`, 1003 iterations, IV of 16 spaces, `v10` prefix. The result starts with `xoxd-`.
-- `localConfig_v2` in `Local Storage/leveldb` holds an `xoxc-` token for every workspace the desktop app is signed into (nine on this machine, including an Enterprise Grid org with an `E` team id). slarc must select the workspace from the link and never touch the others.
+- `localConfig_v2` in `Local Storage/leveldb` holds an `xoxc-` token for every workspace the desktop app is signed into, including Enterprise Grid orgs with an `E` team id. slarc must select the workspace from the link and never touch the others.
 - `ccl_chromium_reader` parsed the leveldb in about 1.5 s. It is not on PyPI and its package pulls native Brotli and zstd wheels; only its pure-Python leveldb, snappy and localstorage modules are needed.
 - `WebClient(token=xoxc, headers={"Cookie": f"d={xoxd}"})` works for every documented method tried.
 
@@ -31,6 +31,6 @@ Results of a throwaway script run on 2026-10-19 against the `naleidworkspace` te
 
 - Snippets download in full from `url_private_download` with the bearer token and `d` cookie. `10k-snippet.txt`: 228,893 bytes, matching `size`, 10,000 lines. `test-snippet-2.txt`: 13,092 bytes, matching `size`, 600 newline-terminated lines (its message says 601; the original file has not been checked).
 - The download's `Content-Type` is `application/force-download` for snippets, so the file object's `mimetype` is the source of truth.
-- `files.info` for a snippet returns the full text in a top-level `content` field (all 10,000 lines), plus Slack's syntax-highlighted `content_highlight_html` and `content_highlight_css`, next to the `file` object. Only `file` is the file object; storing the top-level response would put the snippet text in `files.jsonl` as well as the blob.
+- `files.info` for a snippet returns the full text in a top-level `content` field (all 10,000 lines), plus Slack's syntax-highlighted `content_highlight_html` and `content_highlight_css`, next to the `file` object. Only `file` is the file object; storing the top-level response would put the snippet text in the file's directory entry as well as the blob.
 - A deleted file appears inline as `mode: tombstone`, and `files.info` returns the error `file_deleted`. It needs a placeholder and no retry.
 - A hosted PNG downloaded with matching size and `Content-Type: image/png`.

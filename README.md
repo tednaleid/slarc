@@ -4,7 +4,7 @@ Archive the Slack conversations you can see into a local archive you own: search
 
 slarc logs in with the session your Slack desktop app already holds, so it needs no Slack app install and no admin approval. It only reads from Slack; it never posts, reacts or marks anything read.
 
-Status: early development. See `docs/specs/detailed-requirements.md` for the design.
+Status: early development, not yet released. `docs/spec.md` describes what slarc does and `docs/architecture.md` how it is built.
 
 ## Usage
 
@@ -42,7 +42,7 @@ An archive is a DuckLake: Parquet data files plus a SQLite catalog, read and wri
 
 A command that only reads, such as `search` or `sql`, cannot checkpoint the catalog through its read-only connection, so it may leave an empty `-wal` file and a small `-shm` file beside the catalog; they are harmless and expected.
 
-The archive is read through slarc (`search`, `sql`, `export`) or through DuckDB, not with `rg` or `jq`, and it is not meant to be kept in git. Every pull commits in small steps, so a crash leaves exactly what was last committed. `slarc rm` deletes what only the removed items kept; the bytes are physically deleted when it exits, or by the next pull or rm that finds no other slarc command running. slarc does not read archives written in the earlier JSONL layout.
+The archive is read through slarc (`search`, `sql`, `export`) or through DuckDB, not with `rg` or `jq`, and it is not meant to be kept in git. Every pull commits in small steps, so a crash leaves exactly what was last committed. `slarc rm` deletes what only the removed items kept; the bytes are physically deleted when it exits, or by the next pull or rm that finds no other slarc command running.
 
 The first run downloads two DuckDB extensions (`ducklake` and `sqlite_scanner`, about 27 MB each) into `~/.cache/slarc/duckdb`. `just install` fetches them too, so a machine set up while online works offline afterwards.
 

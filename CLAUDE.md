@@ -1,14 +1,13 @@
 # slarc
 
 Read-only CLI that pulls Slack conversations into a DuckLake archive (Parquet plus a SQLite catalog).
-Spec: `docs/specs/detailed-requirements.md`. Terms: `GLOSSARY.md`. Decisions: `docs/adr/`.
-Architecture: `docs/architecture.md`. Plan and progress: `docs/plans/`. Backlog: `docs/plans/backlog.md`.
-Verified Slack facts: `docs/specs/phase0-spike-findings.md`.
+Spec: `docs/spec.md`. Architecture: `docs/architecture.md`. Terms: `GLOSSARY.md`. Decisions: `docs/adr/`.
+Backlog: `docs/backlog.md`. Verified Slack facts: `docs/slack-facts.md`. Plans for work in progress: `docs/plans/`.
 
 ## Commands
 
 - `just check` runs tests, ruff, ty and the format check. It must pass before every commit.
-- `just test -k NAME` runs selected tests, `just fmt` formats, `just run ARGS` runs slarc from the tree.
+- `just test -k NAME` runs selected tests in parallel (`-n0` runs serially), `just fmt` formats, `just run ARGS` runs slarc from the tree.
 - Use `just` recipes, never bare `pytest`, `ruff` or `ty`.
 
 ## Rules
@@ -20,4 +19,5 @@ Verified Slack facts: `docs/specs/phase0-spike-findings.md`.
 - Live Slack calls are read-only, against the test workspace only, using the desktop session. The session holds tokens for other workspaces; never use them.
 - Never print, log, commit or put in fixtures a token, cookie or keychain secret.
 - Use `GLOSSARY.md` terms in code and docs.
-- Commit to `main` in small, passing steps; when working from a plan, mark its tasks done.
+- Commit to `main` in small, passing steps; when working from a plan, mark its tasks done, and delete the plan once its work is done.
+- Docs describe slarc as it is now, never how it got here.

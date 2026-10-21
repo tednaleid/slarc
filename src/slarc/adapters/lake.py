@@ -46,7 +46,7 @@ JOIN (
 ) s ON s.schema_id = t.schema_id
 """
 
-# Slarc's own settings for every lake; the reasons are in the lake design's settings section.
+# Slarc's own settings for every lake; docs/architecture.md gives the reason for each.
 OPTIONS = {"target_file_size": "16MB", "rewrite_delete_threshold": "0"}
 
 SCHEMA = """

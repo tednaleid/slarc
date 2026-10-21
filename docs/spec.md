@@ -1,8 +1,12 @@
+# slarc spec
+
+What slarc does. `docs/architecture.md` describes how the code is built.
+
 ## Overview
 
-slarc is a read-only CLI that logs into Slack with the session the user's Slack desktop app already holds, pulls channels, DMs, threads and single messages into an archive that is a DuckLake (Parquet data files plus a SQLite catalog) with a content-addressed blob store, and renders them later as static HTML (and in later phases a local web viewer and PDF). The archive is queried by DuckDB through slarc's views and is meant to live on one machine's local disk. slarc is a client, not a Slack app: nothing is installed in the workspace, no admin approval is needed, and it sees exactly what the user's account sees.
+slarc is a read-only CLI that logs into Slack with the session the user's Slack desktop app already holds, pulls channels, DMs, threads and single messages into an archive that is a DuckLake (Parquet data files plus a SQLite catalog) with a content-addressed blob store, and renders them as static HTML (a local web viewer and PDF are planned). The archive is queried by DuckDB through slarc's views and is meant to live on one machine's local disk. slarc is a client, not a Slack app: nothing is installed in the workspace, no admin approval is needed, and it sees exactly what the user's account sees.
 
-Python 3.14 with uv, `slack_sdk`, Typer and DuckDB. Hexagonal architecture in the Cosmic Python style so every Slack interaction is behind a port with an in-memory fake for tests. Terms follow `GLOSSARY.md`; the larger decisions have ADRs in `docs/adr/`; facts verified against a real workspace are in `phase0-spike-findings.md`.
+Python 3.14 with uv, `slack_sdk`, Typer and DuckDB. Hexagonal architecture in the Cosmic Python style so every Slack interaction is behind a port with an in-memory fake for tests. Terms follow `GLOSSARY.md`; the larger decisions have ADRs in `docs/adr/`; facts verified against a real workspace are in `docs/slack-facts.md`.
 
 ## Goals and non-goals
 
@@ -22,12 +26,11 @@ Python 3.14 with uv, `slack_sdk`, Typer and DuckDB. Hexagonal architecture in th
 
 - Writing anything to Slack. slarc never calls a method that changes anything. Posting to the test workspace happens only in a separate developer script (see Tests).
 - Real-time capture through the Events API or Socket Mode.
-- Lists, channel sections and sidebar groups. Canvases, huddles, pins and bookmarks are Someday items in `docs/plans/backlog.md`; until then canvases and huddles render as placeholders where they appear in messages.
+- Lists, channel sections and sidebar groups. Canvases, huddles, pins and bookmarks are Someday items in `docs/backlog.md`; until then canvases and huddles render as placeholders where they appear in messages.
 - Apps beyond being the author of messages or the other party in a DM.
 - Recovering pre-edit message text; Slack never exposes it.
-- Git support and reading the archive with `rg` or `jq`. The archive is not meant to be merged, diffed or searched as files (ADR 0004).
-- Importing archives written in the earlier JSONL layout. slarc carries no JSONL code.
-- Being sanctioned by Slack (ADR 0002).
+- Git support and reading the archive with `rg` or `jq`. The archive is not meant to be merged, diffed or searched as files (ADR 0003).
+- Being sanctioned by Slack (ADR 0001).
 
 ## CLI
 
@@ -38,11 +41,11 @@ The CLI is the product's surface, so it stays small and each command does a lot.
 | `slarc pull [selector ...] [--since DATE] [--until DATE] [--channel] [--full] [--downloads N] [--max-file-size MB] [--yes]` | With links: start tracking what they name and pull it. With a workspace name: refresh everything tracked in that workspace; `--since` and `--until` do not apply to it. Without: refresh everything tracked. Every pull also drains pending and previously failed downloads. `--full` re-reads everything instead of only what is new |
 | `slarc list [--remote]` | Archive location and the config files in effect, then each tracked item with message count, last pull time, pending and skipped files. `--remote` lists every conversation the session can see and marks which are tracked |
 | `slarc search QUERY [--in CONV] [--from USER]` | Matches with author, conversation, time, snippet and Slack link |
-| `slarc export SELECTOR... [--out DIR] [--single-file] [--include-deleted] [--tz ZONE]` | Static HTML of what the links name; a workspace name exports every tracked conversation of that workspace, and every tracked thread or message outside a tracked conversation, to `slarc-export-<workspace>`. Later phases add `--format pdf` |
+| `slarc export SELECTOR... [--out DIR] [--single-file] [--include-deleted] [--tz ZONE]` | Static HTML of what the links name; a workspace name exports every tracked conversation of that workspace, and every tracked thread or message outside a tracked conversation, to `slarc-export-<workspace>`. PDF output is planned |
 | `slarc rm SELECTOR... [--channel] [--yes]` | Stops tracking what the links name and deletes the messages, files, images and blobs that no remaining tracked item needs. It shows a summary and asks first (default No); `--yes` skips the prompt. A selector naming only already removed items finishes an interrupted removal. The removal is committed at once and rm never waits for other commands. The space is freed when rm ends, or, if another slarc command has the archive open, when a later pull or rm finds it idle; rm then says the messages are no longer in the archive and the space is freed when the running slarc command finishes |
 | `slarc auth [--paste]` | Lists the Slack sessions found and who the user is in each workspace. `--paste` prompts for a browser token and cookie and stores them in the OS keychain |
 | `slarc sql QUERY` | Runs a DuckDB query against the archive's views; the escape hatch |
-| `slarc serve` | Phase 2: local web viewer over one archive |
+| `slarc serve` | Planned: a local web viewer over one archive |
 
 `pull`, `list`, `search`, `export` and `rm` accept the same selectors: a Slack link, a conversation id, `#channel-name` or `@user` for a DM. `pull`, `export` and `rm` also accept a workspace name such as `acme`, which stands for everything tracked in that workspace; `search --in` does not. Only `pull` and `auth` need Slack credentials. Every command that opens the archive checks its owner record, the machine that last used it. On another machine it stops with a message naming that host; once the synced folder holding the archive has finished syncing, the global option `slarc --take-ownership <command>` takes the archive over for this machine. Developer tooling (fixture recording, the LevelDB comparison check, test workspace seeding) lives in `just` recipes, not in the CLI.
 
@@ -82,7 +85,7 @@ tz = "America/Chicago"     # default: the viewer's local time zone
 
 ## Auth
 
-slarc authenticates as the user with the two credentials the Slack client uses: a per-workspace `xoxc-` token and the `d` session cookie, whose value starts `xoxd-`. Every Web API call sends the token as the bearer token and the cookie in the `Cookie` header: `WebClient(token=xoxc, headers={"Cookie": f"d={xoxd}"})`. With that, every documented method behaves as it does for an app (verified in the spike).
+slarc authenticates as the user with the two credentials the Slack client uses: a per-workspace `xoxc-` token and the `d` session cookie, whose value starts `xoxd-`. Every Web API call sends the token as the bearer token and the cookie in the `Cookie` header: `WebClient(token=xoxc, headers={"Cookie": f"d={xoxd}"})`. With that, every documented method behaves as it does for an app (verified).
 
 **Credential sources, in priority order**
 
@@ -124,52 +127,52 @@ slarc authenticates as the user with the two credentials the Slack client uses: 
 
 ## Slack data-model facts
 
-Items marked (spike) were confirmed against the test workspace; the rest come from docs.slack.dev and should be checked when the code that depends on them is written.
+Items marked (verified) were confirmed against the test workspace; the rest come from docs.slack.dev and should be checked when the code that depends on them is written.
 
 **Identity**
 
 - A message's natural key is `(team_id, channel_id, ts)`. `ts` is a string like `"1792410693.663869"`; never a float.
-- `conversations.info` classifies a conversation: `is_im`, `is_mpim`, `is_private`, `is_archived` (Slack-archived), and returns the caller's `last_read` (spike). DMs have no `name`, only `user` (the other party). Group DMs have generated names like `mpdm-alice--bob--carol-1`. Display names for both are built from members.
+- `conversations.info` classifies a conversation: `is_im`, `is_mpim`, `is_private`, `is_archived` (Slack-archived), and returns the caller's `last_read` (verified). DMs have no `name`, only `user` (the other party). Group DMs have generated names like `mpdm-alice--bob--carol-1`. Display names for both are built from members.
 
 **History, threads, search**
 
 - `conversations.history(channel, oldest, latest, inclusive, limit, cursor)` returns newest first, top-level messages plus broadcast replies only. Page with `response_metadata.next_cursor`.
-- Thread parents carry `thread_ts == ts`, `reply_count`, `reply_users`, `reply_users_count`, `latest_reply`, and per-user fields `last_read` and `subscribed` (spike). `conversations.replies(channel, ts)` accepts any message in a thread and returns the parent first.
+- Thread parents carry `thread_ts == ts`, `reply_count`, `reply_users`, `reply_users_count`, `latest_reply`, and per-user fields `last_read` and `subscribed` (verified). `conversations.replies(channel, ts)` accepts any message in a thread and returns the parent first.
 - A broadcast reply (`subtype: thread_broadcast`) appears in both history and the thread. Stored once, rendered in both places.
-- `search.messages` works with a session token and supports `in:<#C…>`, `in:#name`, `is:thread` and `after:YYYY-MM-DD` (spike). Matches carry no `thread_ts` field, but a reply's `permalink` carries `?thread_ts=…` (spike). Search syntax for DMs and group DMs still needs checking.
+- `search.messages` works with a session token and supports `in:<#C…>`, `in:#name`, `is:thread` and `after:YYYY-MM-DD` (verified). Matches carry no `thread_ts` field, but a reply's `permalink` carries `?thread_ts=…` (verified). Search syntax for DMs and group DMs still needs checking.
 
 **Edits and deletes**
 
-- Edits keep the same `ts` and add `edited: {user, ts}` (spike). The original text is not available.
+- Edits keep the same `ts` and add `edited: {user, ts}` (verified). The original text is not available.
 - A polling archiver never sees `message_changed` or `message_deleted` events. A deleted parent that still has replies comes back as `subtype: tombstone`.
 - Subtypes to expect: `bot_message`, `me_message`, `channel_join`, `channel_leave`, `channel_topic`, `channel_purpose`, `channel_name`, `channel_archive`, `thread_broadcast`, `pinned_item`, `file_share`, `tombstone`, `huddle_thread`, plus app-specific ones. Render from an allowlist; anything else is a generic system message, never a crash.
 
 **Message content**
 
 - `text` is mrkdwn, not Markdown: `*bold*`, `_italic_`, `~strike~`, `` `code` ``, triple-backtick blocks, `>` quotes, `<url|label>`, `<@U123>`, `<#C123|name>`, `<!subteam^S123>`, `<!here>`, `<!channel>`, `<!date^…>`. `&`, `<`, `>` arrive as `&amp;`, `&lt;`, `&gt;`.
-- `blocks` holds the structured version. User-typed messages carry one `rich_text` block (spike): containers `rich_text_section`, `rich_text_list` (bullet or ordered, `indent`), `rich_text_quote`, `rich_text_preformatted`; leaves `text` (style flags bold, italic, strike, code, underline, highlight), `link`, `emoji` (`name` such as `wave::skin-tone-2`, optional `unicode`), `user`, `usergroup`, `channel`, `broadcast`, `date`, `color`, and newer `canvas`, `file`, `message_mention`, `citation`.
-- App posts use layout blocks. A `/giphy` post is a message with the poster's `user`, a `bot_id` and `bot_profile` for the giphy app, and blocks `image` (giphy-hosted GIF with `image_url`, `image_width`, `image_height`, `image_bytes`, `is_animated`) and `context` ("Posted using /giphy") (spike). Expect `section`, `header`, `divider`, `image`, `context` and `actions`.
-- Link previews live in the legacy `attachments` array: `from_url`, `original_url`, `title`, `title_link`, `text`, `service_name`, `service_icon`, `thumb_url`, `thumb_width/height`, `image_url`, `author_*`, `footer`, `color` (spike). When the author removes a preview, the attachment is absent on the next read.
+- `blocks` holds the structured version. User-typed messages carry one `rich_text` block (verified): containers `rich_text_section`, `rich_text_list` (bullet or ordered, `indent`), `rich_text_quote`, `rich_text_preformatted`; leaves `text` (style flags bold, italic, strike, code, underline, highlight), `link`, `emoji` (`name` such as `wave::skin-tone-2`, optional `unicode`), `user`, `usergroup`, `channel`, `broadcast`, `date`, `color`, and newer `canvas`, `file`, `message_mention`, `citation`.
+- App posts use layout blocks. A `/giphy` post is a message with the poster's `user`, a `bot_id` and `bot_profile` for the giphy app, and blocks `image` (giphy-hosted GIF with `image_url`, `image_width`, `image_height`, `image_bytes`, `is_animated`) and `context` ("Posted using /giphy") (verified). Expect `section`, `header`, `divider`, `image`, `context` and `actions`.
+- Link previews live in the legacy `attachments` array: `from_url`, `original_url`, `title`, `title_link`, `text`, `service_name`, `service_icon`, `thumb_url`, `thumb_width/height`, `image_url`, `author_*`, `footer`, `color` (verified). When the author removes a preview, the attachment is absent on the next read.
 - Store `text`, `blocks` and `attachments` verbatim. Render from `blocks` first and fall back to a mrkdwn parser for messages without blocks. Unknown block or element types render as escaped text.
 
 **Reactions**
 
-- `reactions: [{name, users[], count}]`. Skin-tone variants are separate entries (`wave` and `wave::skin-tone-3`) that the Slack client shows as one grouped reaction (spike). `users` may be truncated relative to `count`, so store `count` rather than deriving it.
+- `reactions: [{name, users[], count}]`. Skin-tone variants are separate entries (`wave` and `wave::skin-tone-3`) that the Slack client shows as one grouped reaction (verified). `users` may be truncated relative to `count`, so store `count` rather than deriving it.
 
 **Files**
 
 - File objects carry `id, name, title, mimetype, filetype, user, size, mode, is_external, url_private, url_private_download, permalink, thumb_*, original_w/h`. `mode` is `hosted`, `snippet`, `post`, `external`, or the redacted states `hidden_by_limit` and `tombstone`.
-- Download `url_private_download` with the bearer token and `d` cookie, streaming to the blob store while hashing. Snippets download in full; their `preview` is truncated (spike). The response's `Content-Type` for snippets is `application/force-download`, so the file object's `mimetype` is the source of truth (spike).
-- A deleted file appears inline as `mode: tombstone`, and `files.info` returns `file_deleted` (spike). Free-plan workspaces redact old files as `hidden_by_limit` and stop returning messages past the retention window.
+- Download `url_private_download` with the bearer token and `d` cookie, streaming to the blob store while hashing. Snippets download in full; their `preview` is truncated (verified). The response's `Content-Type` for snippets is `application/force-download`, so the file object's `mimetype` is the source of truth (verified).
+- A deleted file appears inline as `mode: tombstone`, and `files.info` returns `file_deleted` (verified). Free-plan workspaces redact old files as `hidden_by_limit` and stop returning messages past the retention window.
 - External files (Google Drive and the like, `mode: external`) are linked, not downloaded.
 
 **Users, bots, emoji**
 
-- `users.list` / `users.info`: `id, team_id, name, real_name, deleted, is_bot, is_app_user, tz, tz_label, tz_offset`, `profile.{display_name, real_name, email, image_24 … image_512, image_original}`. `profile.display_name` is often empty (spike), so display falls back to `profile.real_name`, then `real_name`, then `name`.
-- Messages may inline a `user_profile` snapshot of name and avatar at post time; none appeared in the spike. Keep it when present.
+- `users.list` / `users.info`: `id, team_id, name, real_name, deleted, is_bot, is_app_user, tz, tz_label, tz_offset`, `profile.{display_name, real_name, email, image_24 … image_512, image_original}`. `profile.display_name` is often empty (verified), so display falls back to `profile.real_name`, then `real_name`, then `name`.
+- Messages may inline a `user_profile` snapshot of name and avatar at post time; none has appeared in the test workspace. Keep it when present.
 - Bot authors carry `bot_id` and `bot_profile`; `bots.info` fills the rest.
 - Guests and Slack Connect users come from other teams (`user_team` or `team` differs from the archiving `team_id`).
-- `emoji.list` maps custom names to an image URL or to `alias:<name>` (spike). An alias can point at a standard emoji (`white_square` → `alias:white_large_square`), so resolution falls back to the standard table. Custom emoji may be animated GIFs. Deleted custom emoji vanish from the list, so every image ever seen is kept.
+- `emoji.list` maps custom names to an image URL or to `alias:<name>` (verified). An alias can point at a standard emoji (`white_square` → `alias:white_large_square`), so resolution falls back to the standard table. Custom emoji may be animated GIFs. Deleted custom emoji vanish from the list, so every image ever seen is kept.
 - Standard emoji come from a table generated from iamcal/emoji-data (what Slack uses, including skin-tone variants) and committed to the repo.
 
 ## Pulling
@@ -198,7 +201,7 @@ Items marked (spike) were confirmed against the test workspace; the rest come fr
 **Deletes**
 
 - A message is recorded as deleted only when (a) Slack returns it as `subtype: tombstone` (which is a new version, not a delete), or (b) it is missing from a range slarc fully re-read in this run (a whole thread or a `--full` range) and that range lies entirely inside what Slack still serves: if the oldest message Slack returned is newer than the range's start, only the part from that message onward counts.
-- A conversation or thread the current session cannot see (`channel_not_found`, `not_in_channel`, `thread_not_found`) is skipped with a warning and never produces deletes. This is what makes a colleague's pull in a clone of the archive safe.
+- A conversation or thread the current session cannot see (`channel_not_found`, `not_in_channel`, `thread_not_found`) is skipped with a warning and never produces deletes, so losing access to a conversation never deletes what the archive holds.
 
 **Downloads**
 
@@ -215,7 +218,7 @@ Items marked (spike) were confirmed against the test workspace; the rest come fr
 
 ## Storage
 
-The archive is a DuckLake: Parquet data files plus a SQLite catalog, written and read through the `duckdb` package, and a content-addressed blob store beside it (ADR 0004, design in `docs/specs/2026-10-20-ducklake-archive-design.md`). A commit is a catalog transaction, so a batch is part of the archive if and only if its transaction committed, and a crash leaves exactly the last committed state. slarc reads no JSONL: an archive with no `catalog.sqlite` and no files in `data/` or `blobs/` gets an empty lake, and any `raw/`, `directory/` or `runs.jsonl` in it is ignored.
+The archive is a DuckLake: Parquet data files plus a SQLite catalog, written and read through the `duckdb` package, and a content-addressed blob store beside it (ADR 0003; `docs/architecture.md` has the details). A commit is a catalog transaction, so a batch is part of the archive if and only if its transaction committed, and a crash leaves exactly the last committed state. An archive with no `catalog.sqlite` and no files in `data/` or `blobs/` gets an empty lake.
 
 **Layout of one archive**
 
@@ -274,10 +277,10 @@ The current state of a message is its newest version for `(team, channel, ts)`, 
 - Maintenance runs at the end of every `pull` and `rm`, after the run row commits. It compacts the Parquet files every time. It deletes bytes only when it can take the read lock exclusively without blocking, which shows that no other slarc command has the archive open: it then expires every snapshot but the newest, deletes unreferenced and orphaned data files, deletes blobs no `directory_entry` row references, and vacuums the catalog when its free pages pass a threshold. Otherwise deletion waits for the next maintenance that finds the archive idle. No time windows are used.
 - A pull that reads a message whose blob is missing queues the download again. No pull scans the whole blob store.
 
-**One owning host**
+**One owning machine**
 
 - The catalog records the machine that owns the archive, by a stable machine id with the host name for messages. The first open, including the one that creates the lake, records the current machine.
-- Every command, reads included, checks the record when it opens the archive, once per process. On another machine it stops with a message naming the owning host and saying to wait until the synced folder has finished syncing, then run the command again with the global option `--take-ownership`. That option is the user's statement that every change from the previous host has arrived. It records the current machine, checks that every data file the catalog references exists (stopping with a "has not finished syncing" error if any is missing), and makes the run's maintenance skip deleting orphaned files and unreferenced blobs, because files that synced ahead of the catalog look exactly like orphans.
+- Every command, reads included, checks the record when it opens the archive, once per process. On another machine it stops with a message naming the owning host and saying to wait until the synced folder has finished syncing, then run the command again with the global option `--take-ownership`. That option is the user's statement that every change from the previous machine has arrived. It records the current machine, checks that every data file the catalog references exists (stopping with a "has not finished syncing" error if any is missing), and makes the run's maintenance skip deleting orphaned files and unreferenced blobs, because files that synced ahead of the catalog look exactly like orphans.
 - A command that would create a catalog because `catalog.sqlite` is missing refuses, and creates nothing, when `data/` or `blobs/` already holds a file, because a synced folder can deliver those before the catalog. A read command on an archive with no catalog and no files creates an empty lake.
 - The README recommends keeping an archive on local disk, outside synced folders.
 
@@ -287,7 +290,7 @@ The current state of a message is its newest version for `(team, channel, ts)`, 
 
 ## Row schema
 
-`object` is verbatim Slack and only its source method (`api`) is recorded. The Python model (msgspec structs) is the source of truth; Phase 2 adds a generated JSON Schema and a `validate` check.
+`object` is verbatim Slack and only its source method (`api`) is recorded. The Python model (msgspec structs) is the source of truth; a generated JSON Schema and a `validate` check are planned.
 
 **Conventions**
 
@@ -340,7 +343,7 @@ Notes
 
 ## Rendering
 
-One set of Jinja2 partials drives every output: `export` (static files plus a small JS viewer), Phase 2 `serve` (Starlette plus HTMX), and a later PDF export (Playwright print-to-PDF over the static HTML; see `docs/plans/backlog.md`).
+One set of Jinja2 partials drives every output: `export` (static files plus a small JS viewer), the planned `serve` (Starlette plus HTMX), and a planned PDF export (Playwright print-to-PDF over the static HTML; see `docs/backlog.md`).
 
 | Element | Requirement |
 | --- | --- |
@@ -360,7 +363,7 @@ One set of Jinja2 partials drives every output: `export` (static files plus a sm
 
 ## Architecture
 
-Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cases, ports as `typing.Protocol` classes in `src/slarc/ports.py`, and adapters that implement them. Nothing in the domain or service layer imports `slack_sdk`, `duckdb`, `httpx`, `keyring` or touches the filesystem or environment, except reading packaged data through `importlib.resources`. `docs/architecture.md` describes the code in detail, with the full ports table; ADR 0003 records the decision.
+Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cases, ports as `typing.Protocol` classes in `src/slarc/ports.py`, and adapters that implement them. Nothing in the domain or service layer imports `slack_sdk`, `duckdb`, `httpx`, `keyring` or touches the filesystem or environment, except reading packaged data through `importlib.resources`. `docs/architecture.md` describes the code in detail, with the full ports table; ADR 0002 records the decision.
 
 - **Domain**: value types (`MessageTs` with numeric ordering and permalink conversion, `ConversationSel`, `MessageSel` and `WorkspaceSel` selectors, envelopes, tracked items and run records), the hashed-subset functions, and pure renderers: rich_text and layout blocks to HTML, mrkdwn to HTML, and `plain`.
 - **Ports**: `SlackGateway` and `SlackConnector` (a gateway per workspace session), `CredentialSource`, `ArchiveStore`, `ArchiveLock` (the archive's read and write locks), `BlobStore`, `Downloader`, `ExportWriter` (writes export files), `QueryIndex` (what `search`, `list`, `sql` and `export` read), `Clock`, and `Reporter` (progress and warnings). Every port except `QueryIndex` has an in-memory fake in `tests/fakes.py`; `QueryIndex` is tested through DuckDB over a temp archive.
@@ -381,7 +384,7 @@ Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cas
 - `naleidworkspace` (team `T0CB5LYPVFA`) is the only workspace that may ever be written to, and only by `scripts/seed-test-workspace.py`: a uv-shebang developer script outside the package that takes a workspace and channel, refuses any team id other than `T0CB5LYPVFA`, and posts into a dedicated channel such as `#slarc-fixtures`. It covers what one user can create: thread replies (also sent to the channel), edits, deletes with and without replies, rich text, reactions, file uploads (PDF, video, several files on one message), pins, a private channel, topic and name changes, a Slack-archived channel.
 - Content it cannot create is made by hand: anything posted as jim, a group DM with a third user, custom and animated emoji uploads, jim's display name change, huddles, canvases.
 - Agents may use the developer's desktop session for read-only calls to the test workspace without asking.
-- `just record-fixtures` pulls the test workspace into committed fixtures under `tests/fixtures/`. The recorded archive stays JSONL so it is reviewable in git, and test code loads it into a lake. Names stay; tokens and secrets are scrubbed and emails become `@example.invalid`. Tests never need workspace access.
+- `just record-fixtures` pulls the test workspace into committed fixtures under `tests/fixtures/`. The recorded archive is JSONL so it is reviewable in git, and test code loads it into a lake. Names stay; tokens and secrets are scrubbed and emails become `@example.invalid`. Tests never need workspace access.
 
 ## Toolchain
 
@@ -390,13 +393,18 @@ Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cas
 - `just` recipes follow the just-bootstrap conventions: `check`, `test`, `lint`, `fmt`, `build`, `install`, `clean`, `bump`, `retag`, `install-hooks`. A pre-commit hook runs `just check`. GitHub Actions CI runs `just check` on macOS and Linux.
 - Public repo at `tednaleid/slarc`, MIT license.
 
-## Phases
+## Status
 
-1. **Phase 0, spike.** Done; see `phase0-spike-findings.md`.
-2. **Phase 1, MVP.** Project skeleton and tooling; link parsing; settings and archive lookup; desktop session (macOS and Linux) with env and paste fallbacks; `auth`; the DuckLake store, blob store and run rows; `pull` for conversations, threads and single messages with date ranges, the search-based reply discovery, active-thread re-reads, `--full`, delete inference, file and image downloads; users, emoji, usergroups and bots directory; `plain`; DuckDB views; `list`, `search`, `sql`; a minimal static `export` covering threads, reactions, images, snippets, previews and giphy; the seed script and recorded fixtures. Ships when: pulling the same channel twice adds no message or directory rows; a new reply in a dormant thread is found by a bare `pull` and lands as exactly one new message row; an edit to an old message lands as exactly one new version row under `--full`; and the export of the test channel matches the Slack client in substance.
-3. **Phase 2.** `serve` with HTMX; full-text search with filters; observed-version history in the viewer; `import` (likely `slarc pull <export.zip>`) from Slack export ZIPs and slackdump SQLite; Slack export ZIP output so slarchive and slack-export-viewer can read archives; generated JSON Schema and a `validate` check; a probe that warns if Slack starts limiting session tokens; Slack Connect `source_team` resolution; obfuscated fixture recording from real workspaces.
+slarc pulls conversations, threads and single messages with date ranges, search-based reply discovery, active-thread re-reads, `--full` and delete inference; downloads files and images; keeps the users, emoji, usergroups and bots directory; and provides `auth`, `list`, `search`, `sql`, `export` and `rm`. The desktop session is read on macOS and Linux, with env and paste fallbacks.
 
-Someday items and Phase 1 leftovers are in `docs/plans/backlog.md`.
+**Acceptance criteria**, checked live by `just acceptance` against the test workspace:
+
+- pulling the same channel twice adds no message or directory rows;
+- a new reply in a dormant thread is found by a bare `pull` and lands as exactly one new message row;
+- an edit to an old message lands as exactly one new version row under `--full`;
+- the export of the test channel matches the Slack client in substance.
+
+**Planned:** `serve` with HTMX; full-text search with filters; observed-version history in the viewer; `import` from Slack export ZIPs and slackdump SQLite; Slack export ZIP output so slarchive and slack-export-viewer can read archives; a generated JSON Schema and a `validate` check; a probe that warns if Slack starts limiting session tokens; Slack Connect `source_team` resolution; obfuscated fixture recording from real workspaces. Known issues and later ideas are in `docs/backlog.md`.
 
 ## Prior art
 

@@ -8,7 +8,7 @@
 # [tool.uv.sources]
 # slarc = { path = "..", editable = true }
 # ///
-# ABOUTME: Live check of slarc's Phase 1 ship criteria against the naleidworkspace test workspace.
+# ABOUTME: Live check of slarc's acceptance criteria against the naleidworkspace test workspace.
 # ABOUTME: Pulls into scratch archives; edits and first-run posts go through seed-test-workspace.py.
 import json
 import os
