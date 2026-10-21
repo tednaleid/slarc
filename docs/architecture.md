@@ -78,12 +78,13 @@ Dependencies point inward: `cli.py` and `bootstrap.py` know everything, adapters
 
 The lake has five tables, created by `lake.py`: `message_version` and `directory_entry` (append-only, one row per observed version of a message or of a user, emoji, conversation, bot, usergroup, file or image), `run` (one row per run that ended), and `tracked_item` and `download_state` (one row per item or download target, replaced in place). The spec lists their columns. Rows are written sorted by `(team, channel, ts)`, or `(team, kind, id)` for directory entries; sorting keeps a conversation's rows together in few files, and partitioning would multiply files and make maintenance and rm slower. Times are ISO 8601 strings, never timestamp columns, because DuckDB returns timestamp-with-zone values that Python cannot read without `pytz`.
 
-`connect_lake` in `lake.py` opens every DuckDB connection to the lake. It loads the extensions, attaches the catalog as `lake` and makes it the default catalog. Each of these settings prevents a known failure:
+`connect_lake` in `lake.py` opens every DuckDB connection to the lake. It loads the extensions, attaches the catalog as `lake` and makes it the default catalog. Each of these settings prevents a known failure or saves space:
 
 - **WAL mode on the catalog**, set through `METADATA_PARAMETERS` at every attach. SQLite's default rollback journal stalls writers behind readers for seconds, and an open read transaction blocks writes entirely.
 - **The data path is passed at every attach** (`DATA_PATH '<archive>/data/'` with `OVERRIDE_DATA_PATH true`), because the catalog stores an absolute path. A moved or restored archive still opens. Paths are quoted with `_sql_string`, since `ATTACH` takes no parameters.
 - **`target_file_size` of 16MB.** With the default, every maintenance rewrites the whole message table.
 - **`rewrite_delete_threshold` of 0.** DuckLake otherwise never merges files that have deletes, so tables updated in place fragment, and rm's deletes would never be rewritten out of the files.
+- **`parquet_compression` of zstd.** Message data files are about 40% smaller than with DuckLake's default, Snappy. Each Parquet file records its own codec, so an archive written with Snappy reads as before and writes zstd from its next writable open.
 - **Maintenance results are read with `fetchall()`.** Reading one with `fetchone()` skips its commit without an error.
 - **Bulk inserts pass one JSON parameter**, not a parameterized `VALUES` list, which is about 70 times slower.
 - **`duckdb` is pinned exactly** in `pyproject.toml`. The ducklake extension is built for one DuckDB release and the catalog does not migrate itself, so an upgrade is a deliberate change, tested against an archive the previous version created.

@@ -47,7 +47,11 @@ JOIN (
 """
 
 # Slarc's own settings for every lake; docs/architecture.md gives the reason for each.
-OPTIONS = {"target_file_size": "16MB", "rewrite_delete_threshold": "0"}
+OPTIONS = {
+    "target_file_size": "16MB",
+    "rewrite_delete_threshold": "0",
+    "parquet_compression": "zstd",
+}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS message_version (

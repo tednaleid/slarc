@@ -45,6 +45,60 @@ def test_connect_creates_catalog_tables_and_settings(tmp_path: Path, ext_dir: Pa
         assert catalog.execute("PRAGMA journal_mode").fetchone() == ("wal",)
 
 
+def codecs(con: duckdb.DuckDBPyConnection) -> list[set[str]]:
+    """The codecs of each message_version data file, one set per file."""
+    paths = [
+        row[0]
+        for row in con.execute(
+            "SELECT data_file FROM ducklake_list_files('lake', 'message_version')"
+        ).fetchall()
+    ]
+    return [
+        {
+            row[0]
+            for row in con.execute("SELECT compression FROM parquet_metadata(?)", [path]).fetchall()
+        }
+        for path in paths
+    ]
+
+
+def write_messages(con: duckdb.DuckDBPyConnection, ts: str) -> None:
+    con.execute(
+        "INSERT INTO lake.message_version (team, channel, ts, plain) "
+        "SELECT 'T', 'C', ? || i, repeat('text ', 50) FROM range(100) t(i)",
+        [ts],
+    )
+
+
+def test_a_new_lake_writes_zstd_data_files(tmp_path: Path, ext_dir: Path) -> None:
+    con = connect_lake(tmp_path, ext_dir)
+    write_messages(con, "1.")
+    options = dict(con.execute("SELECT option_name, value FROM lake.options()").fetchall())
+    found = codecs(con)
+    con.close()
+    assert options["parquet_compression"] == "zstd"
+    assert found == [{"ZSTD"}]
+
+
+def test_a_lake_of_snappy_files_turns_to_zstd_and_reads_both(
+    tmp_path: Path, ext_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    without = {k: v for k, v in lake.OPTIONS.items() if k != "parquet_compression"}
+    monkeypatch.setattr(lake, "OPTIONS", without)
+    con = connect_lake(tmp_path, ext_dir)
+    write_messages(con, "1.")
+    con.close()
+    monkeypatch.undo()
+
+    con = connect_lake(tmp_path, ext_dir)
+    write_messages(con, "2.")
+    found = sorted(codecs(con), key=sorted)
+    count = con.execute("SELECT count(*) FROM lake.message_version").fetchone()
+    con.close()
+    assert found == [{"SNAPPY"}, {"ZSTD"}]
+    assert count == (200,)
+
+
 def test_a_new_catalog_creates_its_tables_in_one_snapshot(tmp_path: Path, ext_dir: Path) -> None:
     con = connect_lake(tmp_path, ext_dir)
     query = "SELECT count(*) FROM __ducklake_metadata_lake.ducklake_snapshot"
