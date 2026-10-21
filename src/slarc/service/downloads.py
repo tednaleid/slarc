@@ -14,6 +14,7 @@ from slarc.domain.tracking import DownloadState
 from slarc.ports import (
     ArchiveStore,
     AuthFailed,
+    CommitConflict,
     DirectoryState,
     Downloader,
     DownloadJob,
@@ -135,7 +136,7 @@ def drain_downloads(
         uow.commit(downloads_exist=True)
     jobs = [_job(state, max_bytes) for state in uow.run.downloads if state.status == "pending"]
     jobs = _with_credentials(jobs, connector, reporter)
-    recorder = _Recorder(uow, connector)
+    recorder = _Recorder(uow, connector, reporter)
     if jobs:
         done = failed = skipped = 0
         reporter.downloads(done, failed, skipped, len(jobs))
@@ -327,9 +328,10 @@ class _Recorder:
     counts the files and images committed with their blob.
     """
 
-    def __init__(self, uow: UnitOfWork, connector: SlackConnector) -> None:
+    def __init__(self, uow: UnitOfWork, connector: SlackConnector, reporter: Reporter) -> None:
         self.uow = uow
         self.connector = connector
+        self.reporter = reporter
         self.images: dict[str, set[str]] = {}
         self.saved: dict[Kind, int] = {"file": 0, "image": 0}
 
@@ -362,7 +364,9 @@ class _Recorder:
         return held.status if held is not None else None
 
     def finish(self) -> None:
-        """Commits the new lines of users and emoji whose image was downloaded."""
+        """Commits the new lines of users and emoji whose image was downloaded, one workspace
+        at a time, then what is left open. A workspace removed meanwhile makes its commit
+        conflict, so its lines are discarded with a warning."""
         for team_id, urls in self.images.items():
             for kind, api in DIRECTORY_LIST_APIS.items():
                 objects = self.uow.archive.directory_objects(team_id, kind)
@@ -372,6 +376,13 @@ class _Recorder:
                     if directory_image_url(kind, obj) in urls
                 }
                 append_directory(self.uow, team_id, kind, shown, api)
+            try:
+                self.uow.commit(downloads_exist=True)
+            except CommitConflict:
+                self.reporter.warn(
+                    f"Workspace {team_id} was removed while this pull was running, so its "
+                    "avatars and emoji were not linked."
+                )
         self.uow.commit(downloads_exist=True)
 
     def _record_file(self, result: DownloadResult) -> Kind | None:

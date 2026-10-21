@@ -7,6 +7,7 @@ import pytest
 
 from slarc import __version__
 from slarc.domain.directory import DirectoryView
+from slarc.domain.envelope import Kind
 from slarc.domain.hashing import content_hash
 from slarc.domain.tracking import DownloadState
 from slarc.ports import (
@@ -26,6 +27,7 @@ from slarc.service.downloads import (
 from slarc.service.pull import PullOptions
 from slarc.unit_of_work import UnitOfWork
 from tests.service.pull_harness import BASE, CHANNEL, ME, TEAM, TOMBSTONE_FILE, Harness, spike
+from tests.service.test_pull_commits import remove_workspace
 
 THREAD_LINK = f"{BASE}/p1792410693663869"
 SNIPPET_LINK = f"{BASE}/p1792422552941749"
@@ -590,6 +592,44 @@ def test_result_for_a_removed_target_is_dropped(
     assert run_states(h, "file") == []
     assert report.files_saved == 0
     assert h.blobs.exists(sha256(snippet_bytes())) is not idle
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_a_workspace_removed_during_the_drain_leaves_its_images_unlinked(
+    h: Harness, monkeypatch: pytest.MonkeyPatch, interrupted: bool
+):
+    """rm wipes the workspace after the drain reads its users and before it commits them."""
+    h.downloader.serve(avatar(ME), b"avatar", "image/png")
+    fetch, read = h.downloader.fetch, h.archive.directory_objects
+    drained: list[bool] = []
+
+    def fetch_then_stop(jobs: list[DownloadJob], parallelism: int) -> Iterator[DownloadResult]:
+        yield from fetch(jobs, parallelism)
+        drained.append(True)
+        if interrupted:
+            raise KeyboardInterrupt
+
+    def rm_commits_after_the_read(team: str, kind: Kind) -> dict[str, dict]:
+        objects = read(team, kind)
+        if drained == [True]:
+            drained.append(True)
+            remove_workspace(h, TEAM)
+        return objects
+
+    monkeypatch.setattr(h.downloader, "fetch", fetch_then_stop)
+    monkeypatch.setattr(h.archive, "directory_objects", rm_commits_after_the_read)
+
+    if interrupted:
+        with pytest.raises(KeyboardInterrupt):
+            h.pull(SNIPPET_LINK)
+    else:
+        h.pull(SNIPPET_LINK)
+
+    assert h.reporter.warnings[-1] == (
+        f"Workspace {TEAM} was removed while this pull was running, so its avatars and emoji "
+        "were not linked."
+    )
+    assert h.lines("user") == []
 
 
 def drop_download(h: Harness, target: str) -> None:
