@@ -14,7 +14,7 @@ Facts checked against the `naleidworkspace` test workspace (team `T0CB5LYPVFA`, 
 ## API behavior with a session token
 
 - `auth.test`, `conversations.list/info/history/replies`, `users.list`, `emoji.list`, `usergroups.list`, `bots.info`, `files.info` and `search.messages` all succeeded, each in 0.2 to 0.45 s. No throttling at this scale; real rate limits still need measuring on a large channel.
-- `search.messages` works. `in:<#C0CA5396G03>`, `in:#all-naleid`, `is:thread` and `after:YYYY-MM-DD` all filter as expected. Matches have no `thread_ts` field, but a reply's `permalink` carries `?thread_ts=...`, which is enough to find the parent of a new reply in an old thread.
+- `search.messages` works. `in:<#C0CA5396G03>`, `in:#all-naleid`, `is:thread` and `after:YYYY-MM-DD` all filter as expected. `in:<#D...>` with a DM's id filters to that DM the same way. Matches have no `thread_ts` field, but a reply's `permalink` carries `?thread_ts=...`, which is enough to find the parent of a new reply in an old thread.
 - `conversations.info` returns `last_read`; `unread_count` is absent for channels.
 
 ## Message shapes
