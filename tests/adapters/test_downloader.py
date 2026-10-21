@@ -1,5 +1,5 @@
-# ABOUTME: Tests for HttpDownloader over httpx's MockTransport: auth, limits and parallelism.
-# ABOUTME: Responses are served in memory; blobs go to the in-memory or filesystem blob store.
+# ABOUTME: Tests for HttpDownloader over httpx's MockTransport: auth, limits, parallelism and
+# ABOUTME: per-host pacing. Responses are served in memory, blobs kept in a blob store.
 import hashlib
 import threading
 import time
@@ -7,9 +7,17 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
+import pytest
 
 from slarc.adapters.blob_store import FsBlobStore
-from slarc.adapters.downloader import OUTSIDE_TIMEOUT_S, HttpDownloader
+from slarc.adapters.downloader import (
+    MAX_RETRY_AFTER_S,
+    OUTSIDE_HOST_PARALLELISM,
+    OUTSIDE_TIMEOUT_S,
+    RATE_LIMIT_RETRIES,
+    HostHolds,
+    HttpDownloader,
+)
 from slarc.ports import BlobStore, DownloadJob, Session
 from tests.fakes import InMemoryBlobStore
 
@@ -21,9 +29,30 @@ AVATAR_URL = "https://avatars.slack-edge.com/2026-10-19/avatar_512.png"
 GITHUB_URL = "https://avatars.githubusercontent.com/u/5231?v=4?s=400"
 
 
-def downloader(handler, blobs: BlobStore | None = None) -> HttpDownloader:
+class FakeTime:
+    """A clock that moves only when a download pauses, recording each pause."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.pauses: list[float] = []
+
+    def clock(self) -> float:
+        return self.now
+
+    def pause(self, seconds: float, cancel: threading.Event) -> None:
+        self.pauses.append(seconds)
+        self.now += seconds
+
+
+def downloader(
+    handler, blobs: BlobStore | None = None, holds: HostHolds | None = None
+) -> HttpDownloader:
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    return HttpDownloader(blobs or InMemoryBlobStore(), {TEAM: SESSION}, client)
+    return HttpDownloader(blobs or InMemoryBlobStore(), {TEAM: SESSION}, client, holds)
+
+
+def held(time_: FakeTime) -> HostHolds:
+    return HostHolds(clock=time_.clock, pause=time_.pause)
 
 
 def job(url: str, *, slack_auth: bool = False, max_bytes: int = 1000) -> DownloadJob:
@@ -192,7 +221,7 @@ def test_downloader_maps_403_to_forbidden_404_to_not_found_and_other_errors_to_f
     assert all("xox" not in (r.error or "") for r in results.values())
 
 
-def test_downloader_parallelism_bounded():
+def test_slack_files_use_the_full_parallelism():
     lock = threading.Lock()
     active = 0
     peak = 0
@@ -208,7 +237,7 @@ def test_downloader_parallelism_bounded():
             active -= 1
         return httpx.Response(200, content=request.url.path.encode())
 
-    jobs = [job(f"https://cdn.example.com/{n}") for n in range(9)]
+    jobs = [job(f"{FILE_URL}-{n}", slack_auth=True) for n in range(9)]
     results = list(downloader(handler).fetch(jobs, 3))
 
     assert len(results) == 9
@@ -262,3 +291,144 @@ def test_outside_sites_get_a_shorter_timeout_than_slack_files():
     assert set(timeouts[FILE_URL].values()) == {60.0}
     assert set(timeouts[GITHUB_URL].values()) == {OUTSIDE_TIMEOUT_S}
     assert OUTSIDE_TIMEOUT_S == 15.0
+
+
+def test_each_outside_host_gets_at_most_two_downloads_at_a_time():
+    lock = threading.Lock()
+    active: dict[str, int] = {}
+    peaks: dict[str, int] = {}
+    overall = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal overall
+        host = request.url.host
+        with lock:
+            active[host] = active.get(host, 0) + 1
+            peaks[host] = max(peaks.get(host, 0), active[host])
+            overall = max(overall, sum(active.values()))
+        time.sleep(0.05)
+        with lock:
+            active[host] -= 1
+        return httpx.Response(200, content=request.url.path.encode())
+
+    hosts = ("opengraph.githubassets.com", "upload.wikimedia.org")
+    jobs = [job(f"https://{host}/{n}") for host in hosts for n in range(6)]
+    results = list(downloader(handler).fetch(jobs, 8))
+
+    assert {r.status for r in results} == {"ok"}
+    assert len(results) == 12
+    assert OUTSIDE_HOST_PARALLELISM == 2
+    assert peaks == {host: 2 for host in hosts}
+    assert overall == 4
+
+
+def test_rate_limited_download_waits_the_retry_after_then_retries():
+    answers = iter([httpx.Response(429, headers={"Retry-After": "7"}), httpx.Response(200)])
+    time_ = FakeTime()
+
+    results = list(
+        downloader(lambda _: next(answers), holds=held(time_)).fetch([job(GITHUB_URL)], 1)
+    )
+
+    assert [r.status for r in results] == ["ok"]
+    assert time_.pauses == [7]
+
+
+def test_rate_limited_download_without_retry_after_waits_five_seconds():
+    answers = iter([httpx.Response(429), httpx.Response(200)])
+    time_ = FakeTime()
+
+    results = list(
+        downloader(lambda _: next(answers), holds=held(time_)).fetch([job(GITHUB_URL)], 1)
+    )
+
+    assert [r.status for r in results] == ["ok"]
+    assert time_.pauses == [5]
+
+
+@pytest.mark.parametrize(
+    "past", ["Wed, 21 Oct 2015 07:28:00 GMT", "Wed, 21 Oct 2015 07:28:00 -0000"]
+)
+def test_rate_limited_download_reads_a_retry_after_date(past: str):
+    answers = iter([httpx.Response(429, headers={"Retry-After": past}), httpx.Response(200)])
+    time_ = FakeTime()
+
+    results = list(
+        downloader(lambda _: next(answers), holds=held(time_)).fetch([job(GITHUB_URL)], 1)
+    )
+
+    assert [r.status for r in results] == ["ok"]
+    assert time_.pauses == []
+
+
+def test_rate_limited_download_fails_after_three_retries():
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        return httpx.Response(429, headers={"Retry-After": "2"})
+
+    time_ = FakeTime()
+    results = list(downloader(handler, holds=held(time_)).fetch([job(GITHUB_URL)], 1))
+
+    assert RATE_LIMIT_RETRIES == 3
+    assert len(requests) == 4
+    assert time_.pauses == [2, 2, 2]
+    assert [(r.status, r.error) for r in results] == [("failed", "HTTP 429 Too Many Requests")]
+
+
+def test_rate_limited_download_asked_to_wait_too_long_fails_without_waiting():
+    too_long = str(MAX_RETRY_AFTER_S + 1)
+    time_ = FakeTime()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": too_long})
+
+    results = list(downloader(handler, holds=held(time_)).fetch([job(GITHUB_URL)], 1))
+
+    assert MAX_RETRY_AFTER_S == 60
+    assert time_.pauses == []
+    assert [(r.status, r.error) for r in results] == [
+        ("failed", "HTTP 429 Too Many Requests, asked to wait 61s")
+    ]
+
+
+def test_a_held_host_makes_its_other_downloads_wait_out_the_rest():
+    time_ = FakeTime()
+    holds = held(time_)
+    cancel = threading.Event()
+
+    holds.hold("opengraph.githubassets.com", 30)
+    time_.now += 10
+    holds.wait("opengraph.githubassets.com", cancel)
+    holds.wait("upload.wikimedia.org", cancel)
+    holds.wait("opengraph.githubassets.com", cancel)
+
+    assert time_.pauses == [20]
+
+
+def test_a_later_shorter_hold_does_not_cut_a_longer_one():
+    time_ = FakeTime()
+    holds = held(time_)
+
+    holds.hold("opengraph.githubassets.com", 30)
+    holds.hold("opengraph.githubassets.com", 5)
+    holds.wait("opengraph.githubassets.com", threading.Event())
+
+    assert time_.pauses == [30]
+
+
+def test_closing_fetch_stops_a_download_waiting_out_a_retry_after():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/limited":
+            return httpx.Response(429, headers={"Retry-After": "30"})
+        return httpx.Response(200, content=b"fast")
+
+    jobs = [job("https://cdn.example.com/limited"), job("https://other.example.com/fast")]
+    results = downloader(handler).fetch(jobs, 2)
+
+    assert next(results).job.url.endswith("/fast")
+    started = time.monotonic()
+    results.close()
+
+    assert time.monotonic() - started < 1.0

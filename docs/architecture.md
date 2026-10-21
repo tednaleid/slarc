@@ -58,7 +58,7 @@ Dependencies point inward: `cli.py` and `bootstrap.py` know everything, adapters
 
 `AssetResolver` (`domain/render/__init__.py`) is a domain-side protocol with the same pattern: `service/export.py` implements it over the archive's blobs, and tests use `FakeAssetResolver`.
 
-`SessionTokenGateway` calls only methods in `READ_METHODS`, sends every call through a per-method token bucket, and maps Slack error codes to `NotVisible`, `ThreadNotFound`, `FileDeleted` and `AuthFailed`. `HttpDownloader` follows redirects itself and sends the token and cookie only to Slack's file host.
+`SessionTokenGateway` calls only methods in `READ_METHODS`, sends every call through a per-method token bucket, and maps Slack error codes to `NotVisible`, `ThreadNotFound`, `FileDeleted` and `AuthFailed`. `HttpDownloader` follows redirects itself, sends the token and cookie only to Slack's file host, limits each other host to two downloads at a time, and holds a host that answers HTTP 429 for its `Retry-After`.
 
 ## Credentials and auth
 

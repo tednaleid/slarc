@@ -1,17 +1,26 @@
-# ABOUTME: Downloader over httpx that streams each URL into the blob store, several at a time.
-# ABOUTME: Sends the session's token and d cookie only to Slack's private file host.
+# ABOUTME: Downloader over httpx that streams each URL into the blob store, several at a time,
+# ABOUTME: pacing each host and sending the session's credentials only to Slack's file host.
 import threading
-from collections.abc import Generator, Iterator
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from collections import deque
+from collections.abc import Callable, Generator, Iterator
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Literal
+from urllib.parse import urlparse
 
 import httpx
 
-from slarc.domain.links import is_slack_file_url
+from slarc.domain.links import SLACK_FILE_HOST, is_slack_file_url
 from slarc.ports import BlobStore, DownloadJob, DownloadResult, Session
 
 MAX_REDIRECTS = 5
 OUTSIDE_TIMEOUT_S = 15.0
+OUTSIDE_HOST_PARALLELISM = 2
+RATE_LIMIT_RETRIES = 3
+DEFAULT_RETRY_AFTER_S = 5.0
+MAX_RETRY_AFTER_S = 60
 SESSION_HINT = "The Slack session may have expired; sign in again and pull to retry."
 
 type FailedStatus = Literal["failed", "forbidden", "not_found", "too_large"]
@@ -27,23 +36,74 @@ class Cancelled(Exception):
     pass
 
 
+def _pause(seconds: float, cancel: threading.Event) -> None:
+    if cancel.wait(seconds):
+        raise Cancelled
+
+
+class HostHolds:
+    """How long each host that answered HTTP 429 asked to be left alone, so every download from
+    it waits out the rest of that time before its next request."""
+
+    def __init__(
+        self,
+        clock: Callable[[], float] = time.monotonic,
+        pause: Callable[[float, threading.Event], None] = _pause,
+    ) -> None:
+        self._clock = clock
+        self._pause = pause
+        self._until: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def hold(self, host: str, seconds: float) -> None:
+        with self._lock:
+            self._until[host] = max(self._until.get(host, 0.0), self._clock() + seconds)
+
+    def wait(self, host: str, cancel: threading.Event) -> None:
+        """Pauses until the host's hold ends; raises Cancelled if cancel is set first."""
+        with self._lock:
+            left = self._until.get(host, 0.0) - self._clock()
+        if left > 0:
+            self._pause(left, cancel)
+
+
 class HttpDownloader:
     def __init__(
-        self, blobs: BlobStore, sessions: dict[str, Session], client: httpx.Client
+        self,
+        blobs: BlobStore,
+        sessions: dict[str, Session],
+        client: httpx.Client,
+        holds: HostHolds | None = None,
     ) -> None:
         """sessions maps a team id to the session whose credentials fetch its files."""
         self._blobs = blobs
         self._sessions = sessions
         self._client = client
+        self._holds = holds or HostHolds()
 
     def fetch(self, jobs: list[DownloadJob], parallelism: int) -> Generator[DownloadResult]:
-        """Yields each job's result as it finishes, with at most parallelism in flight."""
+        """Yields each job's result as it finishes, with at most parallelism in flight, and at
+        most OUTSIDE_HOST_PARALLELISM of them from any host but Slack's file host."""
         pool = ThreadPoolExecutor(max_workers=parallelism)
         cancel = threading.Event()
+        queued: dict[str, deque[DownloadJob]] = {}
+        for job in jobs:
+            queued.setdefault(_host(job.url), deque()).append(job)
+        running: dict[Future[DownloadResult], str] = {}
+
+        def start(host: str) -> None:
+            if queued[host]:
+                running[pool.submit(self._fetch, queued[host].popleft(), cancel)] = host
+
         try:
-            futures = [pool.submit(self._fetch, job, cancel) for job in jobs]
-            for future in as_completed(futures):
-                yield future.result()
+            for host in queued:
+                for _ in range(_host_parallelism(host, parallelism)):
+                    start(host)
+            while running:
+                done, _ = wait(running, return_when=FIRST_COMPLETED)
+                for future in done:
+                    start(running.pop(future))
+                    yield future.result()
         finally:
             # A caller that stops early, or Ctrl-C, abandons the downloads not started yet
             # and tells the running ones to stop at their next chunk.
@@ -63,18 +123,35 @@ class HttpDownloader:
     def _download(self, job: DownloadJob, cancel: threading.Event) -> DownloadResult:
         """Follows redirects itself, so each hop gets credentials only if it is a Slack file.
 
-        A job outside Slack's file host gets a shorter timeout than the client's default.
+        A job outside Slack's file host gets a shorter timeout than the client's default. An
+        HTTP 429 holds its host for the Retry-After, up to MAX_RETRY_AFTER_S, then retries, up
+        to RATE_LIMIT_RETRIES times.
         """
         url = job.url
         timeout = httpx.USE_CLIENT_DEFAULT if job.slack_auth else OUTSIDE_TIMEOUT_S
-        for _ in range(MAX_REDIRECTS + 1):
+        redirects = 0
+        retries = 0
+        while redirects <= MAX_REDIRECTS:
             _raise_if_set(cancel)
+            host = _host(url)
+            self._holds.wait(host, cancel)
             headers = self._headers(job, url)
             with self._client.stream("GET", url, headers=headers, timeout=timeout) as response:
                 if response.is_redirect and "location" in response.headers:
                     url = str(response.url.join(response.headers["location"]))
+                    redirects += 1
                     continue
                 code = response.status_code
+                if code == httpx.codes.TOO_MANY_REQUESTS:
+                    seconds = _retry_after(response.headers.get("retry-after"))
+                    if seconds > MAX_RETRY_AFTER_S:
+                        error = f"{_http_error(code)}, asked to wait {seconds:.0f}s"
+                        return _result(job, "failed", error)
+                    if retries == RATE_LIMIT_RETRIES:
+                        return _result(job, "failed", _http_error(code))
+                    retries += 1
+                    self._holds.hold(host, seconds)
+                    continue
                 if code in TERMINAL_HTTP_STATUSES:
                     return _result(job, TERMINAL_HTTP_STATUSES[code], _http_error(code))
                 if code >= 400:
@@ -111,6 +188,32 @@ def _slack_refusal(job: DownloadJob, url: str, content_type: str) -> str | None:
     if content_type == "text/html":
         return f"Slack answered the file download with a web page. {SESSION_HINT}"
     return None
+
+
+def _host(url: str) -> str:
+    try:
+        return urlparse(url).hostname or ""
+    except ValueError:
+        return ""
+
+
+def _host_parallelism(host: str, parallelism: int) -> int:
+    return parallelism if host == SLACK_FILE_HOST else min(parallelism, OUTSIDE_HOST_PARALLELISM)
+
+
+def _retry_after(value: str | None) -> float:
+    """Seconds to wait from a Retry-After header, given as seconds or as an HTTP date."""
+    if value is None:
+        return DEFAULT_RETRY_AFTER_S
+    if value.strip().isdigit():
+        return float(value)
+    try:
+        when = parsedate_to_datetime(value)
+    except TypeError, ValueError:
+        return DEFAULT_RETRY_AFTER_S
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max(0.0, (when - datetime.now(UTC)).total_seconds())
 
 
 def _http_error(code: int) -> str:
