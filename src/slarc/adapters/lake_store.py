@@ -226,9 +226,9 @@ class DuckLakeArchiveStore:
             )
 
     def maintain(self, blobs: BlobStore) -> bool:
-        """Compacts the lake under the write lock. Then, if the read lock can be taken
-        exclusively, deletes under the write lock what nothing uses, and holds the read lock
-        shared again.
+        """Compacts the lake under the write lock. Then, if no other store or index of this
+        process holds the read lock and it can be taken exclusively, deletes under the write
+        lock what nothing uses, and holds the read lock shared again.
 
         Holding the read lock exclusively proves no other process reads an older snapshot,
         has data files in flight or has written a blob it has not committed, so the deletion
@@ -247,7 +247,8 @@ class DuckLakeArchiveStore:
                     self._con.execute(f"SELECT count(*) FROM {function}('lake')").fetchall()
             self._lock.release_shared()
             try:
-                if not self._lock.try_exclusive():
+                # Another store or index of this process still holds the read lock shared.
+                if self._lock.held_shared() or not self._lock.try_exclusive():
                     return False
                 try:
                     with self._lock.write():

@@ -11,6 +11,7 @@ import msgspec
 import pytest
 
 from slarc.adapters.blob_store import FsBlobStore
+from slarc.adapters.duckdb_index import DuckDbQueryIndex
 from slarc.adapters.lake import CATALOG, DATA_DIR
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.adapters.locks import FlockArchiveLock
@@ -156,6 +157,27 @@ def test_maintain_holds_the_read_lock_again_and_close_releases_it(
     assert store.maintain(FsBlobStore(root)) is True
     assert not other.try_exclusive()
     store.close()
+    assert other.try_exclusive()
+    other.release_exclusive()
+
+
+def test_maintain_defers_deletion_while_this_process_has_an_index_open(
+    tmp_path: Path, ext_dir: Path
+) -> None:
+    root, cache = tmp_path / "archive", tmp_path / "cache"
+    lock = FlockArchiveLock(root, cache)
+    store = DuckLakeArchiveStore(root, ext_dir, lock)
+    blobs = FsBlobStore(root)
+    unreferenced, _ = blobs.write([b"unreferenced"])
+    index = DuckDbQueryIndex(root, ext_dir, lock)
+
+    assert store.maintain(blobs) is False
+    assert list(blobs.ids()) == [unreferenced]
+    index.close()
+    assert store.maintain(blobs) is True
+    assert list(blobs.ids()) == []
+    store.close()
+    other = FlockArchiveLock(root, cache)
     assert other.try_exclusive()
     other.release_exclusive()
 

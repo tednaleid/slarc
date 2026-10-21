@@ -234,6 +234,9 @@ class FakeArchiveLock:
         self.events.append("release_shared")
         self.shared -= 1
 
+    def held_shared(self) -> bool:
+        return self.shared > 0
+
     def try_exclusive(self) -> bool:
         if self.shared or self.exclusive:
             raise RuntimeError("Release the read lock before trying it exclusively")

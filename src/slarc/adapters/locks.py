@@ -40,6 +40,9 @@ class FlockArchiveLock:
         if self._shared == 0:
             self._close_read()
 
+    def held_shared(self) -> bool:
+        return self._shared > 0
+
     def try_exclusive(self) -> bool:
         # Converting a held flock is not atomic: a failed try could lose the shared lock.
         if self._read_fd is not None:
