@@ -56,7 +56,9 @@ NO_TRACKED_ITEMS = "No tracked items yet. Pull a Slack link to start tracking it
 NO_MATCHES = "No messages match."
 LOCAL_TIME = "%Y-%m-%d %H:%M"
 LOCAL_DATE = "%Y-%m-%d"
-TARGET = "⌖"  # crosshairs, before the date history reads back to
+# Crosshairs, before the date history reads back to. Terminal fonts often draw it over the
+# space after it, so `@` takes no space before its date either.
+TARGET = "⌖"
 FETCHED_AT = "%Y-%m-%dT%H:%M:%SZ"
 DOWNLOADS_ROW = "Downloads"
 ARCHIVE_ROW = "Archive"
@@ -206,7 +208,7 @@ class RichReporter:
     def progress(self, label: str, update: ItemProgress) -> None:
         parts = [f"{update.read:,} read, {update.new:,} new"]
         if update.at is not None:
-            parts.append(f"@ {_local_date(update.at)}")
+            parts.append(f"@{_local_date(update.at)}")
         if update.target is not None:
             parts.append(f"{TARGET} {_local_date(update.target)}")
         total = None if update.share is None else 1

@@ -578,7 +578,7 @@ def test_reporter_shows_the_date_reached_and_the_date_it_reads_back_to():
 
     [row] = buffer.getvalue().splitlines()
     assert row.startswith("#tgt_subslack")
-    assert row.rstrip().endswith("1,840 read, 1,840 new  @ 2025-03-14  ⌖ 2023-06-01")
+    assert row.rstrip().endswith("1,840 read, 1,840 new  @2025-03-14  ⌖ 2023-06-01")
 
 
 def test_reporter_shows_the_archive_row_below_the_others_until_it_is_saved():
