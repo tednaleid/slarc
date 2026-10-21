@@ -126,8 +126,9 @@ def test_connect_refuses_to_create_a_catalog_beside_synced_files(
     with pytest.raises(CatalogNotSynced) as refused:
         connect_lake(tmp_path, ext_dir)
     assert str(refused.value) == (
-        "This archive has data files but no catalog.sqlite. Wait until your synced folder "
-        "has finished syncing, then run the command again."
+        "This archive has data files but no catalog.sqlite, so wait until your synced folder "
+        "has finished syncing and run the command again. To start over instead, delete data/ "
+        "and blobs/ as well."
     )
     assert not (tmp_path / CATALOG).exists()
     assert sorted(path.name for path in tmp_path.iterdir()) == [directory]

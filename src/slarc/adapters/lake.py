@@ -86,8 +86,9 @@ class OwnedElsewhere(SlarcError):
 class CatalogNotSynced(SlarcError):
     def __init__(self) -> None:
         super().__init__(
-            "This archive has data files but no catalog.sqlite. Wait until your synced folder "
-            "has finished syncing, then run the command again."
+            "This archive has data files but no catalog.sqlite, so wait until your synced "
+            "folder has finished syncing and run the command again. To start over instead, "
+            "delete data/ and blobs/ as well."
         )
 
 

@@ -18,6 +18,7 @@ from slarc.ports import (
     DirectoryState,
     Downloader,
     DownloadJob,
+    DownloadKey,
     DownloadResult,
     FileDeleted,
     NoSession,
@@ -36,7 +37,6 @@ DOWNLOAD_API = "download"
 FILES_INFO_API = "files.info"
 DIRECTORY_LIST_APIS: dict[Kind, str] = {"user": "users.list", "emoji": "emoji.list"}
 
-type DownloadKey = tuple[str, str]
 type SettledStatus = Literal["failed", "forbidden", "too_large", "deleted", "gave_up"]
 
 
