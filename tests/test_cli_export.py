@@ -44,7 +44,10 @@ def test_cli_export_writes_default_directory(archive: Path, tmp_path: Path) -> N
     result = invoke(tmp_path, "export", "#all-naleid", "--root", str(archive))
     assert result.exit_code == 0, result.output
     out = tmp_path / "work" / "slarc-export-all-naleid"
-    assert result.output.strip() == f"Exported to {out / 'index.html'}"
+    assert result.output.splitlines() == [
+        "Exported 1 workspace, 1 conversation, 2 threads, 14 messages, 4 files and 6 reactions to",
+        str(out / "index.html"),
+    ]
     assert (out / "index.html").is_file()
     assert "Hello!" in (out / "C0CA5396G03.html").read_text(encoding="utf-8")
     copied = out / "assets" / f"{SCREENSHOT}.png"
@@ -135,7 +138,7 @@ def test_cli_export_open_opens_a_single_file(archive: Path, tmp_path: Path) -> N
     )
 
     assert result.exit_code == 0, result.output
-    assert result.output.strip() == f"Exported to {target}"
+    assert result.output.splitlines()[-1] == str(target)
     assert opened == [target.as_uri()]
 
 

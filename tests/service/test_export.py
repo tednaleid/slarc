@@ -15,7 +15,7 @@ from slarc.domain.envelope import Envelope, Kind, Meta
 from slarc.domain.links import parse_selector
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
 from slarc.ports import Commit, SlarcError
-from slarc.service.export import export
+from slarc.service.export import Exported, export
 from tests.fakes import FakeArchiveLock, InMemoryBlobStore, InMemoryExportWriter
 from tests.recorded_fixtures import RECORDED_TEAM, recorded_blobs, recorded_lake
 
@@ -44,6 +44,9 @@ TED = "U0CA538UEN7"
 JIM = "U0CA61XJF2R"
 ITS_TRUE = "985b5d5aa6b5f64d2822b031a1f94f15ee2f46b5bd46282061e4dd2f0cc722da"
 SYNTHETIC = "1792500000.000100"
+ALL_NALEID_MESSAGES = 14
+ALL_NALEID_FILES = 4
+ALL_NALEID_REACTIONS = 6
 LATER = "2026-10-20T00:00:00Z"
 LATER_RUN = "r_20261020T000000Z"
 EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+\.[\w.-]+")
@@ -87,12 +90,37 @@ def run_export(
     include_deleted: bool = False,
     tz: str | None = None,
 ) -> tuple[Path, InMemoryExportWriter]:
+    exported, writer = counted_export(
+        archive,
+        store,
+        blobs,
+        *selectors,
+        out=out,
+        single_file=single_file,
+        include_deleted=include_deleted,
+        tz=tz,
+    )
+    return exported.path, writer
+
+
+def counted_export(
+    archive: Path,
+    store: DuckLakeArchiveStore,
+    blobs: InMemoryBlobStore,
+    *selectors: str,
+    out: Path | None = OUT,
+    single_file: bool = False,
+    include_deleted: bool = False,
+    tz: str | None = None,
+) -> tuple[Exported, InMemoryExportWriter]:
     writer = InMemoryExportWriter()
     parsed = [parse_selector(text) for text in selectors]
     ext_dir = extension_directory(os.environ, Path.home())
     with DuckDbQueryIndex(archive, ext_dir, FakeArchiveLock()) as index:
-        written = export(parsed, out, single_file, include_deleted, tz, index, blobs, store, writer)
-    return written, writer
+        exported = export(
+            parsed, out, single_file, include_deleted, tz, index, blobs, store, writer
+        )
+    return exported, writer
 
 
 def append_line(
@@ -170,6 +198,41 @@ def test_export_conversation_writes_index_and_page(archive, store, blobs) -> Non
     assert "reply from Jim" in page
     assert (OUT / "viewer.css") in writer.files
     assert (OUT / "viewer.js") in writer.files
+
+
+def test_export_counts_what_it_wrote(archive, store, blobs) -> None:
+    exported, _ = counted_export(archive, store, blobs, "#all-naleid")
+
+    assert exported == Exported(
+        path=OUT,
+        workspaces=1,
+        conversations=1,
+        threads=len(THREADS[ALL_NALEID]),
+        messages=ALL_NALEID_MESSAGES,
+        files=ALL_NALEID_FILES,
+        reactions=ALL_NALEID_REACTIONS,
+    )
+
+
+def test_export_counts_a_thread_on_its_own_page(archive, store, blobs) -> None:
+    exported, _ = counted_export(archive, store, blobs, THREAD_LINK)
+
+    assert (exported.conversations, exported.threads, exported.messages) == (0, 1, 4)
+
+
+def test_export_counts_a_message_on_two_pages_once(archive, store, blobs) -> None:
+    alone, _ = counted_export(archive, store, blobs, "#all-naleid")
+    both, _ = counted_export(archive, store, blobs, "#all-naleid", THREAD_LINK)
+
+    assert both == alone
+
+
+def test_export_counts_each_workspace_page(archive, store, blobs) -> None:
+    exported, _ = counted_export(archive, store, blobs, "naleidworkspace")
+
+    assert exported.workspaces == 1
+    assert exported.conversations >= 3
+    assert exported.threads >= len(THREADS[ALL_NALEID]) + len(THREADS[FIXTURES])
 
 
 def test_export_thread_link_writes_only_thread(archive, store, blobs) -> None:

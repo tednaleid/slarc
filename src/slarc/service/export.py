@@ -2,6 +2,7 @@
 # ABOUTME: Writes index.html, one page each and assets/<sha256>.<ext>, or one file with data URIs.
 import base64
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, tzinfo
 from functools import cache
@@ -210,16 +211,35 @@ class Entry:
 
 @dataclass(frozen=True)
 class Page:
+    """A conversation's page, or with thread_ts a thread's; rows are its archived messages."""
+
     filename: str
     name: str
     thread_ts: str | None
     title: str
     count: int
     entries: list[Entry]
+    team: str
+    channel: str
+    rows: list[dict]
 
     @property
     def section_id(self) -> str:
         return "page-" + self.filename.removesuffix(".html")
+
+
+@dataclass(frozen=True)
+class Exported:
+    """Where an export went and what it holds. A message on more than one page counts once,
+    and so do its thread, files and reactions."""
+
+    path: Path
+    workspaces: int
+    conversations: int
+    threads: int
+    messages: int
+    files: int
+    reactions: int
 
 
 def export(
@@ -232,8 +252,9 @@ def export(
     blobs: BlobStore,
     archive: ArchiveStore,
     writer: ExportWriter,
-) -> Path:
-    """Writes what selectors name and returns where: the directory, or the file with single_file.
+) -> Exported:
+    """Writes what selectors name and returns where, the directory or the file with single_file,
+    with what it holds.
 
     A workspace selector names every tracked conversation of the workspace, and every tracked
     thread or message whose conversation is not tracked itself, that has archived messages.
@@ -280,7 +301,7 @@ def export(
             title=title, pages=list(pages.values()), nav=len(pages) > 1, **common
         )
         writer.write(target, html.encode())
-        return target
+        return _exported(target, pages.values())
     target = out or Path(default)
     index_html = (
         _templates()
@@ -295,7 +316,41 @@ def export(
     writer.write(target / "viewer.js", js.encode())
     for name, sha256 in sorted(used.items()):
         writer.write(target / "assets" / name, blobs.read(sha256))
-    return target
+    return _exported(target, pages.values())
+
+
+def _exported(path: Path, pages: Iterable[Page]) -> Exported:
+    pages = list(pages)
+    messages: dict[tuple[str, str, str], dict] = {}
+    threads: set[tuple[str, str, str]] = set()
+    for page in pages:
+        if page.thread_ts is not None:
+            threads.add((page.team, page.channel, page.thread_ts))
+        for row in page.rows:
+            messages[(page.team, page.channel, row["ts"])] = row["object"]
+            parent = row["thread_ts"]
+            if parent is not None and parent != row["ts"]:
+                threads.add((page.team, page.channel, parent))
+    files = {
+        (team, file["id"])
+        for (team, _, _), message in messages.items()
+        for file in message.get("files") or []
+        if file.get("id")
+    }
+    reactions = sum(
+        reaction.get("count") or 0
+        for message in messages.values()
+        for reaction in message.get("reactions") or []
+    )
+    return Exported(
+        path=path,
+        workspaces=len({page.team for page in pages}),
+        conversations=len({(p.team, p.channel) for p in pages if p.thread_ts is None}),
+        threads=len(threads),
+        messages=len(messages),
+        files=len(files),
+        reactions=reactions,
+    )
 
 
 @cache
@@ -406,6 +461,9 @@ def _page(
         title=title,
         count=len(rows),
         entries=_entries(messages),
+        team=team,
+        channel=channel,
+        rows=rows,
     )
 
 

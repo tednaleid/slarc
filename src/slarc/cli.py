@@ -29,7 +29,7 @@ from slarc.config import (
 from slarc.domain.links import WorkspaceSel, parse_selector
 from slarc.ports import ItemProgress, NoArchive, NoSession, SlarcError
 lazy from slarc.service.auth import AuthStatus, auth_status, store_pasted
-lazy from slarc.service.export import export
+lazy from slarc.service.export import Exported, export
 lazy from slarc.service.listing import (
     ArchiveListing,
     ListedDownload,
@@ -767,7 +767,7 @@ def export_command(
             bootstrap.archive_stores(archive_root, services.take_ownership) as (archive, blobs),
             bootstrap.shared_index(archive_root, archive) as index,
         ):
-            written = export(
+            exported = export(
                 parsed,
                 out_path,
                 single_file,
@@ -780,8 +780,9 @@ def export_command(
             )
     except SlarcError as error:
         _fail(str(error))
-    page = (written if single_file else written / "index.html").absolute()
-    out.print(Text.assemble("Exported to ", (str(page), Style(link=page.as_uri()))))
+    page = (exported.path if single_file else exported.path / "index.html").absolute()
+    out.print(f"Exported {_exported_parts(exported)} to", markup=False)
+    out.print(Text(str(page), style=Style(link=page.as_uri())))
     if open_page and not services.open_page(page.as_uri()):
         err.print("No browser could be opened; open the page above instead.", markup=False)
 
@@ -800,6 +801,28 @@ def _deleted_parts(removal: Removal, line: str = "line") -> str:
         )
         if count
     ]
+    return _and_joined(parts)
+
+
+def _exported_parts(exported: Exported) -> str:
+    """What an export holds, such as "1 workspace, 2 threads and 14 messages"."""
+    return _and_joined(
+        [
+            _plural(count, noun)
+            for count, noun in (
+                (exported.workspaces, "workspace"),
+                (exported.conversations, "conversation"),
+                (exported.threads, "thread"),
+                (exported.messages, "message"),
+                (exported.files, "file"),
+                (exported.reactions, "reaction"),
+            )
+            if count
+        ]
+    )
+
+
+def _and_joined(parts: list[str]) -> str:
     return " and ".join([", ".join(parts[:-1]), parts[-1]] if len(parts) > 1 else parts)
 
 
