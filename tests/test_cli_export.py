@@ -1,9 +1,12 @@
 # ABOUTME: Tests for the `slarc export` command over a lake of the recorded archive with its blobs.
 # ABOUTME: The command writes real files under a temp directory and never connects to Slack.
+import dataclasses
+import io
 import shutil
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 from typer.testing import CliRunner
 
 from slarc import bootstrap, cli
@@ -26,8 +29,14 @@ def archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
-def invoke(home: Path, *args: str):
-    with bootstrap.override(services(home, [])):
+def invoke(home: Path, *args: str, opened: list[str] | None = None):
+    def open_page(uri: str) -> bool:
+        if opened is None:
+            pytest.fail("export opened a browser without --open")
+        opened.append(uri)
+        return True
+
+    with bootstrap.override(dataclasses.replace(services(home, []), open_page=open_page)):
         return runner.invoke(app, list(args))
 
 
@@ -35,7 +44,7 @@ def test_cli_export_writes_default_directory(archive: Path, tmp_path: Path) -> N
     result = invoke(tmp_path, "export", "#all-naleid", "--root", str(archive))
     assert result.exit_code == 0, result.output
     out = tmp_path / "work" / "slarc-export-all-naleid"
-    assert result.output.strip() == f"Exported to {out}."
+    assert result.output.strip() == f"Exported to {out / 'index.html'}"
     assert (out / "index.html").is_file()
     assert "Hello!" in (out / "C0CA5396G03.html").read_text(encoding="utf-8")
     copied = out / "assets" / f"{SCREENSHOT}.png"
@@ -69,6 +78,65 @@ def test_cli_export_single_file_with_tz(archive: Path, tmp_path: Path) -> None:
     assert 'data-tz="America/Chicago"' in page
     assert "data:image/png;base64," in page
     assert list((tmp_path / "work").iterdir()) == []
+
+
+def test_cli_export_links_the_page_to_open_in_a_terminal(
+    archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    terminal = io.StringIO()
+    monkeypatch.setattr(cli, "out", Console(file=terminal, force_terminal=True, width=200))
+
+    result = invoke(tmp_path, "export", "#all-naleid", "--root", str(archive))
+
+    assert result.exit_code == 0, result.output
+    index = tmp_path / "work" / "slarc-export-all-naleid" / "index.html"
+    assert "\x1b]8;id=" in terminal.getvalue()
+    assert f";{index.as_uri()}\x1b\\{index}\x1b]8;;\x1b\\" in terminal.getvalue()
+
+
+def test_cli_export_open_opens_the_index_in_the_browser(archive: Path, tmp_path: Path) -> None:
+    opened: list[str] = []
+
+    result = invoke(
+        tmp_path, "export", "#all-naleid", "--open", "--root", str(archive), opened=opened
+    )
+
+    assert result.exit_code == 0, result.output
+    index = tmp_path / "work" / "slarc-export-all-naleid" / "index.html"
+    assert opened == [index.as_uri()]
+
+
+def test_cli_export_open_without_a_browser_says_to_use_the_link(
+    archive: Path, tmp_path: Path
+) -> None:
+    services_ = dataclasses.replace(services(tmp_path, []), open_page=lambda _: False)
+    with bootstrap.override(services_):
+        result = runner.invoke(app, ["export", "#all-naleid", "--open", "--root", str(archive)])
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr.strip() == "No browser could be opened; open the page above instead."
+
+
+def test_cli_export_open_opens_a_single_file(archive: Path, tmp_path: Path) -> None:
+    opened: list[str] = []
+    target = tmp_path / "one.html"
+
+    result = invoke(
+        tmp_path,
+        "export",
+        "#all-naleid",
+        "--single-file",
+        "--out",
+        str(target),
+        "--open",
+        "--root",
+        str(archive),
+        opened=opened,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == f"Exported to {target}"
+    assert opened == [target.as_uri()]
 
 
 @pytest.mark.parametrize(

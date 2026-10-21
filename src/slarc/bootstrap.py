@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
+lazy import webbrowser
 
 lazy import duckdb
 lazy import httpx
@@ -51,6 +52,11 @@ DOWNLOAD_TIMEOUT_S = 60.0
 type DownloaderFactory = Callable[
     [BlobStore, dict[str, Session]], AbstractContextManager[Downloader]
 ]
+
+
+def open_in_browser(uri: str) -> bool:
+    """Opens the URI in the default browser; returns whether a browser took it."""
+    return webbrowser.open(uri)
 
 
 def _no_wait_shown(seconds: int) -> None:
@@ -210,6 +216,7 @@ class Services:
     downloader: DownloaderFactory = http_downloader
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     home: Path = field(default_factory=Path.home)
+    open_page: Callable[[str], bool] = open_in_browser
     run_suffix: str = ""  # ends the run id, telling apart commands started in the same second
     take_ownership: bool = False  # the global --take-ownership option
 

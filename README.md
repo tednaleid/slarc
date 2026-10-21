@@ -22,7 +22,7 @@ slarc list                                                                    # 
 slarc search "deploy" --in '#general'                                         # archived messages, newest first, with their Slack links
 slarc sql "SELECT channel_id, count(*) FROM message GROUP BY 1"               # DuckDB over the archive's views
 slarc export https://yourworkspace.slack.com/archives/C0123456789 --out ./share  # static HTML
-slarc export acme                                                             # static HTML of everything tracked in workspace acme
+slarc export acme --open                                                      # static HTML of everything tracked in workspace acme, opened in the browser
 slarc rm https://yourworkspace.slack.com/archives/C0123456789                 # stop tracking it and delete what only it kept (asks first)
 slarc --take-ownership list                                                   # take the archive over from the machine that last used it, once it has synced
 ```

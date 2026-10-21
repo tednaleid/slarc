@@ -746,6 +746,9 @@ def export_command(
             help="Show times in this zone, such as America/Chicago, instead of the viewer's.",
         ),
     ] = None,
+    open_page: Annotated[
+        bool, typer.Option("--open", help="Open the export in the default browser.")
+    ] = False,
     root: Annotated[
         Path | None, typer.Option(metavar="DIR", help="The archive directory to use.")
     ] = None,
@@ -777,7 +780,10 @@ def export_command(
             )
     except SlarcError as error:
         _fail(str(error))
-    out.print(f"Exported to {written.absolute()}.", markup=False)
+    page = (written if single_file else written / "index.html").absolute()
+    out.print(Text.assemble("Exported to ", (str(page), Style(link=page.as_uri()))))
+    if open_page and not services.open_page(page.as_uri()):
+        err.print("No browser could be opened; open the page above instead.", markup=False)
 
 
 def _deleted_parts(removal: Removal, line: str = "line") -> str:
