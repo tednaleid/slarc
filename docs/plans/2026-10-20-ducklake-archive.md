@@ -568,7 +568,7 @@ Measured at `49e9db5` on an Apple M1 Ultra (64 GB), APFS in /private/tmp, Python
 
 ### Query timings
 
-Spike 3's generator, run unchanged except that it writes into a scratch directory and leaves out the lines of the 20 uncommitted runs, as spike 3's load did: 984,576 message lines in 300 channels, 295,042 directory lines and 1,980 run lines (1.6 GB of JSONL). `load_jsonl` built the lake in 40 s, with 15.9 GB peak memory, since it commits every line in one batch. One `maintain` pass took 0.5 s and left 390 MB of Parquet in 15 data files. The queries ran through `DuckDbQueryIndex` with DuckDB at 4 threads, as the median of 5 rounds. A second full run agreed within 0.015 s on every query.
+Spike 3's generator, with three changes: it writes into a scratch directory, it defines its own `encode_line` and `month_of`, which are no longer in `slarc.domain.envelope`, and it leaves out the lines of the 20 uncommitted runs, as spike 3's load did. It produced 984,576 message lines in 300 channels, 295,042 directory lines and 1,980 run lines (1.6 GB of JSONL). `load_jsonl` built the lake in 40 s, with 15.9 GB peak memory, since it commits every line in one batch. One `maintain` pass took 0.5 s and left 390 MB of Parquet in 15 data files. The queries ran through `DuckDbQueryIndex` with DuckDB at 4 threads, as the median of 5 rounds. A second full run agreed within 0.015 s on every query.
 
 | Query | Rows | Median | Budget | Spike 3, flat 16 MB files |
 |---|---|---|---|---|
@@ -582,7 +582,7 @@ All four are within the budget. messages is 3% slower than the JSONL index's 0.6
 
 ### Fixed cost of one command
 
-Wall time of one process on the recorded fixture (5 conversations, 35 messages), median of 5 after 2 warm-up runs (`hyperfine -N`). The lake column runs this tree with the fixture lake built by `load_jsonl`. The JSONL column runs `e818e93`, the last commit before the lake, in a worktree with the JSONL fixture.
+Wall time of one process on the recorded fixture, median of 5 after 2 warm-up runs (`hyperfine -N`). The lake column runs this tree with the fixture lake built by `load_jsonl`. The JSONL column runs `e818e93`, the last commit before the lake, in a worktree with the JSONL fixture.
 
 | Command | Lake | JSONL (`e818e93`) |
 |---|---|---|
@@ -590,13 +590,13 @@ Wall time of one process on the recorded fixture (5 conversations, 35 messages),
 | `slarc search seed` | 460 ms | 287 ms |
 | `slarc list` | 605 ms | 301 ms |
 
-On a small archive the lake adds about 170 ms to search and 300 ms to list. A profile of `list` shows three lake connections taking 150 ms together, extension loads included. The owner check, which opens one of them, takes 90 ms, and the per-conversation `messages` queries take 70 ms. Python startup and imports are the same in both, at about 200 ms.
+On a small archive the lake adds about 170 ms to search and 300 ms to list. A profile of `list` shows three lake connections taking 150 ms together, extension loads included. The owner check, which opens one of them, takes 90 ms, and the per-conversation `messages` queries take 70 ms. Python startup and imports are the same in both, at about 200 ms. This overhead is recorded here, has no budget, and is not fixed in this task.
 
 ### Acceptance
 
-`just acceptance` passed on its first run, with no fixes needed, in 57 s against naleidworkspace:
+`just acceptance` passed on its first run, with no fixes needed, in 56.5 s of wall time against naleidworkspace. The figures below are from the script's output:
 
-- (a) pulling the same channels twice adds no message or directory rows: 35 message and 62 directory rows after both pulls; first pull 14.9 s, second 8.6 s.
-- (d) the export shows the seeded messages, the giphy GIF from a local asset, the link preview, both snippets and the deleted file placeholder: 0.7 s.
+- (a) pulling the same channels twice adds no message or directory rows: 35 message and 62 directory rows both before and after the second pull; first pull 14.9 s, second 8.6 s.
+- (d) the export shows the seeded edited text 'seed: edited message, edited text', the giphy GIF from a local asset, the link preview, both snippets and the deleted file placeholder: 0.7 s.
 - (b) a new reply under an older parent lands as exactly one new line: found by the first bare pull, with `threads_read.search=5`.
 - (c) an edit lands as exactly one new line by `pull --full`: the bare pull added none, and `pull --full` added the one row with the edited text.
