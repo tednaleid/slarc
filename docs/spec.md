@@ -290,7 +290,7 @@ The current state of a message is its newest version for `(team, channel, ts)`, 
 
 ## Row schema
 
-`object` is verbatim Slack and only its source method (`api`) is recorded. The Python model (msgspec structs) is the source of truth; a generated JSON Schema and a `validate` check are planned.
+`object` is verbatim Slack and only its source method (`api`) is recorded. The Python model (msgspec structs) is the source of truth.
 
 **Conventions**
 
@@ -404,7 +404,7 @@ slarc pulls conversations, threads and single messages with date ranges, search-
 - an edit to an old message lands as exactly one new version row under `--full`;
 - the export of the test channel matches the Slack client in substance.
 
-**Planned:** `serve` with HTMX; full-text search with filters; observed-version history in the viewer; `import` from Slack export ZIPs and slackdump SQLite; Slack export ZIP output so slarchive and slack-export-viewer can read archives; a generated JSON Schema and a `validate` check; a probe that warns if Slack starts limiting session tokens; Slack Connect `source_team` resolution; obfuscated fixture recording from real workspaces. Known issues and later ideas are in `docs/backlog.md`.
+**Planned:** `serve` with HTMX; full-text search with filters; observed-version history in the viewer; `import` from Slack export ZIPs and slackdump SQLite; a probe that warns if Slack starts limiting session tokens; Slack Connect `source_team` resolution; obfuscated fixture recording from real workspaces. Known issues and later ideas are in `docs/backlog.md`.
 
 ## Prior art
 
