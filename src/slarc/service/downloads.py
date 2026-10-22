@@ -178,10 +178,12 @@ def drain_downloads(
 ) -> DrainedDownloads:
     """Downloads this run's pending targets and the teams' earlier queue, committing each result.
 
-    The reporter hears how many jobs are done, failed and skipped before the first result and
-    after each one. A result counts as failed or skipped by the status it settles into, so a
-    file whose files.info read fails after its download counts as failed. A result whose
-    target's download state an rm deleted meanwhile is dropped and counts as neither.
+    The reporter hears how many downloads are done, failed and skipped before the first result
+    and after each one; a target this run skipped without a job, such as a file too large to
+    fetch, counts as done and skipped from the start. A result counts as failed or skipped by
+    the status it settles into, so a file whose files.info read fails after its download
+    counts as failed. A result whose target's download state an rm deleted meanwhile is
+    dropped and counts as neither.
     Requeued downloads are committed before any job starts, so each later commit carries
     only its own result's state.
     """
@@ -190,9 +192,12 @@ def drain_downloads(
     jobs = [_job(state, max_bytes) for state in uow.run.downloads if state.status == "pending"]
     jobs = _with_credentials(jobs, connector, reporter)
     recorder = _Recorder(uow, connector, reporter)
-    if jobs:
-        done = failed = skipped = 0
-        reporter.downloads(done, failed, skipped, len(jobs))
+    settled = sum(1 for state in uow.run.downloads if state.status in SKIPPED_STATUSES)
+    if jobs or settled:
+        done = skipped = settled
+        failed = 0
+        total = settled + len(jobs)
+        reporter.downloads(done, failed, skipped, total)
         try:
             for result in downloader.fetch(jobs, parallelism):
                 status = recorder.record(result)
@@ -201,7 +206,7 @@ def drain_downloads(
                     failed += 1
                 elif status in SKIPPED_STATUSES:
                     skipped += 1
-                reporter.downloads(done, failed, skipped, len(jobs))
+                reporter.downloads(done, failed, skipped, total)
         finally:
             recorder.finish()
     states = uow.run.downloads

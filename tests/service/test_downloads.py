@@ -825,6 +825,7 @@ def test_report_counts_too_large_as_skipped_and_images_saved(h: Harness):
 
     assert (report.files_saved, report.images_saved) == (0, 1)
     assert (report.downloads_pending, report.downloads_skipped) == (0, 1)
+    assert h.reporter.download_updates[-1] == (2, 0, 1, 2)
 
 
 def test_image_types_tells_apart_custom_emoji_and_avatars():
