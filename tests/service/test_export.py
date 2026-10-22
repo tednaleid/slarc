@@ -613,7 +613,7 @@ def test_file_placeholders_and_unsafe_chrome(archive, store, blobs) -> None:
     message = article(writer.text(OUT / f"{FIXTURES}.html"), FIXTURES, SYNTHETIC)
     assert "This file is hidden by the workspace's message history limit." in message
     assert (
-        "big.mov (1000.0 MB) was not downloaded because it is larger than the download limit. "
+        "big.mov (953.7 MB) was not downloaded because it is larger than the download limit. "
         '<a href="https://naleidworkspace.slack.com/files/U0/FBIG/big.mov">Open in Slack</a>'
     ) in message
     assert 'External file: <a href="https://docs.example.com/d">Design doc</a>' in message

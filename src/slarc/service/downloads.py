@@ -53,6 +53,18 @@ class DrainedDownloads:
     skipped: int
 
 
+def size_text(size: int) -> str:
+    """size in bytes, KB, MB or GB of 1024, the units of max_file_size_mb."""
+    if size < 1024:
+        return f"{size} bytes"
+    amount = size / 1024
+    for unit in ("KB", "MB"):
+        if amount < 1024:
+            return f"{amount:.1f} {unit}"
+        amount /= 1024
+    return f"{amount:.1f} GB"
+
+
 def image_urls(message: dict) -> list[str]:
     """The images a message shows: layout block images, link preview images and app icons."""
     urls: list[object] = []

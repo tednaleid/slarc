@@ -42,6 +42,7 @@ from slarc.ports import (
     QueryIndex,
     SlarcError,
 )
+from slarc.service.downloads import size_text
 from slarc.service.listing import workspace_domains
 from slarc.service.selectors import archived_conversation, only_workspace
 
@@ -823,7 +824,7 @@ class _Workspace:
             return self.snippet(file_id, obj, name)
         src = self.assets.file_src(file_id)
         size = obj.get("size")
-        shown_size = _size(size) if isinstance(size, int) else ""
+        shown_size = size_text(size) if isinstance(size, int) else ""
         if src is None:
             self.missing_files.add(file_id)
             state = self.downloads.get((self.team, file_id))
@@ -907,14 +908,6 @@ def _seconds(ts: str) -> int:
 
 def _parse_iso(value: str) -> int:
     return int(datetime.strptime(value, ISO_SECONDS).replace(tzinfo=UTC).timestamp())
-
-
-def _size(size: int) -> str:
-    if size < 1000:
-        return f"{size} bytes"
-    if size < 1_000_000:
-        return f"{size / 1000:.1f} KB"
-    return f"{size / 1_000_000:.1f} MB"
 
 
 def _text(value: object) -> str:

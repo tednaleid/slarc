@@ -24,6 +24,7 @@ from slarc.service.downloads import (
     image_urls,
     outstanding_downloads,
     queue_downloads,
+    size_text,
 )
 from slarc.service.pull import PullOptions
 from slarc.unit_of_work import UnitOfWork
@@ -847,3 +848,17 @@ def test_image_types_tells_apart_custom_emoji_and_avatars():
         "https://e/party.png": "emoji",
         "https://a/t.png": "avatar",
     }
+
+
+@pytest.mark.parametrize(
+    ("size", "text"),
+    [
+        (0, "0 bytes"),
+        (1023, "1023 bytes"),
+        (2048, "2.0 KB"),
+        (148_866_856, "142.0 MB"),
+        (3 * 1024**3, "3.0 GB"),
+    ],
+)
+def test_size_text_counts_in_the_units_of_the_size_limit(size: int, text: str):
+    assert size_text(size) == text
