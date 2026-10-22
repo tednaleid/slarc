@@ -38,6 +38,10 @@ install:
     uv tool install --editable --force .
     uv run python scripts/install-extensions.py
 
+# Remove the uv tool `install` put on PATH, so Homebrew's slarc runs; the shared DuckDB extensions stay
+uninstall:
+    uv tool uninstall slarc
+
 # Run slarc from the working tree with arbitrary arguments
 run *ARGS:
     uv run slarc "$@"
