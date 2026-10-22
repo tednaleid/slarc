@@ -352,7 +352,9 @@ def test_web_api_sends_token_cookie_and_honest_user_agent():
     client = web_api(make_session()).client
     assert client.token == "xoxc-test-secret"
     assert client.headers["Cookie"] == "d=xoxd-test-secret"
-    assert client.headers["User-Agent"] == f"slarc/{__version__}"
+    assert (
+        client.headers["User-Agent"] == f"slarc/{__version__} (+https://github.com/tednaleid/slarc)"
+    )
     handlers = {type(handler) for handler in client.retry_handlers}
     assert handlers == {RetryAfterHandler, ConnectionErrorRetryHandler}
 

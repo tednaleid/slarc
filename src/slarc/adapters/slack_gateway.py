@@ -25,7 +25,8 @@ from slarc.ports import (
 lazy from slarc.adapters.retry_after import RetryAfterHandler
 
 READ_METHODS = frozenset(METHOD_TIERS)
-USER_AGENT = f"slarc/{__version__}"
+# A contact URL, as sites such as Wikimedia ask of automated clients.
+USER_AGENT = f"slarc/{__version__} (+https://github.com/tednaleid/slarc)"
 PAGE_LIMIT = 200
 # The largest pages Slack accepts: 999 for history and replies, 1000 for users.list.
 MESSAGE_PAGE_LIMIT = 999

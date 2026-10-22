@@ -122,7 +122,7 @@ slarc authenticates as the user with the two credentials the Slack client uses: 
 **What the Slack adapter must not do**
 
 - No `client.*` or Edge endpoints. Documented methods only, which keeps the fake gateway honest and the raw JSON shapes stable.
-- No TLS fingerprinting or user-agent spoofing. Send an honest `User-Agent` such as `slarc/0.1`.
+- No TLS fingerprinting or user-agent spoofing. Send an honest `User-Agent` with a contact URL, such as `slarc/0.1.0 (+https://github.com/tednaleid/slarc)`.
 - No mutating methods.
 
 ## Slack data-model facts
