@@ -352,7 +352,7 @@ One set of Jinja2 partials drives every output: `export` (static files plus a sm
 | Emoji | Standard: unicode with skin tone applied. Custom: local blob (animated GIF in HTML). Unknown: `:name:` text |
 | Reactions | Grouped by base name with skin-tone variants side by side and a combined count; tooltip lists names |
 | Edits | "(edited)" marker with time |
-| Files | Images and thumbnails from blobs; snippets syntax-highlighted in full with filename; video and audio players; download links; placeholders for `tombstone` ("This file was deleted."), `hidden_by_limit`, `too_large` and external files |
+| Files | Images and thumbnails from blobs; snippets syntax-highlighted in full with filename; video and audio players; download links; placeholders for `tombstone` ("This file was deleted."), `hidden_by_limit`, `too_large` and external files; a file not downloaded shows its size and links to its Slack page |
 | Previews and app posts | Attachments: title, text, image or thumb, service icon and name, color bar. Giphy and other app posts through their layout blocks, with the app name from `bot_profile` |
 | Threads | Reply count, participant avatars and last reply time under the parent, linking to a side panel with the parent and its replies (CSS only, opened by `:target`, full screen on narrow screens, inline when printed); a thread or message link's page shows the replies inline; broadcast replies in both places |
 | System messages | Joins, leaves, topic and name changes shown muted and collapsible |

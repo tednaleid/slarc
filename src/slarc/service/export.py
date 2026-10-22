@@ -818,17 +818,22 @@ class _Workspace:
         if mode == "snippet":
             return self.snippet(file_id, obj, name)
         src = self.assets.file_src(file_id)
+        size = obj.get("size")
+        shown_size = _size(size) if isinstance(size, int) else ""
         if src is None:
             state = self.downloads.get((self.team, file_id))
+            link = obj.get("permalink")
             return FileView(
-                "too_large" if state and state.status == "too_large" else "missing", name
+                "too_large" if state and state.status == "too_large" else "missing",
+                name,
+                size=shown_size,
+                link=link if is_web_url(link) else None,
             )
         kind: FileKind = "download"
         for prefix in ("image", "video", "audio"):
             if mimetype.startswith(prefix + "/"):
                 kind = prefix
-        size = obj.get("size")
-        return FileView(kind, name, src, mimetype, _size(size) if isinstance(size, int) else "")
+        return FileView(kind, name, src, mimetype, shown_size)
 
     def snippet(self, file_id: str, obj: dict, name: str) -> FileView:
         """A snippet's full text from its blob, highlighted, or its preview without a blob."""

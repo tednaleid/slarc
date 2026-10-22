@@ -22,10 +22,10 @@
 {% elif f.kind == "hidden_by_limit" %}
 <div class="placeholder">This file is hidden by the workspace's message history limit.</div>
 {% elif f.kind == "too_large" %}
-<div class="placeholder">{{ f.name }} was not downloaded because it is larger than the download limit.</div>
+<div class="placeholder">{{ f.name }}{% if f.size %} ({{ f.size }}){% endif %} was not downloaded because it is larger than the download limit.{% if f.link %} <a href="{{ f.link }}">Open in Slack</a>{% endif %}</div>
 {% elif f.kind == "external" %}
 <div class="placeholder">External file: {% if f.link %}<a href="{{ f.link }}">{{ f.name }}</a>{% else %}{{ f.name }}{% endif %}</div>
 {% else %}
-<div class="placeholder">{{ f.name }} was not downloaded.</div>
+<div class="placeholder">{{ f.name }}{% if f.size %} ({{ f.size }}){% endif %} was not downloaded.{% if f.link %} <a href="{{ f.link }}">Open in Slack</a>{% endif %}</div>
 {% endif %}
 </div>

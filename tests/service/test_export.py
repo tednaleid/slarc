@@ -569,6 +569,7 @@ def test_file_placeholders_and_unsafe_chrome(archive, store, blobs) -> None:
                     "title": "big.mov",
                     "mimetype": "video/quicktime",
                     "size": 999_999_999,
+                    "permalink": "https://naleidworkspace.slack.com/files/U0/FBIG/big.mov",
                 },
                 {
                     "id": "FEXT",
@@ -582,6 +583,14 @@ def test_file_placeholders_and_unsafe_chrome(archive, store, blobs) -> None:
                     "mode": "hosted",
                     "title": "<script>alert(1)</script>",
                     "mimetype": "text/plain",
+                    "permalink": "javascript:alert(2)",
+                },
+                {
+                    "id": "FGONE",
+                    "mode": "hosted",
+                    "title": "notes.pdf",
+                    "size": 2048,
+                    "permalink": "https://naleidworkspace.slack.com/files/U0/FGONE/notes.pdf",
                 },
             ],
             "attachments": [
@@ -601,9 +610,16 @@ def test_file_placeholders_and_unsafe_chrome(archive, store, blobs) -> None:
     _, writer = run_export(archive, store, blobs, "#slarc-fixtures")
     message = article(writer.text(OUT / f"{FIXTURES}.html"), FIXTURES, SYNTHETIC)
     assert "This file is hidden by the workspace's message history limit." in message
-    assert "big.mov was not downloaded because it is larger than the download limit." in message
+    assert (
+        "big.mov (1000.0 MB) was not downloaded because it is larger than the download limit. "
+        '<a href="https://naleidworkspace.slack.com/files/U0/FBIG/big.mov">Open in Slack</a>'
+    ) in message
     assert 'External file: <a href="https://docs.example.com/d">Design doc</a>' in message
     assert "&lt;script&gt;alert(1)&lt;/script&gt; was not downloaded." in message
+    assert (
+        "notes.pdf (2.0 KB) was not downloaded. "
+        '<a href="https://naleidworkspace.slack.com/files/U0/FGONE/notes.pdf">Open in Slack</a>'
+    ) in message
     assert "&lt;script&gt;t&lt;/script&gt;" in message
     assert "&lt;b&gt;svc&lt;/b&gt;" in message
     assert "<script>" not in message
