@@ -226,11 +226,11 @@ class RichReporter:
         self._show(label, update.share or 0, total, "  ".join(parts))
 
     def downloads(self, done: int, failed: int, skipped: int, total: int) -> None:
-        parts = [f"{done}/{total}"]
+        parts = [f"{done:,}/{total:,}"]
         if failed:
-            parts.append(f"{failed} failed")
+            parts.append(f"{failed:,} failed")
         if skipped:
-            parts.append(f"{skipped} skipped")
+            parts.append(f"{skipped:,} skipped")
         self._show(DOWNLOADS_ROW, done, total, ", ".join(parts))
 
     def archive(self, step: str, *, finished: bool = False) -> None:
@@ -267,7 +267,7 @@ def _check_date(flag: str, value: str | None) -> None:
 
 
 def _plural(count: int, noun: str) -> str:
-    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+    return f"{count:,} {noun}" if count == 1 else f"{count:,} {noun}s"
 
 
 def _summary(report: PullReport, selectors: list[str] | None = None) -> str:
@@ -289,9 +289,9 @@ def _summary(report: PullReport, selectors: list[str] | None = None) -> str:
     ]
     parts = [f"{' and '.join(saved)} saved"] if saved else []
     if report.downloads_pending:
-        parts.append(f"{report.downloads_pending} pending for the next pull")
+        parts.append(f"{report.downloads_pending:,} pending for the next pull")
     if report.downloads_skipped:
-        parts.append(f"{report.downloads_skipped} skipped")
+        parts.append(f"{report.downloads_skipped:,} skipped")
     if parts:
         lines.append(f"Downloads: {', '.join(parts)}.")
     if report.downloads_pending or report.downloads_skipped:
@@ -558,10 +558,10 @@ def _print_listing(listing: ArchiveListing) -> None:
                 row.workspace,
                 row.conversation,
                 row.kind,
-                row.messages,
+                f"{row.messages:,}",
                 _fetched_time(row.last_pull),
-                row.pending,
-                row.skipped,
+                f"{row.pending:,}",
+                f"{row.skipped:,}",
                 row.status,
             ]
             for row in listing.rows
@@ -572,7 +572,7 @@ def _print_listing(listing: ArchiveListing) -> None:
             out.print()
     else:
         out.print(NO_TRACKED_ITEMS, markup=False)
-    out.print(f"Downloads: {listing.pending} pending, {listing.skipped} skipped.", markup=False)
+    out.print(f"Downloads: {listing.pending:,} pending, {listing.skipped:,} skipped.", markup=False)
 
 
 def _print_downloads(downloads: list[ListedDownload]) -> None:

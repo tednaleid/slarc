@@ -345,7 +345,7 @@ def report(**counts: int) -> PullReport:
                 "downloads_skipped": 8,
             },
             [
-                "Pulled 1 item: 608 new messages, 1862 new directory lines (users, emoji, files).",
+                "Pulled 1 item: 608 new messages, 1,862 new directory lines (users, emoji, files).",
                 "Downloads: 85 files and 74 images saved, 7 pending for the next pull, 8 skipped.",
                 "Run slarc list with a link or workspace to see why.",
             ],
@@ -385,6 +385,32 @@ def test_summary_names_messages_directory_lines_and_downloads(
     counts: dict[str, int], expected: list[str]
 ):
     assert _summary(report(**counts)).splitlines() == expected
+
+
+def test_summary_separates_thousands():
+    counts = {
+        "messages_new": 59340,
+        "lines_appended": 72256,
+        "files_saved": 4183,
+        "images_saved": 2712,
+        "downloads_pending": 1084,
+        "downloads_skipped": 1354,
+    }
+
+    assert _summary(report(**counts)).splitlines()[:2] == [
+        "Pulled 1 item: 59,340 new messages, 12,916 new directory lines (users, emoji, files).",
+        "Downloads: 4,183 files and 2,712 images saved, 1,084 pending for the next pull, "
+        "1,354 skipped.",
+    ]
+
+
+def test_reporter_separates_thousands_in_the_downloads_row():
+    buffer = io.StringIO()
+
+    with RichReporter(Console(file=buffer, width=120)) as reporter:
+        reporter.downloads(7331, 1084, 1354, 7331)
+
+    assert buffer.getvalue().rstrip().endswith(" 7,331/7,331, 1,084 failed, 1,354 skipped")
 
 
 def test_summary_of_a_pull_of_links_points_to_the_list_of_them():
