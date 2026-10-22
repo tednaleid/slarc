@@ -1,6 +1,6 @@
 # ABOUTME: Queues downloads of the files and images messages reference, then drains the queue.
 # ABOUTME: Each result commits a directory line with meta.blob or a download state change.
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -169,13 +169,14 @@ def stored_directory(archive: ArchiveStore, team_id: str) -> DirectoryView:
 
 def drain_downloads(
     uow: UnitOfWork,
+    teams: Collection[str],
     downloader: Downloader,
     parallelism: int,
     max_bytes: int,
     connector: SlackConnector,
     reporter: Reporter,
 ) -> DrainedDownloads:
-    """Downloads this run's pending targets and earlier runs' queue, committing each result.
+    """Downloads this run's pending targets and the teams' earlier queue, committing each result.
 
     The reporter hears how many jobs are done, failed and skipped before the first result and
     after each one. A result counts as failed or skipped by the status it settles into, so a
@@ -184,7 +185,7 @@ def drain_downloads(
     Requeued downloads are committed before any job starts, so each later commit carries
     only its own result's state.
     """
-    if _requeue_earlier(uow, max_bytes):
+    if _requeue_earlier(uow, teams, max_bytes):
         uow.commit(downloads_exist=True)
     jobs = [_job(state, max_bytes) for state in uow.run.downloads if state.status == "pending"]
     jobs = _with_credentials(jobs, connector, reporter)
@@ -352,14 +353,14 @@ def _job(state: DownloadState, max_bytes: int) -> DownloadJob:
     return DownloadJob(state.team_id, state.target_kind, state.target, url, max_bytes, slack_auth)
 
 
-def _requeue_earlier(uow: UnitOfWork, max_bytes: int) -> bool:
-    """Queues earlier runs' pending and failed downloads, and too_large files that now fit;
-    returns whether it queued any."""
+def _requeue_earlier(uow: UnitOfWork, teams: Collection[str], max_bytes: int) -> bool:
+    """Queues the teams' pending and failed downloads from earlier runs, and their too_large
+    files that now fit; returns whether it queued any."""
     queued = {(d.team_id, d.target) for d in uow.run.downloads}
     requeued = False
     sizes: dict[str, dict[str, dict]] = {}
     for key, state in outstanding_downloads(uow.archive).items():
-        if key in queued or state.url is None:
+        if key in queued or state.team_id not in teams or state.url is None:
             continue
         retry = state.status in QUEUED_STATUSES
         if state.status == "too_large" and state.target_kind == "file":

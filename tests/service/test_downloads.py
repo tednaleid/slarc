@@ -459,7 +459,7 @@ def test_drain_retries_earlier_runs_queue(h: Harness):
 
     with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
         drained = drain_downloads(
-            uow, h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter
+            uow, [TEAM], h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter
         )
 
     assert drained.pending == 0
@@ -482,7 +482,9 @@ def test_drain_keeps_slack_files_queued_when_their_workspace_cannot_connect(
     h.reporter.warnings.clear()
 
     with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
-        drain_downloads(uow, h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter)
+        drain_downloads(
+            uow, [TEAM], h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter
+        )
 
     assert SNIPPET not in {job.target for job in h.downloader.jobs}
     assert avatar(ME) in {job.target for job in h.downloader.jobs}
@@ -497,11 +499,11 @@ def test_drain_retries_too_large_file_once_it_fits(h: Harness):
     h.downloader.serve(SNIPPET_URL, snippet_bytes())
 
     with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
-        drain_downloads(uow, h.downloader, 4, 100_000, h.connector, h.reporter)
+        drain_downloads(uow, [TEAM], h.downloader, 4, 100_000, h.connector, h.reporter)
     assert h.lines("file")[-1].meta.blob is None
 
     with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
-        drain_downloads(uow, h.downloader, 4, 300_000, h.connector, h.reporter)
+        drain_downloads(uow, [TEAM], h.downloader, 4, 300_000, h.connector, h.reporter)
     assert h.lines("file")[-1].meta.blob == sha256(snippet_bytes())
 
 
@@ -762,7 +764,7 @@ def test_requeued_target_removed_before_the_first_result_commits_is_dropped(
 
     with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
         drained = drain_downloads(
-            uow, h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter
+            uow, [TEAM], h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter
         )
 
     assert (drained.files_saved, drained.images_saved) == (1, 0)
@@ -785,14 +787,18 @@ def test_requeued_state_removed_while_no_job_can_run_stays_removed(
     monkeypatch.setattr(h.connector, "connect", rm_commits_while_connecting)
 
     with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
-        drain_downloads(uow, h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter)
+        drain_downloads(
+            uow, [TEAM], h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter
+        )
 
     assert h.archive.downloads() == {}
 
 
 def test_drain_reports_no_progress_without_jobs(h: Harness):
     with UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__) as uow:
-        drain_downloads(uow, h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter)
+        drain_downloads(
+            uow, [TEAM], h.downloader, 4, PullOptions().max_file_bytes, h.connector, h.reporter
+        )
 
     assert h.reporter.download_updates == []
 

@@ -136,7 +136,13 @@ def pull(
         if options.retry_skipped:
             run.requeue_skipped(items)
         drained = drain_downloads(
-            uow, downloader, options.downloads, options.max_file_bytes, run.workspaces, reporter
+            uow,
+            teams,
+            downloader,
+            options.downloads,
+            options.max_file_bytes,
+            run.workspaces,
+            reporter,
         )
     finally:
         counts[RATE_LIMIT_WAIT] = round(run.workspaces.rate_limit_wait_s(), 3)

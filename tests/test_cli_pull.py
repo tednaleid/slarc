@@ -558,6 +558,24 @@ def test_bare_pull_skips_a_workspace_without_a_session(f: Fixture):
     assert after[TEAM].last_pull_at != before[TEAM].last_pull_at
 
 
+def test_pull_retries_only_the_queued_downloads_of_the_workspaces_it_pulls(f: Fixture):
+    giphy = (
+        "https://media4.giphy.com/media/F9yAvk7Xpr0c/giphy.gif"
+        "?cid=6104955ee4adf136dcbbrjmn0qdsjgxzsga2bbxafvz2c6fe&ep=v1_gifs_translate&rid=giphy.gif&ct=g"
+    )
+    f.sessions = [OTHER, NALEID]
+    f.gateways[OTHER_TEAM] = other_gateway()
+    f.downloader.fail(giphy, error="HTTP 500 Internal Server Error")
+    assert f.pull("--yes", OTHER_LINK, BASE).exit_code == 0
+    f.downloader.jobs.clear()
+
+    assert f.pull(OTHER_LINK).exit_code == 0
+    assert giphy not in {job.url for job in f.downloader.jobs}
+
+    assert f.pull(BASE).exit_code == 0
+    assert giphy in {job.url for job in f.downloader.jobs}
+
+
 def test_bare_pull_exits_1_when_a_workspace_rejects_its_credentials(f: Fixture):
     f.sessions = [OTHER, NALEID]
     f.gateways[OTHER_TEAM] = other_gateway()
