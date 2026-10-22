@@ -24,6 +24,7 @@ from slarc.service.downloads import (
     SKIPPED_STATUSES,
     image_types,
     outstanding_downloads,
+    size_text,
     stored_directory,
 )
 from slarc.service.selectors import items_named
@@ -99,12 +100,13 @@ class RemoteRow:
 @dataclass(frozen=True)
 class _Target:
     """A download a message references: its key, the kind of directory line that records it,
-    its type for a listing, and its URL."""
+    its type for a listing, its URL, and a file's size."""
 
     key: DownloadKey
     kind: Literal["file", "image"]
     type: str
     url: str
+    size: int | None = None
 
 
 def list_archive(
@@ -150,7 +152,9 @@ def list_archive(
         )
         rows.append(row)
         if selectors:
-            downloads += _downloads(row, targets.values(), outstanding, archive, stored)
+            downloads += _downloads(
+                row, targets.values(), outstanding, archive, stored, settings.max_file_size_mb
+            )
     rows.sort(key=lambda row: (row.workspace, row.conversation, row.kind))
     downloads.sort(
         key=lambda d: (
@@ -234,13 +238,19 @@ def _downloads(
     outstanding: dict[DownloadKey, DownloadState],
     archive: ArchiveStore,
     stored: dict[tuple[str, Kind], dict[str, DirectoryState]],
+    limit_mb: int,
 ) -> list[ListedDownload]:
-    """Each target that is saved or has a download state; stored caches directory states."""
+    """Each target that is saved or has a download state; stored caches directory states.
+
+    A file too large to download gives its size against limit_mb as its error.
+    """
     found = []
     for target in targets:
         state = outstanding.get(target.key)
         if state is not None:
             status, attempts, error = state.status, state.attempts, state.last_error
+            if status == "too_large" and target.size is not None:
+                error = _too_large(target.size, limit_mb)
             url = state.url or target.url
         elif _saved(target, archive, stored):
             status, attempts, error, url = "saved", None, None, target.url
@@ -252,6 +262,12 @@ def _downloads(
             )
         )
     return found
+
+
+def _too_large(size: int, limit_mb: int) -> str:
+    if size > limit_mb * 1024 * 1024:
+        return f"{size_text(size)} is over the {limit_mb} MB limit."
+    return f"{size_text(size)} fits the {limit_mb} MB limit now; the next pull downloads it."
 
 
 def _saved(
@@ -281,6 +297,7 @@ def _download_targets(team_id: str, message: dict, view: DirectoryView) -> list[
             "file",
             "file",
             file.get("url_private_download") or file.get("url_private") or file["id"],
+            file["size"] if isinstance(file.get("size"), int) else None,
         )
         for file in message.get("files") or []
         if file.get("id")

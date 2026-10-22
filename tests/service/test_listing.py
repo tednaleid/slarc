@@ -189,11 +189,25 @@ def test_a_list_scoped_to_a_link_shows_its_item_and_every_download_with_failures
             "file",
             "too_large",
             1,
-            "seed.pdf is over the size limit.",
+            "584 bytes fits the 100 MB limit now; the next pull downloads it.",
             f"https://files.slack.com/{PDF}",
         ),
         ("avatar", "failed", 2, "Could not reach secure.gravatar.com.", AVATAR),
     ]
+
+
+def test_a_too_large_file_names_its_size_and_the_limit_it_is_over(
+    archive: Path, ext_dir: Path, store: DuckLakeArchiveStore
+) -> None:
+    leave_downloads_outstanding(store)
+    settings = load_settings(archive, {}, {}, {"max_file_size_mb": 0})
+    with DuckDbQueryIndex(archive, ext_dir, FakeArchiveLock()) as index:
+        listing = list_archive(
+            settings, store, index, [(FIXTURES_LINK, parse_selector(FIXTURES_LINK))]
+        )
+
+    [pdf] = [d for d in listing.downloads if d.status == "too_large"]
+    assert pdf.error == "584 bytes is over the 0 MB limit."
 
 
 def test_a_list_scoped_to_a_workspace_shows_every_item_in_it_with_its_downloads(
