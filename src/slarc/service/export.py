@@ -231,7 +231,8 @@ class Page:
 @dataclass(frozen=True)
 class Exported:
     """Where an export went and what it holds. A message on more than one page counts once,
-    and so do its thread, files and reactions."""
+    and so do its thread, files and reactions. files_missing counts the files it shows as not
+    downloaded."""
 
     path: Path
     workspaces: int
@@ -240,6 +241,7 @@ class Exported:
     messages: int
     files: int
     reactions: int
+    files_missing: int
 
 
 def export(
@@ -301,7 +303,7 @@ def export(
             title=title, pages=list(pages.values()), nav=len(pages) > 1, **common
         )
         writer.write(target, html.encode())
-        return _exported(target, pages.values())
+        return _exported(target, pages.values(), workspaces.values())
     target = out or Path(default)
     index_html = (
         _templates()
@@ -316,10 +318,10 @@ def export(
     writer.write(target / "viewer.js", js.encode())
     for name, sha256 in sorted(used.items()):
         writer.write(target / "assets" / name, blobs.read(sha256))
-    return _exported(target, pages.values())
+    return _exported(target, pages.values(), workspaces.values())
 
 
-def _exported(path: Path, pages: Iterable[Page]) -> Exported:
+def _exported(path: Path, pages: Iterable[Page], workspaces: Iterable[_Workspace]) -> Exported:
     pages = list(pages)
     messages: dict[tuple[str, str, str], dict] = {}
     threads: set[tuple[str, str, str]] = set()
@@ -350,6 +352,7 @@ def _exported(path: Path, pages: Iterable[Page]) -> Exported:
         messages=len(messages),
         files=len(files),
         reactions=reactions,
+        files_missing=sum(len(workspace.missing_files) for workspace in workspaces),
     )
 
 
@@ -604,6 +607,7 @@ class _Workspace:
     assets: _Assets
     downloads: dict[tuple[str, str], DownloadState]
     zone: tzinfo
+    missing_files: set[str] = field(default_factory=set)
 
     @classmethod
     def load(
@@ -821,6 +825,7 @@ class _Workspace:
         size = obj.get("size")
         shown_size = _size(size) if isinstance(size, int) else ""
         if src is None:
+            self.missing_files.add(file_id)
             state = self.downloads.get((self.team, file_id))
             link = obj.get("permalink")
             return FileView(

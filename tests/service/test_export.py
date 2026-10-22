@@ -211,6 +211,7 @@ def test_export_counts_what_it_wrote(archive, store, blobs) -> None:
         messages=ALL_NALEID_MESSAGES,
         files=ALL_NALEID_FILES,
         reactions=ALL_NALEID_REACTIONS,
+        files_missing=0,
     )
 
 
@@ -607,7 +608,8 @@ def test_file_placeholders_and_unsafe_chrome(archive, store, blobs) -> None:
             ],
         },
     )
-    _, writer = run_export(archive, store, blobs, "#slarc-fixtures")
+    exported, writer = counted_export(archive, store, blobs, "#slarc-fixtures")
+    assert exported.files_missing == 3
     message = article(writer.text(OUT / f"{FIXTURES}.html"), FIXTURES, SYNTHETIC)
     assert "This file is hidden by the workspace's message history limit." in message
     assert (

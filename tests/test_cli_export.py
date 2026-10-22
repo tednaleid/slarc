@@ -54,6 +54,15 @@ def test_cli_export_writes_default_directory(archive: Path, tmp_path: Path) -> N
     assert copied.read_bytes() == (archive / "blobs/sha256/ca/3f" / SCREENSHOT).read_bytes()
 
 
+def test_cli_export_says_how_many_files_it_does_not_hold(archive: Path, tmp_path: Path) -> None:
+    (archive / "blobs/sha256/ca/3f" / SCREENSHOT).unlink()
+    result = invoke(tmp_path, "export", "#all-naleid", "--root", str(archive))
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[-1] == (
+        "1 file is not in the export; run slarc list '#all-naleid' to see why."
+    )
+
+
 def test_cli_export_workspace_writes_default_directory(archive: Path, tmp_path: Path) -> None:
     result = invoke(tmp_path, "export", "naleidworkspace", "--root", str(archive))
     assert result.exit_code == 0, result.output

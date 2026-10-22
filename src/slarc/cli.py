@@ -783,6 +783,14 @@ def export_command(
     page = (exported.path if single_file else exported.path / "index.html").absolute()
     out.print(f"Exported {_exported_parts(exported)} to", markup=False)
     out.print(Text(str(page), style=Style(link=page.as_uri())))
+    if exported.files_missing:
+        missing = _plural(exported.files_missing, "file")
+        verb = "is" if exported.files_missing == 1 else "are"
+        listed = shlex.join(selectors)
+        out.print(
+            f"{missing} {verb} not in the export; run slarc list {listed} to see why.",
+            markup=False,
+        )
     if open_page and not services.open_page(page.as_uri()):
         err.print("No browser could be opened; open the page above instead.", markup=False)
 
