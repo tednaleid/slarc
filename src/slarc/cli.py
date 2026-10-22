@@ -21,6 +21,7 @@ from rich.text import Text
 from slarc import __version__, bootstrap
 from slarc.config import (
     ARCHIVE_FILE,
+    Settings,
     create_archive,
     find_archive,
     load_settings,
@@ -538,10 +539,16 @@ def _table(headers: list[str], rows: list[list[object]]) -> Table:
     return table
 
 
-def _print_listing(listing: ArchiveListing) -> None:
+def _print_listing(listing: ArchiveListing, settings: Settings) -> None:
     out.print(f"Archive: {listing.archive}", markup=False)
     config = ", ".join(str(path) for path in listing.config_files) or "none, built-in defaults"
     out.print(f"Config: {config}", markup=False)
+    out.print(
+        f"Settings: downloads = {settings.downloads}, "
+        f"max_file_size_mb = {settings.max_file_size_mb}, "
+        f"active_thread_days = {settings.active_thread_days}, tz = {settings.tz or 'local'}",
+        markup=False,
+    )
     if listing.rows:
         headers = [
             "Workspace",
@@ -672,7 +679,7 @@ def list_command(
         _fail(str(error))
     except SlarcError as error:
         _fail(str(error))
-    _print_listing(listing)
+    _print_listing(listing, settings)
 
 
 @app.command("search")
