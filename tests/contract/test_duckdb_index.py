@@ -456,6 +456,12 @@ def test_run_view_leaves_out_tracked_and_downloads(archive: Path, ext_dir: Path)
     assert "downloads" not in columns
 
 
+def test_sql_returns_timestamps_with_time_zones(index: DuckDbQueryIndex) -> None:
+    columns, rows = index.sql("SELECT to_timestamp(1733392800) AS posted")
+    assert columns == ["posted"]
+    assert rows[0][0].timestamp() == 1733392800
+
+
 def test_bad_sql_raises_one_line_slarc_error(index: DuckDbQueryIndex) -> None:
     with pytest.raises(SlarcError) as caught:
         index.sql("SELEC 1")
