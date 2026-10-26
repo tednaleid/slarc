@@ -21,12 +21,15 @@ def parse_bound(text: str, now: datetime, zone: tzinfo, end: bool) -> datetime:
     age = AGE.fullmatch(text)
     if age:
         return now - timedelta(**{AGE_UNITS[age.group(2)]: int(age.group(1))})
-    if DATE.fullmatch(text):
-        start = datetime.fromisoformat(text).replace(tzinfo=zone)
-        return start + timedelta(days=1) if end else start
-    if TIME.fullmatch(text):
-        moment = datetime.fromisoformat(text)
-        return moment if moment.tzinfo else moment.replace(tzinfo=zone)
+    try:
+        if DATE.fullmatch(text):
+            start = datetime.fromisoformat(text).replace(tzinfo=zone)
+            return start + timedelta(days=1) if end else start
+        if TIME.fullmatch(text):
+            moment = datetime.fromisoformat(text)
+            return moment if moment.tzinfo else moment.replace(tzinfo=zone)
+    except ValueError:
+        pass
     raise ValueError(FORMS)
 
 

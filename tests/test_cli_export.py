@@ -230,3 +230,12 @@ def test_cli_export_window_and_channel(archive: Path, tmp_path: Path) -> None:
     )
     assert empty.exit_code == 1
     assert empty.stderr.strip() == "No messages of #all-naleid fall in the window."
+
+
+def test_cli_export_html_to_stdout_inlines_its_assets(archive: Path, tmp_path: Path) -> None:
+    result = invoke(tmp_path, "export", "#all-naleid", "--out", "-", "--root", str(archive))
+    assert result.exit_code == 0, result.output
+    assert result.stdout.startswith("<!doctype html>")
+    assert "assets/" not in result.stdout
+    assert 'href="viewer.css"' not in result.stdout
+    assert "data:image/png;base64," in result.stdout

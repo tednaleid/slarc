@@ -29,7 +29,9 @@ def test_window_bounds(text: str, end: bool, expected: datetime) -> None:
     assert parse_bound(text, NOW, CHICAGO, end) == expected
 
 
-@pytest.mark.parametrize("text", ["10/19/2026", "yesterday", "7", "3m", ""])
+@pytest.mark.parametrize(
+    "text", ["10/19/2026", "yesterday", "7", "3m", "", "2026-13-45", "2026-10-19T25:00"]
+)
 def test_window_bound_rejects_other_text(text: str) -> None:
     with pytest.raises(ValueError, match="a date, a time or an age such as"):
         parse_bound(text, NOW, CHICAGO, False)

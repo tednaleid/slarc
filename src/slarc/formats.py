@@ -1,4 +1,4 @@
-# ABOUTME: write_rows prints query rows as JSON Lines or CSV for scripts and agents.
+# ABOUTME: Output formats; write_rows prints query rows as JSON Lines or CSV for scripts and agents.
 # ABOUTME: Times become ISO 8601 with their offset and bytes become base64; nothing is truncated.
 import base64
 import csv
@@ -7,6 +7,7 @@ from collections.abc import Iterable, Sequence
 from typing import Literal, TextIO
 
 OutputFormat = Literal["table", "jsonl", "csv"]
+ExportFormat = Literal["html", "markdown"]
 FORMATS: tuple[OutputFormat, ...] = ("table", "jsonl", "csv")
 
 

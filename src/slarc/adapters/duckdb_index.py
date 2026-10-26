@@ -407,7 +407,8 @@ SEARCH = f"""
         mention_token AS (
             SELECT team_id, '<@' || id || '>' AS token FROM mentioned
             UNION SELECT team_id, '<@' || id || '|' FROM mentioned
-            UNION SELECT g.team_id, '<!subteam^' || g.id FROM usergroup g
+            UNION SELECT g.team_id, '<!subteam^' || g.id || suffix
+                FROM usergroup g, (VALUES ('>'), ('|')) AS ends(suffix)
                 JOIN mentioned u ON u.team_id = g.team_id AND list_contains(g.user_ids, u.id)
         )
     SELECT {READABLE_COLUMNS}, m.plain

@@ -293,6 +293,10 @@ class ArchiveLock(Protocol):
     def write(self) -> AbstractContextManager[None]: ...
 
 
+# How many matches a search returns unless asked for more.
+SEARCH_LIMIT = 50
+
+
 @dataclass(frozen=True)
 class SearchFilter:
     """What a search matches. Every field narrows it; text is matched in plain, ignoring case.

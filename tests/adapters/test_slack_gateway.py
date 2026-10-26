@@ -527,3 +527,10 @@ def test_debug_logging_never_shows_the_session_cookie(caplog: pytest.LogCaptureF
         assert api.call("auth.test", {})["ok"] is True
     assert "xoxd-test" not in caplog.text
     assert "xoxc-test" not in caplog.text
+
+
+def test_usergroups_asks_for_members():
+    api = FakeWebApi()
+    gateway, _ = make_gateway(api)
+    gateway.usergroups()
+    assert api.calls == [("usergroups.list", {"include_users": True})]

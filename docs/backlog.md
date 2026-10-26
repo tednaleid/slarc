@@ -50,6 +50,7 @@ Known problems and future work, grouped by theme. Each line says what is wrong o
 - The first connect runs `INSTALL` for the DuckDB extensions while holding the archive's write lock, so a slow download blocks every other slarc command on that archive (`bootstrap.py` `ensure_lake`, `adapters/lake.py` `_load_extensions`).
 - A takeover checks that each file the catalog references exists, not that its size matches `file_size_bytes`, so a partly synced Parquet file passes (`adapters/lake.py` `_missing_files`).
 - Any file in `data/` or `blobs/`, such as `.DS_Store`, makes `connect_lake` refuse to create a catalog with `CatalogNotSynced` (`adapters/lake.py` `_has_files`).
+- `--format jsonl` writes a DOUBLE NaN as `NaN`, which is not JSON, and escapes every non-ASCII character (`formats.py`).
 
 ### Export and rendering
 - Emoji and image assets with no recorded content type take their extension from the URL, or `bin`; detect the type from the file signature instead (`service/export.py` `_image_extension`).
@@ -67,6 +68,11 @@ Known problems and future work, grouped by theme. Each line says what is wrong o
 - Exporting a link to a deleted message that is not in a thread says "Pull it first" (`service/export.py` `_page`).
 - `meta.plain` writes a bare "@" or "#" when an element has no id, drops any exactly repeated part, and unescapes entities inside resolved names; `plain.mention_text`'s default case relies on callers filtering (`domain/plain.py`).
 - `DirectoryView.author_display` ignores the bots dict and falls back to "unknown" (`domain/directory.py`).
+- A windowed export fetches each thread parent older than the window with its own `QueryIndex.thread` call, one scan of the conversation's rows per parent (`service/export.py` `_with_parents`).
+- Markdown export shows a broadcast reply twice on a conversation page: quoted in its thread and again in the flow (`service/export_markdown.py`).
+- Markdown bodies are not escaped, so a message line starting with `# ` reads like a page header in concatenated `--out -` output (`domain/render/markdown.py`).
+- `export --out - --open` ignores `--open` without saying so (`cli.py` `export_command`).
+- `service/export.py` keeps its own `_text` and `_dicts` beside `text_field` and `dict_list` in `domain/render`.
 
 ### Tests and tooling
 - Only link parsing has Hypothesis tests; the spec also asks for `ts` ordering and idempotency properties.
@@ -123,5 +129,6 @@ Known problems and future work, grouped by theme. Each line says what is wrong o
 
 ## Open questions
 
+- Whether `usergroups.list` with `include_users=true` returns members for a session token, which `search --mentions` needs to match usergroup mentions. The test workspace's plan has no usergroups to check it on.
 - Linux credential details: Secret Service item names for the Slack Safe Storage key, and the Snap and Flatpak data directories.
 - How Enterprise Grid (`E…` org ids with `T…` workspaces) shows up in links, `auth.test` and message `team` fields. Hosts like `foo.enterprise.slack.com` parse to domain `foo.enterprise` and are refused for env sessions (`domain/links.py`).

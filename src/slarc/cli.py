@@ -5,7 +5,7 @@ import shlex
 import signal
 import sys
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from importlib.resources import files
 from pathlib import Path
 from types import FrameType, TracebackType
@@ -31,10 +31,10 @@ from slarc.config import (
 )
 from slarc.domain.links import WorkspaceSel, parse_selector
 from slarc.domain.window import Window
-from slarc.formats import OutputFormat, write_rows
-from slarc.ports import ItemProgress, NoArchive, NoSession, SearchHit, SlarcError
+from slarc.formats import ExportFormat, OutputFormat, write_rows
+from slarc.ports import SEARCH_LIMIT, ItemProgress, NoArchive, NoSession, SearchHit, SlarcError
 lazy from slarc.service.auth import AuthStatus, auth_status, store_pasted
-lazy from slarc.service.export import STDOUT, EmptyWindow, Exported, ExportFormat, export
+lazy from slarc.service.export import STDOUT, EmptyWindow, Exported, export
 lazy from slarc.service.listing import (
     ArchiveListing,
     ListedDownload,
@@ -45,7 +45,7 @@ lazy from slarc.service.listing import (
 )
 lazy from slarc.service.pull import PullOptions, PullReport, pull
 lazy from slarc.service.remove import Removal, apply_removal, plan_removal
-lazy from slarc.service.search import DEFAULT_LIMIT, search
+lazy from slarc.service.search import search
 lazy from slarc.unit_of_work import UnitOfWork
 
 app = typer.Typer(
@@ -276,10 +276,10 @@ def _local_date(ts: str) -> str:
     return datetime.fromtimestamp(float(ts)).strftime(LOCAL_DATE)
 
 
-def _window(since: str | None, until: str | None, now: datetime) -> Window:
-    """The window --since and --until give, read in the machine's local time zone."""
+def _window(since: str | None, until: str | None, now: datetime, zone: tzinfo) -> Window:
+    """The window --since and --until give, read in zone, the machine's."""
     try:
-        return Window.parse(since, until, now, now.astimezone().tzinfo or UTC)
+        return Window.parse(since, until, now, zone)
     except ValueError as error:
         _fail(str(error))
 
@@ -424,7 +424,7 @@ def pull_command(
     if (since or until) and any(isinstance(selector, WorkspaceSel) for selector in parsed):
         _fail(RANGE_NOT_FOR_WORKSPACE)
     services: bootstrap.Services = ctx.obj
-    window = _window(since, until, services.clock.now())
+    window = _window(since, until, services.clock.now(), bootstrap.zone(services.env))
     all_workspaces = all(isinstance(selector, WorkspaceSel) for selector in parsed)
     flags = {
         "--channel": channel,
@@ -766,7 +766,7 @@ def search_command(
     until: Annotated[str | None, typer.Option(metavar="WHEN", help=UNTIL_HELP)] = None,
     limit: Annotated[
         int, typer.Option(metavar="N", min=0, help="Most matches to show; 0 shows every one.")
-    ] = DEFAULT_LIMIT,
+    ] = SEARCH_LIMIT,
     fmt: Annotated[OutputFormat, FORMAT_OPTION] = "table",
     root: Annotated[
         Path | None, typer.Option(metavar="DIR", help="The archive directory to use.")
@@ -774,7 +774,7 @@ def search_command(
 ) -> None:
     """Find archived messages by text, conversation, author, mention or window, newest first."""
     services: bootstrap.Services = ctx.obj
-    window = _window(since, until, services.clock.now())
+    window = _window(since, until, services.clock.now(), bootstrap.zone(services.env))
     try:
         archive_root = _existing_archive(root, services.env, services.home)
         with bootstrap.query_index(archive_root, services.take_ownership) as index:
@@ -860,8 +860,8 @@ def export_command(
     except ValueError as error:
         _fail(str(error))
     services: bootstrap.Services = ctx.obj
-    now = services.clock.now()
-    window = _window(since, until, now)
+    zone = bootstrap.zone(services.env)
+    window = _window(since, until, services.clock.now(), zone)
     to_stdout = out_path == STDOUT
     try:
         archive_root = _existing_archive(root, services.env, services.home)
@@ -884,7 +884,7 @@ def export_command(
                 fmt=fmt,
                 window=window,
                 whole_conversation=channel,
-                local_zone=now.astimezone().tzinfo or UTC,
+                local_zone=zone,
             )
     except EmptyWindow as error:
         err.print(str(error), markup=False)

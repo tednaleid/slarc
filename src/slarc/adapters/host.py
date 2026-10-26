@@ -1,15 +1,19 @@
-# ABOUTME: Identifies this machine for the archive's owner record: a stable machine id, read with
-# ABOUTME: gethostuuid on macOS or from /etc/machine-id on Linux, and the host name for messages.
+# ABOUTME: Facts about this machine: a stable machine id for the archive's owner record (gethostuuid
+# ABOUTME: on macOS, /etc/machine-id on Linux), the host name for messages, and the local time zone.
 import ctypes
 import socket
 import sys
 import uuid
+from collections.abc import Mapping
+from datetime import datetime, tzinfo
 from functools import cache
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from slarc.ports import SlarcError
 
 LINUX_MACHINE_ID = Path("/etc/machine-id")
+LOCALTIME = Path("/etc/localtime")
 
 
 class NoMachineId(SlarcError):
@@ -55,3 +59,25 @@ def _host_uuid() -> uuid.UUID | None:
     if libc.gethostuuid(buffer, no_wait) != 0:
         return None
     return uuid.UUID(bytes=bytes(buffer))
+
+
+def local_zone(env: Mapping[str, str], localtime: Path = LOCALTIME) -> tzinfo:
+    """This machine's time zone, with its daylight saving rules: the zone TZ names, else the
+    one /etc/localtime links to, else a fixed zone at the current offset."""
+    for name in (env.get("TZ", "").removeprefix(":"), _linked_zone(localtime)):
+        if name:
+            try:
+                return ZoneInfo(name)
+            except ZoneInfoNotFoundError, ValueError:
+                continue
+    return datetime.now().astimezone().tzinfo or ZoneInfo("UTC")
+
+
+def _linked_zone(localtime: Path) -> str:
+    """The zone name in the path /etc/localtime links to, such as America/Chicago, or ""."""
+    try:
+        target = str(localtime.resolve(strict=True))
+    except OSError:
+        return ""
+    _, found, name = target.partition("/zoneinfo/")
+    return name if found else ""

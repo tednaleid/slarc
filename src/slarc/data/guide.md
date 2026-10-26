@@ -82,8 +82,9 @@ an offset (`Z`, `+02:00`) or else in this machine's time zone, or an age counted
   before reading on.
 - Stdout carries only results. Notes, such as `Showing 50; --limit for more.`, and errors go
   to stderr.
-- Exit 0: success. Exit 1: `search` found nothing. Exit 2: an error, such as a selector that
-  names nothing or a bad query. Exit 130: interrupted.
+- Exit 0: success. Exit 1: `search` found nothing, or no message of an `export` falls in its
+  window. Exit 2: an error, such as a selector that names nothing or a bad query. Exit 130:
+  interrupted.
 - `search` returns 50 matches by default, newest first; `--limit 0` returns every one.
 
 ## Reading results

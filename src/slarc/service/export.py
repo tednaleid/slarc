@@ -35,6 +35,7 @@ from slarc.domain.render.blocks import render_message_html
 from slarc.domain.render.mrkdwn import emoji_html, render_mrkdwn_html
 from slarc.domain.tracking import DownloadState
 from slarc.domain.window import OPEN_WINDOW, Window
+from slarc.formats import ExportFormat
 from slarc.ports import (
     ArchiveStore,
     BlobStore,
@@ -157,9 +158,6 @@ type FileKind = Literal[
     "external",
     "missing",
 ]
-
-
-ExportFormat = Literal["html", "markdown"]
 
 
 @dataclass(frozen=True)
@@ -287,6 +285,7 @@ def export(
     Markdown shows times in tz, else local_zone; HTML shows them in tz, else the viewer's zone.
     """
     markdown = fmt == "markdown"
+    single_file = single_file or out == STDOUT
     zone = _zone(tz) if tz or not markdown else local_zone
     domains = {domain: team for team, domain in workspace_domains(index).items()}
     used: dict[str, str] = {}
@@ -320,7 +319,7 @@ def export(
             )
             for page in pages.values()
         }
-        if single_file or out == STDOUT:
+        if single_file:
             target = out if out == STDOUT else _suffixed(out or default, ".md")
             writer.write(target, "\n\n".join(texts.values()).encode())
         else:
@@ -336,7 +335,7 @@ def export(
     js = _static("viewer.js")
     common = {"tz": tz, "inline": single_file, "css": Markup(css), "js": Markup(js)}
     conversation = _templates().get_template("conversation.html.j2")
-    if single_file or out == STDOUT:
+    if single_file:
         target = out if out == STDOUT else _suffixed(out or default, ".html", ".htm")
         title = next(iter(pages.values())).title if len(pages) == 1 else DEFAULT_TITLE
         html = conversation.render(

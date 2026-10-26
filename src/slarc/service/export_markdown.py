@@ -19,7 +19,7 @@ def page_markdown(
 ) -> str:
     """The page as markdown. Times are in zone, which tz names, or else the zone's own name."""
     renderer = _Renderer(page, domain, view)
-    zone_name = tz or datetime.now(zone).tzname() or "UTC"
+    zone_name = tz or str(zone)
     start = _bound(page.window.since, zone) or "the start"
     end = _bound(page.window.until, zone) or "now"
     threads = _thread_count(page)
@@ -38,9 +38,11 @@ class _Renderer:
         self.page = page
         self.domain = domain
         self.view = view
+        self.day = ""
 
     def entry(self, entry: Entry) -> list[str]:
         if entry.kind == "day":
+            self.day = entry.moment.day
             return [f"## {entry.moment.day_label}"]
         if entry.kind == "system":
             texts = [self.system_text(message) for message in entry.messages]
@@ -60,6 +62,9 @@ class _Renderer:
         head = [f"**{message.author or 'unknown'}**"]
         if message.app:
             head.append(f"via {message.app}")
+        # A reply posted on a later day than its heading's gives its date.
+        if message.time.day != self.day:
+            head.append(message.time.day)
         head.append(message.time.clock)
         if message.edited:
             head.append("(edited)")

@@ -10,10 +10,19 @@ from slarc.adapters.lake import extension_directory
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.domain.links import parse_selector
 from slarc.domain.window import OPEN_WINDOW, Window
+from slarc.formats import ExportFormat
 from slarc.ports import SlarcError
-from slarc.service.export import Exported, ExportFormat, export
+from slarc.service.export import Exported, export
 from tests.fakes import FakeArchiveLock, InMemoryBlobStore, InMemoryExportWriter
-from tests.service.test_export import ALL_NALEID, FIXTURES, MESSAGE_LINK, OUT
+from tests.service.test_export import (
+    ALL_NALEID,
+    FIXTURES,
+    JIM,
+    MESSAGE_LINK,
+    OUT,
+    SYNTHETIC,
+    append_line,
+)
 
 THREAD_PARENT = "1792427542.806979"
 EARLY_REPLY = "1792427577.619569"
@@ -135,3 +144,16 @@ def test_markdown_single_file_holds_every_page(archive, store, blobs) -> None:
     assert path == Path("exported.md")
     text = data.decode()
     assert text.count("\n# ") + text.startswith("# ") == 2
+
+
+def test_markdown_reply_on_a_later_day_gives_its_date(archive, store, blobs) -> None:
+    parent = "1792437051.761119"
+    reply = {"type": "message", "ts": SYNTHETIC, "thread_ts": parent, "user": JIM, "text": "later"}
+    append_line(store, "message", reply, channel=FIXTURES, ts=SYNTHETIC)
+    window = Window(since="1792490000.000000")
+    _, writer = exported(archive, store, blobs, "#slarc-fixtures", window=window)
+    page = writer.text(OUT / f"{FIXTURES}.md")
+    assert "## Monday, October 19, 2026" in page
+    later = line_with(page, "p1792500000000100")
+    assert later.startswith("> **Jim** 2026-10-20 7:40 AM "), later
+    assert "2026-10-19" not in line_with(page, f"p{parent.replace('.', '')}")

@@ -176,10 +176,14 @@ def test_search_hit_carries_readable_fields(index: DuckDbQueryIndex) -> None:
 
 def test_search_mentions_user_and_their_usergroups(archive: Path, ext_dir: Path) -> None:
     group = directory_line("usergroup", "S0ADMINS", {"handle": "admins", "users": [TED]})
+    # A group whose id starts with S0ADMINS but which Ted is not in.
+    other = directory_line("usergroup", "S0ADMINS2", {"handle": "others", "users": [JIM]})
     commit(
         archive,
         ext_dir,
         group,
+        other,
+        message_line(ALL_NALEID, "1792500004.000004", "ping <!subteam^S0ADMINS2|@others>"),
         message_line(ALL_NALEID, "1792500001.000001", f"hey <@{TED}> look"),
         message_line(ALL_NALEID, "1792500002.000002", "ping <!subteam^S0ADMINS|@admins>"),
         message_line(ALL_NALEID, "1792500003.000003", f"thanks <@{JIM}>"),

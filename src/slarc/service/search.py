@@ -4,9 +4,7 @@ from dataclasses import dataclass
 
 from slarc.domain.links import ConversationSel, parse_selector
 from slarc.domain.window import OPEN_WINDOW, Window
-from slarc.ports import QueryIndex, SearchFilter, SearchHit, SlarcError
-
-DEFAULT_LIMIT = 50
+from slarc.ports import SEARCH_LIMIT, QueryIndex, SearchFilter, SearchHit, SlarcError
 
 
 @dataclass(frozen=True)
@@ -31,7 +29,7 @@ def search(
     *,
     mentions: str | None = None,
     window: Window = OPEN_WINDOW,
-    limit: int = DEFAULT_LIMIT,
+    limit: int = SEARCH_LIMIT,
 ) -> SearchResult:
     """Matches of text, if given, narrowed by every filter given; limit 0 means no limit."""
     text = text if text and text.strip() else None

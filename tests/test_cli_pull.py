@@ -2,7 +2,6 @@
 # ABOUTME: Slack, credentials, the clock and the downloader are fakes swapped in through bootstrap.
 import io
 import re
-import time
 from collections.abc import Callable, Iterator
 from contextlib import nullcontext
 from datetime import datetime
@@ -509,24 +508,16 @@ def test_malformed_date_exits_2(f: Fixture):
     )
 
 
-@pytest.fixture
-def chicago(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """The process's local time zone set to America/Chicago for one test."""
-    monkeypatch.setenv("TZ", "America/Chicago")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
-
-
-def test_pull_since_reads_local_time(f: Fixture, chicago: None):
-    assert f.pull("--yes", "--since", "2026-10-01", "--until", "2026-10-01", BASE).exit_code == 0
+def test_pull_since_reads_local_time_across_dst(f: Fixture):
+    # The clock is in October (CDT); December dates are in CST, an hour later in UTC.
+    f.env = {"TZ": "America/Chicago"}
+    assert f.pull("--yes", "--since", "2026-12-01", "--until", "2026-12-01", BASE).exit_code == 0
     item = next(iter(f.tracked().values()))
-    midnight = datetime(2026, 10, 1, tzinfo=ZoneInfo("America/Chicago")).timestamp()
+    midnight = datetime(2026, 12, 1, tzinfo=ZoneInfo("America/Chicago")).timestamp()
     assert (item.since, item.until) == (f"{midnight:.6f}", f"{midnight + 86400:.6f}")
 
 
-def test_interrupt_exits_230_and_keeps_run_line(f: Fixture, monkeypatch: pytest.MonkeyPatch):
+def test_interrupt_exits_130_and_keeps_run_line(f: Fixture, monkeypatch: pytest.MonkeyPatch):
     def interrupt(*_args: object) -> list[dict]:
         raise KeyboardInterrupt
 

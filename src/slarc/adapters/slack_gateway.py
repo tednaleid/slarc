@@ -146,7 +146,7 @@ class SessionTokenGateway:
             yield from response["members"]
 
     def usergroups(self) -> list[dict]:
-        return self._call("usergroups.list")["usergroups"]
+        return self._call("usergroups.list", include_users=True)["usergroups"]
 
     def emoji(self) -> dict[str, str]:
         return self._call("emoji.list")["emoji"]
