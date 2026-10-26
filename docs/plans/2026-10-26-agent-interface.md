@@ -226,7 +226,7 @@
 - [x] **Step 3.** Implement using `write_rows`. In non-table formats, the Archive, Config and Settings lines and the downloads table and footer are not printed.
 - [x] **Step 4.** Run `just check`, then commit: "Add --format to slarc list".
 
-### Task 7: Markdown message renderer
+### Task 7 [done]: Markdown message renderer
 
 **Files:** create `src/slarc/domain/render/markdown.py`. Test: create `tests/domain/test_render_markdown.py`.
 
@@ -244,10 +244,10 @@
 - **Without blocks:** mrkdwn converted (`*b*` to `**b**`, `~s~` to `~~s~~`, `<url|label>` to `[label](url)`, mentions resolved, entities unescaped).
 - **Unrendered subtypes:** their text, or the subtype name.
 
-- [ ] **Step 1.** Write failing tests for each case above. Take the inputs from `tests/fixtures/workspace` messages where they exist (bold, list, code block, giphy, snippet), as the HTML renderer's tests do.
-- [ ] **Step 2.** Run them and watch them fail.
-- [ ] **Step 3.** Implement. Share list nesting with `blocks.py` by moving `_List`, `_Item` and the grouping walk into a helper both renderers call, so the nesting logic exists once.
-- [ ] **Step 4.** Run `just check`, then commit: "Render message bodies as markdown".
+- [x] **Step 1.** Write failing tests for each case above. Take the inputs from `tests/fixtures/workspace` messages where they exist (bold, list, code block, giphy, snippet), as the HTML renderer's tests do.
+- [x] **Step 2.** Run them and watch them fail.
+- [x] **Step 3.** Implement. Share list nesting with `blocks.py` by moving `_List`, `_Item` and the grouping walk into a helper both renderers call, so the nesting logic exists once.
+- [x] **Step 4.** Run `just check`, then commit: "Render message bodies as markdown".
 
 ### Task 8: Export markdown, windows, `--channel` and stdout
 

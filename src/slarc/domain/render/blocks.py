@@ -1,7 +1,7 @@
 # ABOUTME: render_message_html renders a message body as escaped HTML: blocks first, else the
 # ABOUTME: mrkdwn text, and a muted generic message for subtypes outside the rendered allowlist.
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from markupsafe import Markup, escape
@@ -10,7 +10,8 @@ from slarc.domain.directory import DirectoryView
 from slarc.domain.emoji import EmojiRender, code_points_text, resolve_emoji, skin_key_from_code
 from slarc.domain.links import is_web_url
 from slarc.domain.plain import mention_text
-from slarc.domain.render import AssetResolver
+from slarc.domain.render import AssetResolver, dict_list, fallback_text, text_field
+from slarc.domain.render.lists import RichList, nest_lists
 from slarc.domain.render.mrkdwn import emoji_html, link_html, mention_html, render_mrkdwn_html
 
 RENDERED_SUBTYPES = frozenset(
@@ -47,7 +48,7 @@ def render_message_html(message: dict, view: DirectoryView, assets: AssetResolve
     marker and the author, time and thread around the message."""
     renderer = _Renderer(view, assets)
     subtype = message.get("subtype")
-    text = _text(message.get("text"))
+    text = text_field(message.get("text"))
     if subtype is not None and subtype not in RENDERED_SUBTYPES:
         body = renderer.mrkdwn(text) if text else escape(subtype)
         return Markup('<div class="generic-message">{}</div>').format(body)
@@ -57,20 +58,6 @@ def render_message_html(message: dict, view: DirectoryView, assets: AssetResolve
     if not text:
         return _EMPTY
     return Markup('<div class="mrkdwn">{}</div>').format(renderer.mrkdwn(text))
-
-
-@dataclass
-class _Item:
-    content: Markup
-    children: list[_List] = field(default_factory=list)
-
-
-@dataclass
-class _List:
-    style: str
-    indent: int
-    offset: int
-    items: list[_Item]
 
 
 @dataclass(frozen=True)
@@ -84,9 +71,9 @@ class _Renderer:
     def block(self, block: dict) -> Markup:
         match block.get("type"):
             case "rich_text":
-                return self.rich_text(_dicts(block.get("elements")))
+                return self.rich_text(dict_list(block.get("elements")))
             case "section":
-                fields = _dicts(block.get("fields"))
+                fields = dict_list(block.get("fields"))
                 fields_html = (
                     Markup('<div class="fields">{}</div>').format(
                         _EMPTY.join(
@@ -109,12 +96,14 @@ class _Renderer:
                 return self.image_block(block)
             case "context":
                 return Markup('<div class="context">{}</div>').format(
-                    Markup(" ").join(self.context_element(e) for e in _dicts(block.get("elements")))
+                    Markup(" ").join(
+                        self.context_element(e) for e in dict_list(block.get("elements"))
+                    )
                 )
             case "actions":
                 labels = [
                     Markup('<span class="action">{}</span>').format(self.text_object(e["text"]))
-                    for e in _dicts(block.get("elements"))
+                    for e in dict_list(block.get("elements"))
                     if isinstance(e.get("text"), dict)
                 ]
                 return Markup('<div class="actions">{}</div>').format(_EMPTY.join(labels))
@@ -124,11 +113,11 @@ class _Renderer:
     def text_object(self, obj: object) -> Markup:
         if not isinstance(obj, dict):
             return _EMPTY
-        text = _text(obj.get("text"))
+        text = text_field(obj.get("text"))
         return self.mrkdwn(text) if obj.get("type") == "mrkdwn" else escape(text)
 
     def image_block(self, block: dict) -> Markup:
-        url = _text(block.get("image_url"))
+        url = text_field(block.get("image_url"))
         alt = block.get("alt_text") or ""
         src = self.local_image(url)
         if src:
@@ -177,7 +166,7 @@ class _Renderer:
         return _NEWLINE.join(parts)
 
     def container(self, container: dict) -> Markup:
-        elements = _dicts(container.get("elements"))
+        elements = dict_list(container.get("elements"))
         match container.get("type"):
             case "rich_text_section":
                 return Markup("<p>{}</p>").format(self.inline(_without_final_newline(elements)))
@@ -189,31 +178,7 @@ class _Renderer:
                 return _unknown("div", container)
 
     def lists(self, run: list[dict]) -> Markup:
-        """Consecutive rich_text_list containers as nested lists. Slack sends each indent level
-        as its own container, so a deeper one nests under the last item of the one before."""
-        roots: list[_List] = []
-        open_lists: list[_List] = []
-        for container in run:
-            indent = container.get("indent") or 0
-            style = container.get("style") or "bullet"
-            items = [
-                _Item(self.inline(_dicts(item.get("elements"))))
-                for item in _dicts(container.get("elements"))
-            ]
-            while open_lists and open_lists[-1].indent > indent:
-                open_lists.pop()
-            if open_lists and open_lists[-1].indent == indent:
-                if open_lists[-1].style == style:
-                    open_lists[-1].items += items
-                    continue
-                open_lists.pop()
-            current = _List(style, indent, container.get("offset") or 0, items)
-            if open_lists and open_lists[-1].items:
-                open_lists[-1].items[-1].children.append(current)
-            else:
-                roots.append(current)
-            open_lists.append(current)
-        return _NEWLINE.join(_list_html(root) for root in roots)
+        return _NEWLINE.join(_list_html(root) for root in nest_lists(run, self.inline))
 
     def inline(self, elements: list[dict], preformatted: bool = False) -> Markup:
         return _EMPTY.join(self.leaf(element, preformatted) for element in elements)
@@ -221,12 +186,12 @@ class _Renderer:
     def leaf(self, element: dict, preformatted: bool) -> Markup:
         match element.get("type"):
             case "text":
-                text = _text(element.get("text"))
+                text = text_field(element.get("text"))
                 content = escape(text) if preformatted else _with_breaks(text)
                 return _styled(content, element.get("style"))
             case "link":
-                url = _text(element.get("url"))
-                label = _with_breaks(_text(element.get("text")) or url)
+                url = text_field(element.get("url"))
+                label = _with_breaks(text_field(element.get("text")) or url)
                 return link_html(url, _styled(label, element.get("style")))
             case "emoji":
                 return self.emoji(element)
@@ -240,32 +205,27 @@ class _Renderer:
                 return _unknown("span", element)
 
     def emoji(self, element: dict) -> Markup:
-        name = _toned_emoji_name(element)
+        name = toned_emoji_name(element)
         render = resolve_emoji(name, self.view, self.assets.emoji_src)
-        unicode = _text(element.get("unicode"))
+        unicode = text_field(element.get("unicode"))
         if render.kind == "text" and unicode:
             with suppress(ValueError):
                 render = EmojiRender("unicode", code_points_text(unicode))
         return emoji_html(name, render)
 
 
-def _toned_emoji_name(element: dict) -> str:
+def toned_emoji_name(element: dict) -> str:
     """The element's emoji name with its skin tone, which Slack sends either in the name
     (wave::skin-tone-3) or beside it as skin_tone and toned unicode code points."""
-    name = _text(element.get("name"))
+    name = text_field(element.get("name"))
     if "::" in name:
         return name
     tone = element.get("skin_tone")
     if isinstance(tone, int) and 2 <= tone <= 6:
         key = str(tone)
     else:
-        key = skin_key_from_code(_text(element.get("unicode")))
+        key = skin_key_from_code(text_field(element.get("unicode")))
     return f"{name}::skin-tone-{key}" if key else name
-
-
-def _text(value: object) -> str:
-    """value when it is a string, else "", so malformed fields render as nothing."""
-    return value if isinstance(value, str) else ""
 
 
 def _without_final_newline(elements: list[dict]) -> list[dict]:
@@ -280,17 +240,13 @@ def _without_final_newline(elements: list[dict]) -> list[dict]:
 
 def _date(element: dict) -> Markup:
     """A date element as <time>, or its fallback text when the timestamp is out of range."""
-    fallback = _text(element.get("fallback"))
+    fallback = text_field(element.get("fallback"))
     try:
         moment = datetime.fromtimestamp(element["timestamp"], UTC)
     except OSError, OverflowError, ValueError:
         return escape(fallback)
     iso = moment.strftime("%Y-%m-%dT%H:%M:%SZ")
     return Markup('<time datetime="{}">{}</time>').format(iso, fallback or iso)
-
-
-def _dicts(value: object) -> list[dict]:
-    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
 def _with_breaks(text: str) -> Markup:
@@ -306,7 +262,7 @@ def _styled(content: Markup, style: object) -> Markup:
     return content
 
 
-def _list_html(rich_list: _List) -> Markup:
+def _list_html(rich_list: RichList[Markup]) -> Markup:
     tag = "ol" if rich_list.style == "ordered" else "ul"
     start = (
         Markup(' start="{}"').format(rich_list.offset + 1)
@@ -324,14 +280,4 @@ def _list_html(rich_list: _List) -> Markup:
 
 def _unknown(tag: str, obj: dict) -> Markup:
     """An element or block of a type the renderer does not know, as its escaped text."""
-    return Markup(f'<{tag} class="unknown">{{}}</{tag}>').format(_fallback_text(obj))
-
-
-def _fallback_text(obj: dict) -> str:
-    text = obj.get("text")
-    if isinstance(text, dict):
-        text = text.get("text")
-    for candidate in (text, obj.get("fallback"), obj.get("url")):
-        if isinstance(candidate, str) and candidate:
-            return candidate
-    return ""
+    return Markup(f'<{tag} class="unknown">{{}}</{tag}>').format(fallback_text(obj))
