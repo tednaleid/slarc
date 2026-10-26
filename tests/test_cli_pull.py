@@ -175,7 +175,7 @@ def test_real_services_draw_a_random_run_suffix():
 
 def test_pull_declined_creates_nothing(f: Fixture):
     result = f.pull(BASE, input="n\n")
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "No archive created." in result.output
     assert list(f.work.iterdir()) == []
     assert f.gateway.calls == []
@@ -201,13 +201,14 @@ def test_bare_pull_with_nothing_tracked_says_so(f: Fixture):
     create_archive(f.work)
     result = f.pull()
     assert result.exit_code == 0, result.output
-    assert "No tracked items yet. Pull a Slack link to start tracking it." in result.output
+    assert "No tracked items yet. Pull a Slack link to start tracking it." in result.stderr
+    assert result.stdout == ""
     assert "Pulled" not in result.output
 
 
 def test_create_prompt_aborted_creates_nothing(f: Fixture):
     result = f.pull(BASE, input="")
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "No archive created." in result.output
     assert "Aborted!" not in result.output
     assert list(f.work.iterdir()) == []
@@ -248,7 +249,7 @@ def test_pull_env_archive_without_slarc_toml_declined_writes_nothing(f: Fixture,
     other.mkdir()
     f.env["SLARC_ARCHIVE"] = str(other)
     result = f.pull(BASE, input="n\n")
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert f"No archive at {other}. Create one? [Y/n]" in result.output
     assert "No archive created." in result.output
     assert list(other.iterdir()) == []
@@ -444,10 +445,10 @@ def test_reporter_shows_item_and_download_rows(failed: int, skipped: int, detail
     assert downloads.rstrip().endswith(f" {detail}")
 
 
-def test_slarc_error_exits_1_without_traceback(f: Fixture):
+def test_slarc_error_exits_2_without_traceback(f: Fixture):
     f.gateway.auth_error = AuthFailed("desktop", "naleidworkspace")
     result = f.pull("--yes", BASE)
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert result.output.startswith("Slack rejected the desktop credentials")
     assert "Traceback" not in result.output
     assert len(f.runs()) == 1
@@ -467,28 +468,28 @@ def test_no_session_shows_credential_warnings(f: Fixture):
     f.sessions = []
     f.credential_error = error
     result = f.pull("--yes", BASE)
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "keychain read refused" in result.output
     assert "No Slack session found for workspace naleidworkspace" in result.output
 
 
-def test_unreadable_selector_exits_1(f: Fixture):
+def test_unreadable_selector_exits_2(f: Fixture):
     result = f.pull("--yes", "not a link")
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "Cannot read 'not a link' as a selector" in result.output
     assert list(f.work.iterdir()) == []
 
 
-def test_range_without_selectors_exits_1(f: Fixture):
+def test_range_without_selectors_exits_2(f: Fixture):
     result = f.pull("--yes", "--since", "2026-10-01")
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "--since and --until apply only to links named on the command line." in result.output
     assert list(f.work.iterdir()) == []
 
 
-def test_range_with_a_workspace_selector_exits_1(f: Fixture):
+def test_range_with_a_workspace_selector_exits_2(f: Fixture):
     result = f.pull("--yes", "naleidworkspace", "--since", "2026-10-01")
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert (
         "--since and --until apply to links and conversations, not to a whole workspace."
         in result.output
@@ -496,13 +497,13 @@ def test_range_with_a_workspace_selector_exits_1(f: Fixture):
     assert list(f.work.iterdir()) == []
 
 
-def test_malformed_date_exits_1(f: Fixture):
+def test_malformed_date_exits_2(f: Fixture):
     result = f.pull("--yes", "--until", "10/19/2026", BASE)
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "--until must be a date like 2026-10-19." in result.output
 
 
-def test_interrupt_exits_130_and_keeps_run_line(f: Fixture, monkeypatch: pytest.MonkeyPatch):
+def test_interrupt_exits_230_and_keeps_run_line(f: Fixture, monkeypatch: pytest.MonkeyPatch):
     def interrupt(*_args: object) -> list[dict]:
         raise KeyboardInterrupt
 
@@ -559,10 +560,10 @@ def test_retry_skipped_downloads_again_what_a_pull_skipped(f: Fixture):
     assert f.runs()[-1].args == [BASE, "--retry-skipped"]
 
 
-def test_env_session_for_another_workspace_exits_1(f: Fixture):
+def test_env_session_for_another_workspace_exits_2(f: Fixture):
     f.sessions = [Session("", "", "", "env", "xoxc-env", "xoxd-env")]
     result = f.pull("--yes", f"https://other.slack.com/archives/{CHANNEL}")
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "The env credentials are for workspace naleidworkspace, not other." in result.output
     assert "Traceback" not in result.output
     assert f.tracked() == {}
@@ -602,37 +603,37 @@ def test_pull_retries_only_the_queued_downloads_of_the_workspaces_it_pulls(f: Fi
     assert giphy in {job.url for job in f.downloader.jobs}
 
 
-def test_bare_pull_exits_1_when_a_workspace_rejects_its_credentials(f: Fixture):
+def test_bare_pull_exits_2_when_a_workspace_rejects_its_credentials(f: Fixture):
     f.sessions = [OTHER, NALEID]
     f.gateways[OTHER_TEAM] = other_gateway()
     assert f.pull("--yes", OTHER_LINK, BASE).exit_code == 0
     f.gateways[OTHER_TEAM].auth_error = AuthFailed("desktop", "other")
     result = f.pull()
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "Slack rejected the desktop credentials for workspace other." in result.output
     assert "Pulled 1 item:" in result.stdout
     assert "Traceback" not in result.output
 
 
-def test_bare_pull_exits_1_when_no_workspace_connects(f: Fixture):
+def test_bare_pull_exits_2_when_no_workspace_connects(f: Fixture):
     assert f.pull("--yes", BASE).exit_code == 0
     f.sessions = []
     f.credential_error = CredentialReadError("desktop", "keychain read refused")
     result = f.pull()
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert f"No Slack session found for workspace {TEAM}" in result.output
     assert "keychain read refused" in result.output
     assert "Traceback" not in result.output
 
 
-def test_pull_into_a_read_only_archive_exits_1_without_traceback(f: Fixture):
+def test_pull_into_a_read_only_archive_exits_2_without_traceback(f: Fixture):
     (f.work / "slarc.toml").write_text("")
     f.work.chmod(0o555)
     try:
         result = f.pull(BASE)
     finally:
         f.work.chmod(0o755)
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "Could not write to" in result.output
     assert "Traceback" not in result.output
 

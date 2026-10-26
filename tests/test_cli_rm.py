@@ -86,7 +86,7 @@ def test_rm_prompts_and_deletes_on_yes(archive: Path, tmp_path: Path, ext_dir: P
 def test_rm_declined_changes_nothing(archive: Path, tmp_path: Path, ext_dir: Path) -> None:
     before = snapshot(archive, ext_dir)
     result = invoke(tmp_path, "rm", "#all-naleid", "--root", str(archive), input="n\n")
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "Nothing removed." in result.output
     assert snapshot(archive, ext_dir) == before
 
@@ -94,14 +94,14 @@ def test_rm_declined_changes_nothing(archive: Path, tmp_path: Path, ext_dir: Pat
 def test_rm_default_answer_is_no(archive: Path, tmp_path: Path, ext_dir: Path) -> None:
     before = snapshot(archive, ext_dir)
     result = invoke(tmp_path, "rm", "#all-naleid", "--root", str(archive), input="\n")
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert snapshot(archive, ext_dir) == before
 
 
 def test_rm_aborted_prompt_changes_nothing(archive: Path, tmp_path: Path, ext_dir: Path) -> None:
     before = snapshot(archive, ext_dir)
     result = invoke(tmp_path, "rm", "#all-naleid", "--root", str(archive), input="")
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "Nothing removed." in result.output
     assert "Aborted!" not in result.output
     assert snapshot(archive, ext_dir) == before
@@ -146,17 +146,17 @@ def test_rm_then_export_workspace_skips_removed(archive: Path, tmp_path: Path) -
     assert (out / "C0CA7SNHTSP.html").is_file()
 
 
-def test_rm_unknown_selector_exits_1(archive: Path, tmp_path: Path, ext_dir: Path) -> None:
+def test_rm_unknown_selector_exits_2(archive: Path, tmp_path: Path, ext_dir: Path) -> None:
     before = snapshot(archive, ext_dir)
     result = invoke(tmp_path, "rm", "#no-such-channel", "--yes", "--root", str(archive))
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "Traceback" not in result.output
     assert snapshot(archive, ext_dir) == before
 
 
-def test_rm_unparseable_selector_exits_1(archive: Path, tmp_path: Path) -> None:
+def test_rm_unparseable_selector_exits_2(archive: Path, tmp_path: Path) -> None:
     result = invoke(tmp_path, "rm", "not a link", "--root", str(archive))
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "Cannot read 'not a link' as a selector" in result.output
 
 
@@ -196,7 +196,7 @@ def test_rm_reports_a_maintenance_failure_after_committing(
 
     monkeypatch.setattr(DuckLakeArchiveStore, "maintain", disk_full)
     result = invoke(tmp_path, "rm", "#all-naleid", "--yes", "--root", str(archive))
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     output = " ".join(result.output.split())
     assert output == (
         "The run is saved, but maintaining the archive failed (No space left on device); "
@@ -368,7 +368,7 @@ def test_rm_that_keeps_conflicting_fails_and_removes_nothing(
     monkeypatch.setattr(DuckLakeArchiveStore, "commit", conflict)
     result = invoke(tmp_path, "rm", "#all-naleid", "--yes", "--root", str(archive))
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     output = " ".join(result.output.split())
     assert output == "Other slarc commands kept changing these items; run rm again."
     after = snapshot(archive, ext_dir)

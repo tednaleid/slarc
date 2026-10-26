@@ -31,11 +31,11 @@ def test_cli_auth_prints_user_and_team():
     assert "desktop" in result.output
 
 
-def test_cli_auth_failure_names_source_and_exits_1():
+def test_cli_auth_failure_names_source_and_exits_2():
     gateway = FakeSlackGateway(auth_error=AuthFailed("desktop", "naleidworkspace"))
     with bootstrap.override(services(FakeCredentialSource([NALEID]), gateway)):
         result = runner.invoke(app, ["auth"])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "Slack rejected the desktop credentials" in result.output
     assert "Traceback" not in result.output
 
@@ -44,7 +44,7 @@ def test_cli_auth_without_sessions_shows_credential_warnings():
     error = CredentialReadError("desktop", "keychain read refused")
     with bootstrap.override(services(FakeCredentialSource(error=error), FakeSlackGateway())):
         result = runner.invoke(app, ["auth", "naleidworkspace"])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "keychain read refused" in result.output
     assert "No Slack session found for workspace naleidworkspace" in result.output
     assert result.exception is None or isinstance(result.exception, SystemExit)

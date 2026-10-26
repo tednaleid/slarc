@@ -60,6 +60,9 @@ RANGE_NOT_FOR_WORKSPACE = (
 )
 INTERRUPTED = "Interrupted; progress so far is saved."
 INTERRUPTED_EXIT = 130
+# Like grep: 1 when a search finds nothing, 2 when a command fails.
+NO_MATCH_EXIT = 1
+ERROR_EXIT = 2
 MB = 1024 * 1024
 NO_WORKSPACE = "This archive tracks no workspace yet. Pull a Slack link first."
 NO_TRACKED_ITEMS = "No tracked items yet. Pull a Slack link to start tracking it."
@@ -90,7 +93,7 @@ def _print_version(value: bool) -> None:
 
 def _fail(message: str) -> NoReturn:
     err.print(message, style="red", markup=False)
-    raise typer.Exit(1)
+    raise typer.Exit(ERROR_EXIT)
 
 
 def _warn(messages: list[str]) -> None:
@@ -177,7 +180,7 @@ def auth(
         line, style = _status_line(status)
         out.print(line, style=style, markup=False)
     if any(s.error is not None for s in statuses):
-        raise typer.Exit(1)
+        raise typer.Exit(ERROR_EXIT)
 
 
 class RichReporter:
@@ -425,7 +428,7 @@ def pull_command(
         global_config = read_global_config(services.env, services.home)
         archive_root = _archive_for_pull(root, services.env, global_config, yes, all_workspaces)
         if archive_root is None:
-            out.print(NO_TRACKED_ITEMS, markup=False)
+            err.print(NO_TRACKED_ITEMS, markup=False)
             return
         overrides = {"downloads": downloads, "max_file_size_mb": max_file_size}
         settings = load_settings(archive_root, global_config, services.env, overrides)
@@ -470,11 +473,11 @@ def pull_command(
     if any(isinstance(error, NoSession) for error in report.unreachable):
         _warn([str(e) for e in services.credentials.errors])
     if not parsed and report.items_selected == 0:
-        out.print(NO_TRACKED_ITEMS, markup=False)
+        err.print(NO_TRACKED_ITEMS, markup=False)
     else:
         out.print(_summary(report, texts), markup=False)
     if report.failed:
-        raise typer.Exit(1)
+        raise typer.Exit(ERROR_EXIT)
 
 
 def _existing_archive(root: Path | None, env: Mapping[str, str], home: Path) -> Path:
@@ -578,7 +581,7 @@ def _print_listing(listing: ArchiveListing, settings: Settings) -> None:
             _print_downloads(listing.downloads)
             out.print()
     else:
-        out.print(NO_TRACKED_ITEMS, markup=False)
+        err.print(NO_TRACKED_ITEMS, markup=False)
     out.print(f"Downloads: {listing.pending:,} pending, {listing.skipped:,} skipped.", markup=False)
 
 
@@ -709,7 +712,8 @@ def search_command(
     except SlarcError as error:
         _fail(str(error))
     if not hits:
-        out.print(NO_MATCHES, markup=False)
+        err.print(NO_MATCHES, markup=False)
+        raise typer.Exit(NO_MATCH_EXIT)
     for number, hit in enumerate(hits):
         if number:
             out.print()
@@ -794,7 +798,7 @@ def export_command(
         missing = _plural(exported.files_missing, "file")
         verb = "is" if exported.files_missing == 1 else "are"
         listed = shlex.join(selectors)
-        out.print(
+        err.print(
             f"{missing} {verb} not in the export; run slarc list {listed} to see why.",
             markup=False,
         )
@@ -907,7 +911,7 @@ def rm_command(
             with bootstrap.shared_index(archive_root, archive) as index:
                 removal = plan_removal(parsed, channel, archive, blobs, index)
             if removal.nothing_to_do:
-                out.print(NOTHING_TO_REMOVE, markup=False)
+                err.print(NOTHING_TO_REMOVE, markup=False)
                 return
             try:
                 declined = not yes and not typer.confirm(_removal_question(removal), default=False)

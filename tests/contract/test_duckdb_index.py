@@ -523,15 +523,16 @@ def test_cli_sql_uses_root_flag(archive: Path, tmp_path: Path) -> None:
 def test_cli_sql_without_archive_fails(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     result = run_sql(tmp_path, "SELECT 1")
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "No slarc archive found" in result.output
     assert "Traceback" not in result.output
 
 
 def test_cli_sql_bad_query_prints_error_line(archive: Path, tmp_path: Path) -> None:
     result = run_sql(tmp_path, "SELECT * FROM nothere", "--root", str(archive))
-    assert result.exit_code == 1
-    assert "nothere" in result.output
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "nothere" in result.stderr
     assert result.output.strip().count("\n") == 0
     assert "Traceback" not in result.output
 

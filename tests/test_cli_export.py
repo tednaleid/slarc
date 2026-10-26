@@ -58,9 +58,10 @@ def test_cli_export_says_how_many_files_it_does_not_hold(archive: Path, tmp_path
     (archive / "blobs/sha256/ca/3f" / SCREENSHOT).unlink()
     result = invoke(tmp_path, "export", "#all-naleid", "--root", str(archive))
     assert result.exit_code == 0, result.output
-    assert result.output.splitlines()[-1] == (
+    assert result.stderr.strip() == (
         "1 file is not in the export; run slarc list '#all-naleid' to see why."
     )
+    assert "not in the export" not in result.stdout
 
 
 def test_cli_export_workspace_writes_default_directory(archive: Path, tmp_path: Path) -> None:
@@ -163,7 +164,7 @@ def test_cli_export_errors_are_plain(
     archive: Path, tmp_path: Path, args: list[str], message: str
 ) -> None:
     result = invoke(tmp_path, "export", *args, "--root", str(archive))
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert message in result.output
     assert "Traceback" not in result.output
 
@@ -171,5 +172,5 @@ def test_cli_export_errors_are_plain(
 def test_cli_export_without_archive_fails(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     result = invoke(tmp_path, "export", "#all-naleid")
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "No slarc archive found" in result.output

@@ -80,7 +80,7 @@ def test_cli_take_ownership_option(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     assert on("alpha").exit_code == 0
     refused = on("beta")
-    assert refused.exit_code == 1
+    assert refused.exit_code == 2
     assert "This archive is owned by alpha." in refused.output
     assert "--take-ownership" in refused.output
     taken = on("beta", "--take-ownership")
@@ -110,6 +110,6 @@ def test_cli_refuses_to_create_a_catalog_beside_synced_files(tmp_path: Path) -> 
     )
     with bootstrap.override(services):
         result = runner.invoke(app, ["sql", "SELECT 1", "--root", str(root)])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "has data files but no catalog.sqlite" in result.output
     assert not (root / "catalog.sqlite").exists()

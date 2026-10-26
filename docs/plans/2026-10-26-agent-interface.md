@@ -94,23 +94,23 @@
 
 ---
 
-### Task 1: Stdout, stderr and exit codes
+### Task 1 [done]: Stdout, stderr and exit codes
 
 **Files:** modify `src/slarc/cli.py` and `docs/spec.md`. Tests: `tests/test_cli.py`, `tests/test_cli_list_search.py`, `tests/test_cli_export.py` and the existing exit-code assertions.
 
-- [ ] **Step 1.** Write failing tests:
+- [x] **Step 1.** Write failing tests:
   - `test_errors_exit_2`: `slarc sql "SELEC"` exits 2, and its message is on stderr.
   - `test_search_without_matches_exits_1_and_says_so_on_stderr`.
   - `test_list_without_tracked_items_says_so_on_stderr`.
   - `test_export_missing_files_note_goes_to_stderr`.
-- [ ] **Step 2.** Run them and watch them fail.
-- [ ] **Step 3.** Make the changes:
+- [x] **Step 2.** Run them and watch them fail.
+- [x] **Step 3.** Make the changes:
   - `_fail` and the other `typer.Exit(1)` sites exit 2;
   - `NO_MATCHES`, `NO_TRACKED_ITEMS` and the missing-files note print through `err`;
   - search exits 1 after `NO_MATCHES`.
   - Then update every existing test that asserts exit code 1.
-- [ ] **Step 4.** Spec: add the stdout rule and the exit-code table under Commands.
-- [ ] **Step 5.** Run `just check`, then commit: "Keep stdout for results and exit 2 on errors, 1 on no matches".
+- [x] **Step 4.** Spec: add the stdout rule and the exit-code table under Commands.
+- [x] **Step 5.** Run `just check`, then commit: "Keep stdout for results and exit 2 on errors, 1 on no matches".
 
 ### Task 2: Output formats and `sql --format`
 

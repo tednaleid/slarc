@@ -69,8 +69,9 @@ def test_cli_search_filters_and_reports_no_matches(archive: Path, tmp_path: Path
     assert result.output.splitlines()[0].startswith("Jim in #all-naleid, ")
     assert result.output.count("/archives/") == 1
     none = invoke(tmp_path, "search", "no such words anywhere")
-    assert none.exit_code == 0, none.output
-    assert none.output.strip() == "No messages match."
+    assert none.exit_code == 1, none.output
+    assert none.stdout == ""
+    assert none.stderr.strip() == "No messages match."
 
 
 def test_cli_list_prints_archive_config_and_items(archive: Path, tmp_path: Path) -> None:
@@ -110,7 +111,7 @@ def test_cli_list_remote_marks_tracked(archive: Path, tmp_path: Path) -> None:
 
 def test_cli_list_remote_without_session_fails(archive: Path, tmp_path: Path) -> None:
     result = invoke(tmp_path, "list", "--remote")
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "No Slack session found for workspace" in result.output
     assert "Traceback" not in result.output
 
@@ -121,7 +122,7 @@ def test_cli_list_and_search_without_archive_fail(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     result = invoke(tmp_path, *args)
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "No slarc archive found" in result.output
     assert "Traceback" not in result.output
 
@@ -137,8 +138,8 @@ def test_cli_search_and_sql_in_an_empty_archive(
     searched = invoke(tmp_path, "search", "seed")
     queried = invoke(tmp_path, "sql", "SELECT count(*) AS n FROM message")
 
-    assert searched.exit_code == 0, searched.output
-    assert searched.output.strip() == "No messages match."
+    assert searched.exit_code == 1, searched.output
+    assert searched.stderr.strip() == "No messages match."
     assert queried.exit_code == 0, queried.output
     assert "0" in queried.output
 
@@ -182,7 +183,7 @@ def test_cli_list_of_a_link_shows_each_download_on_one_line_with_failures_last(
 def test_cli_list_remote_takes_no_links(archive: Path, tmp_path: Path) -> None:
     result = invoke(tmp_path, "list", "--remote", ALL_NALEID_LINK)
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert (
         result.output.strip() == "slarc list --remote lists every conversation; it takes no links."
     )

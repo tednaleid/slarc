@@ -49,6 +49,8 @@ The CLI is the product's surface, so it stays small and each command does a lot.
 
 `pull`, `list`, `search`, `export` and `rm` accept the same selectors: a Slack link, a conversation id, `#channel-name` or `@user` for a DM. `pull`, `export` and `rm` also accept a workspace name such as `acme`, which stands for everything tracked in that workspace; `search --in` does not. Only `pull` and `auth` need Slack credentials. Every command that opens the archive checks its owner record, the machine that last used it. On another machine it stops with a message naming that host; once the synced folder holding the archive has finished syncing, the global option `slarc --take-ownership <command>` takes the archive over for this machine. Developer tooling (fixture recording, the LevelDB comparison check, test workspace seeding) lives in `just` recipes, not in the CLI.
 
+Stdout carries only a command's result, so it can be piped. Notes, hints, warnings, "nothing matched" messages, progress and errors go to stderr. Every command exits 0 when it succeeds, 2 when it fails (a bad selector or query, no archive, rejected credentials, a declined prompt), and 130 when interrupted; `search` exits 1 when nothing matches, as grep does. `sql` exits 0 on an empty result.
+
 **Links**
 
 URL and selector parsing is a pure function with property tests.
