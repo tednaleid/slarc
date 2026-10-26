@@ -4,7 +4,7 @@ import dataclasses
 import shlex
 import signal
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType, TracebackType
@@ -37,6 +37,7 @@ lazy from slarc.service.export import Exported, export
 lazy from slarc.service.listing import (
     ArchiveListing,
     ListedDownload,
+    ListRow,
     RemoteRow,
     list_archive,
     list_remote,
@@ -497,6 +498,13 @@ def _existing_archive(root: Path | None, env: Mapping[str, str], home: Path) -> 
     return found
 
 
+def _write_dataclasses(fmt: OutputFormat, kind: Any, items: Sequence[object]) -> None:
+    """Writes dataclass instances of kind as rows keyed by its field names."""
+    columns = [f.name for f in dataclasses.fields(kind)]
+    rows = [[getattr(item, column) for column in columns] for item in items]
+    write_rows(sys.stdout, fmt, columns, rows)
+
+
 def _cell(value: object) -> Text:
     return Text("NULL", style="dim") if value is None else Text(str(value))
 
@@ -654,6 +662,7 @@ def list_command(
             "--remote", help="List every conversation Slack shows you, marking tracked ones."
         ),
     ] = False,
+    fmt: Annotated[OutputFormat, FORMAT_OPTION] = "table",
     root: Annotated[
         Path | None, typer.Option(metavar="DIR", help="The archive directory to use.")
     ] = None,
@@ -678,7 +687,10 @@ def list_command(
                 remote_rows = [
                     row for team in teams for row in list_remote(connector, team, archive)
                 ]
-            _print_remote(remote_rows)
+            if fmt == "table":
+                _print_remote(remote_rows)
+            else:
+                _write_dataclasses(fmt, RemoteRow, remote_rows)
             return
         global_config = read_global_config(services.env, services.home)
         settings = load_settings(archive_root, global_config, services.env, {})
@@ -692,7 +704,10 @@ def list_command(
         _fail(str(error))
     except SlarcError as error:
         _fail(str(error))
-    _print_listing(listing, settings)
+    if fmt == "table":
+        _print_listing(listing, settings)
+    else:
+        _write_dataclasses(fmt, ListRow, listing.rows)
 
 
 @app.command("search")
@@ -747,9 +762,7 @@ def search_command(
         err.print(NO_MATCHES, markup=False)
         raise typer.Exit(NO_MATCH_EXIT)
     if fmt != "table":
-        columns = [f.name for f in dataclasses.fields(SearchHit)]
-        rows = [dataclasses.astuple(hit) for hit in found.hits]
-        write_rows(sys.stdout, fmt, columns, rows)
+        _write_dataclasses(fmt, SearchHit, found.hits)
     else:
         for number, hit in enumerate(found.hits):
             if number:

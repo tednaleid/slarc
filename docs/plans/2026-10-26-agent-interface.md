@@ -217,14 +217,14 @@
 - [x] **Step 4.** Spec: update the `search` row and its paragraph.
 - [x] **Step 5.** Run `just check`, then commit: "Search by window, mentions and DM, with --limit and --format".
 
-### Task 6: `list --format`
+### Task 6 [done]: `list --format`
 
 **Files:** modify `src/slarc/cli.py` and `docs/spec.md`. Test: `tests/test_cli_list_search.py`.
 
-- [ ] **Step 1.** Write a failing test, `test_cli_list_format_jsonl_emits_one_item_per_line`. Its keys are `ListRow`'s fields, with `last_pull` as an ISO time.
-- [ ] **Step 2.** Run it and watch it fail.
-- [ ] **Step 3.** Implement using `write_rows`. In non-table formats, the Archive, Config and Settings lines and the downloads table and footer are not printed.
-- [ ] **Step 4.** Run `just check`, then commit: "Add --format to slarc list".
+- [x] **Step 1.** Write a failing test, `test_cli_list_format_jsonl_emits_one_item_per_line`. Its keys are `ListRow`'s fields, with `last_pull` as an ISO time.
+- [x] **Step 2.** Run it and watch it fail.
+- [x] **Step 3.** Implement using `write_rows`. In non-table formats, the Archive, Config and Settings lines and the downloads table and footer are not printed.
+- [x] **Step 4.** Run `just check`, then commit: "Add --format to slarc list".
 
 ### Task 7: Markdown message renderer
 

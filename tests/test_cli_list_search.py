@@ -114,6 +114,26 @@ def test_cli_search_filters_and_reports_no_matches(archive: Path, tmp_path: Path
     assert none.stderr.strip() == "No messages match."
 
 
+def test_cli_list_format_jsonl_emits_one_item_per_line(archive: Path, tmp_path: Path) -> None:
+    table = invoke(tmp_path, "list")
+    result = invoke(tmp_path, "list", "--format", "jsonl")
+    assert result.exit_code == 0, result.output
+    items = [json.loads(line) for line in result.stdout.splitlines()]
+    assert len(items) == table.stdout.count("naleidworkspace")
+    assert list(items[0]) == [
+        "workspace",
+        "conversation",
+        "kind",
+        "messages",
+        "last_pull",
+        "pending",
+        "skipped",
+        "status",
+    ]
+    assert "Archive:" not in result.stdout
+    assert "Downloads:" not in result.stdout
+
+
 def test_cli_list_prints_archive_config_and_items(archive: Path, tmp_path: Path) -> None:
     result = invoke(tmp_path, "list")
     assert result.exit_code == 0, result.output
