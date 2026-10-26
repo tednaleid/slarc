@@ -320,9 +320,10 @@ The entities below are DuckDB views over the lake's tables. Every key is prefixe
 
 | Entity | Source | Key | Fields |
 | --- | --- | --- | --- |
-| workspace | `run`, latest `auth` entry per team | team_id | domain, name, user ids seen, credential_source, last_auth_test |
+| workspace | `run`, latest `auth` entry per team | team_id | domain, name, user_id (the latest auth's user, which `me` names), user ids seen, credential_source, last_auth_test |
 | conversation | `directory_entry` kind `conversation`, newest row per id | (team_id, id) | kind ∈ channel, dm, group_dm; is_private; name (null for DM); dm_user_id; is_archived; is_shared; created; creator; topic; purpose; member_ids |
-| message | `message_version`, newest row per key | (team_id, channel_id, ts) | source_team, thread_ts, is_thread_parent, reply_count and latest_reply (computed from stored replies), author_kind ∈ user, bot, system; user_id, bot_id, subtype, text_mrkdwn, blocks_json, attachments_json, edited_ts, edited_by, is_broadcast, plain, hash, first_seen_at, last_seen_at, deleted_at |
+| message | `message_version`, newest row per key | (team_id, channel_id, ts) | source_team, thread_ts, is_thread_parent, reply_count and latest_reply (computed from stored replies), author_kind ∈ user, bot, system; user_id, bot_id, subtype, text_mrkdwn, blocks_json, attachments_json, edited_ts, edited_by, is_broadcast, plain, hash, first_seen_at, last_seen_at, deleted_at; posted_at and edited_at as TIMESTAMPTZ; thread_root_ts (thread_ts, else ts); is_reply |
+| message_readable | message with names and links resolved | (team_id, channel_id, ts) | workspace (domain), conversation (`#name`, `@user` or the group DM's name), thread_ts, posted_at, author (display name, else bot or app name), text (plain without its `Author: ` prefix, taken through the first `": "`), link (the message's Slack link), deleted_at, first_seen_at |
 | message_version | `message_version`, every row | (team_id, channel_id, ts, fetched_at, run) | hash (null for `deleted`), edited_ts |
 | reaction | unnested from message | (team_id, channel_id, ts, name) | name with skin tone, base_name, count, user_ids |
 | file | `directory_entry` kind `file`, newest row per id | (team_id, id) | name, title, mimetype, filetype, mode, size, is_external, external_url, permalink, blob, preview_text, width, height |

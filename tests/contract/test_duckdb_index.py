@@ -15,6 +15,7 @@ from slarc.adapters.lake import CATALOG
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.cli import app
 from slarc.domain.envelope import Envelope, Meta
+from slarc.domain.links import message_link
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem, run_from_envelope
 from slarc.ports import ArchiveReadFailed, Commit, SlarcError
 from tests.adapters.test_lake_store import assert_one_plain_sentence
@@ -33,6 +34,7 @@ VERSION = "0.1.0"
 
 VIEWS = [
     "message",
+    "message_readable",
     "message_version",
     "reaction",
     "file",
@@ -128,6 +130,65 @@ def test_message_view_one_row_per_key(archive: Path, ext_dir: Path) -> None:
         assert sorted(rows) == sorted(recorded_message_keys())
         query = f"SELECT plain, edited_ts FROM message WHERE ts = '{WAVE_PARENT}'"
         assert index.sql(query)[1] == [("edited text", "1792500000.000000")]
+
+
+def test_message_has_time_and_thread_columns(archive: Path, ext_dir: Path) -> None:
+    commit(archive, ext_dir, edit(ALL_NALEID, WAVE_PARENT, "edited text"))
+    with DuckDbQueryIndex(archive, ext_dir, FakeArchiveLock()) as index:
+        query = (
+            "SELECT posted_at = to_timestamp(1792410693.663869), "
+            "edited_at = to_timestamp(1792500000), thread_root_ts, is_reply "
+            f"FROM message WHERE ts = '{WAVE_PARENT}'"
+        )
+        assert index.sql(query)[1] == [(True, True, WAVE_PARENT, False)]
+        replies = index.sql(
+            "SELECT count(*), bool_and(thread_root_ts = thread_ts) FROM message "
+            f"WHERE thread_ts = '{WAVE_PARENT}' AND is_reply"
+        )[1]
+        assert replies == [(3, True)]
+        top = index.sql(
+            f"SELECT thread_root_ts, is_reply FROM message WHERE ts = '{FIXTURES_TOP}'"
+        )[1]
+        assert top == [(FIXTURES_TOP, False)]
+
+
+def test_readable_text_strips_the_author_prefix(archive: Path, ext_dir: Path) -> None:
+    commit(archive, ext_dir, edit(ALL_NALEID, WAVE_PARENT, "Dr: Who: says hello"))
+    with DuckDbQueryIndex(archive, ext_dir, FakeArchiveLock()) as index:
+        query = f"SELECT text FROM message_readable WHERE ts = '{FIXTURES_TOP}'"
+        assert index.sql(query)[1] == [("slarc seed v1",)]
+        # A display name holding ": " loses only what comes before its first ": ".
+        query = f"SELECT text FROM message_readable WHERE ts = '{WAVE_PARENT}'"
+        assert index.sql(query)[1] == [("Who: says hello",)]
+
+
+def test_readable_names_author_and_conversation(index: DuckDbQueryIndex) -> None:
+    query = (
+        f"SELECT workspace, conversation, author FROM message_readable WHERE ts = '{FIXTURES_TOP}'"
+    )
+    assert index.sql(query)[1] == [("naleidworkspace", "#slarc-fixtures", "Ted Naleid")]
+    columns = index.sql("SELECT * FROM message_readable LIMIT 0")[0]
+    assert columns == [
+        "team_id",
+        "workspace",
+        "channel_id",
+        "conversation",
+        "ts",
+        "thread_ts",
+        "posted_at",
+        "author",
+        "text",
+        "link",
+        "deleted_at",
+        "first_seen_at",
+    ]
+
+
+def test_readable_link_matches_message_link(index: DuckDbQueryIndex) -> None:
+    rows = index.sql("SELECT workspace, channel_id, ts, thread_ts, link FROM message_readable")[1]
+    assert rows
+    for domain, channel, ts, thread_ts, link in rows:
+        assert link == message_link(domain, channel, ts, thread_ts if thread_ts != ts else None)
 
 
 def test_message_version_counts_lines(archive: Path, ext_dir: Path) -> None:
@@ -265,12 +326,19 @@ def test_workspace_view_takes_latest_auth_per_team(archive: Path, ext_dir: Path)
     commit(archive, ext_dir, run=later_run(auth=[later, other]))
     with DuckDbQueryIndex(archive, ext_dir, FakeArchiveLock()) as index:
         query = (
-            "SELECT team_id, domain, user_ids, credential_source, last_auth_test "
+            "SELECT team_id, domain, user_id, user_ids, credential_source, last_auth_test "
             "FROM workspace ORDER BY team_id"
         )
         assert index.sql(query)[1] == [
-            ("T0CB5LYPVFA", "naleid-renamed", ["U0CA538UEN7", "U0OTHER"], "keychain", LATER),
-            ("T0OTHER", "other", ["U0X"], "keychain", LATER),
+            (
+                "T0CB5LYPVFA",
+                "naleid-renamed",
+                "U0OTHER",
+                ["U0CA538UEN7", "U0OTHER"],
+                "keychain",
+                LATER,
+            ),
+            ("T0OTHER", "other", "U0X", ["U0X"], "keychain", LATER),
         ]
         assert index.sql("SELECT name FROM workspace")[0] == ["name"]
 

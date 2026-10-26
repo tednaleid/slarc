@@ -9,7 +9,7 @@ from typing import Any
 import duckdb
 
 from slarc.adapters.lake import CATALOG, connect_lake, lake_errors
-from slarc.domain.links import message_link
+from slarc.domain.links import SLACK_HOST_SUFFIX, message_link
 from slarc.domain.plain import snippet
 from slarc.ports import ArchiveLock, ArchiveReadFailed, SearchHit, SlarcError
 
@@ -84,9 +84,10 @@ ENTITY_VIEWS = {
             FROM message_current
             WHERE deleted_at IS NULL AND thread_ts IS NOT NULL AND thread_ts <> ts
             GROUP BY ALL
-        )
+        ),
         -- A parent stored before its first reply has no thread_ts, and thread_ts is not
         -- hashed, so no later line adds it; stored replies make it a thread parent.
+        computed AS (
         SELECT m.team_id, m.channel_id, m.ts, m.source_team,
             CASE WHEN replies.reply_count IS NOT NULL THEN m.ts ELSE m.thread_ts END AS thread_ts,
             coalesce(m.thread_ts = m.ts OR replies.reply_count IS NOT NULL, false)
@@ -109,6 +110,14 @@ ENTITY_VIEWS = {
             m.plain, m.hash, m.first_seen_at, m.last_seen_at, m.deleted_at, m.object
         FROM message_current m
         LEFT JOIN replies USING (team_id, channel_id, ts)
+        )
+        SELECT * EXCLUDE (object),
+            to_timestamp(TRY_CAST(ts AS DOUBLE)) AS posted_at,
+            to_timestamp(TRY_CAST(edited_ts AS DOUBLE)) AS edited_at,
+            coalesce(thread_ts, ts) AS thread_root_ts,
+            coalesce(thread_ts <> ts, false) AS is_reply,
+            object
+        FROM computed
     """,
     "reaction": """
         SELECT team_id, channel_id, ts,
@@ -270,7 +279,7 @@ ENTITY_VIEWS = {
             WHERE user_id IS NOT NULL
             GROUP BY team_id
         )
-        SELECT latest.team_id, latest.domain, latest.name, seen.user_ids,
+        SELECT latest.team_id, latest.domain, latest.name, latest.user_id, seen.user_ids,
             latest.credential_source, latest.auth_test_at AS last_auth_test
         FROM entry latest
         LEFT JOIN seen USING (team_id)
@@ -290,6 +299,37 @@ ENTITY_VIEWS = {
     "download": """
         SELECT team AS team_id, target_kind, target, url, status, attempts, last_error
         FROM lake.main.download_state
+    """,
+    # Names and links resolved for reading. text is plain without its "Author: " prefix,
+    # taken through the first ": ", so a display name holding ": " keeps its later part.
+    "message_readable": f"""
+        SELECT m.team_id, coalesce(w.domain, m.team_id) AS workspace, m.channel_id,
+            coalesce(
+                CASE c.kind
+                    WHEN 'dm' THEN '@' || coalesce(dm_user.display, c.dm_user_id)
+                    WHEN 'channel' THEN '#' || c.name
+                    ELSE c.name
+                END,
+                m.channel_id
+            ) AS conversation,
+            m.ts, m.thread_ts, m.posted_at,
+            CASE WHEN m.user_id IS NOT NULL THEN coalesce(author.display, m.user_id)
+                ELSE coalesce(
+                    m.object -> 'bot_profile' ->> 'name', m.object ->> 'username', 'unknown'
+                )
+            END AS author,
+            regexp_replace(m.plain, '^.*?:( |$)', '') AS text,
+            'https://' || coalesce(w.domain, m.team_id) || '{SLACK_HOST_SUFFIX}/archives/'
+                || m.channel_id || '/p' || replace(m.ts, '.', '')
+                || CASE WHEN m.is_reply
+                    THEN '?thread_ts=' || m.thread_ts || '&cid=' || m.channel_id
+                    ELSE '' END AS link,
+            m.deleted_at, m.first_seen_at
+        FROM message m
+        LEFT JOIN "user" author ON author.team_id = m.team_id AND author.id = m.user_id
+        LEFT JOIN conversation c ON c.team_id = m.team_id AND c.id = m.channel_id
+        LEFT JOIN "user" dm_user ON dm_user.team_id = c.team_id AND dm_user.id = c.dm_user_id
+        LEFT JOIN workspace w ON w.team_id = m.team_id
     """,
 }
 

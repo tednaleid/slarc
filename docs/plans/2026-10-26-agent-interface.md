@@ -154,7 +154,7 @@
 - [x] **Step 4.** Spec: change pull's "YYYY-MM-DD in UTC" to the window grammar. Replace "date range" with "window" throughout.
 - [x] **Step 5.** Run `just check`, then commit: "Read --since and --until as local times, dates or ages".
 
-### Task 4: Friendlier message columns and `message_readable`
+### Task 4 [done]: Friendlier message columns and `message_readable`
 
 **Files:** modify `src/slarc/adapters/duckdb_index.py` (`ENTITY_VIEWS` and the `workspace` view), `docs/spec.md` (Data model table) and `docs/architecture.md`. Test: `tests/contract/test_duckdb_index.py`.
 
@@ -170,15 +170,15 @@
   - `text` is `plain` with everything through the first `": "` removed.
   - `link` is the permalink `message_link` builds, built in SQL.
 
-- [ ] **Step 1.** Write failing tests:
+- [x] **Step 1.** Write failing tests:
   - `test_message_has_time_columns`;
   - `test_readable_text_strips_the_author_prefix`, including a display name containing `": "`, which shows the documented limit;
   - `test_readable_link_matches_message_link`, which compares every recorded message's `link` with `domain.links.message_link`;
   - `test_workspace_names_the_auth_user`.
-- [ ] **Step 2.** Run them and watch them fail.
-- [ ] **Step 3.** Implement. Move `SEARCH`'s author and conversation expressions into `message_readable`, so that `SEARCH` can select from it in Task 5.
-- [ ] **Step 4.** Update the Data model table.
-- [ ] **Step 5.** Run `just check`, then commit: "Add time columns to message and a message_readable view".
+- [x] **Step 2.** Run them and watch them fail.
+- [x] **Step 3.** Implement. Move `SEARCH`'s author and conversation expressions into `message_readable`, so that `SEARCH` can select from it in Task 5.
+- [x] **Step 4.** Update the Data model table.
+- [x] **Step 5.** Run `just check`, then commit: "Add time columns to message and a message_readable view".
 
 ### Task 5: Search filters, formats and limit
 
