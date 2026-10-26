@@ -40,6 +40,10 @@ _Avoid_: metadata, catalog (the archive's catalog is a storage detail)
 The step at the end of a pull or removal that tidies the archive's files and, when no other command has the archive open, frees the space of what nothing needs any more.
 _Avoid_: cleanup, garbage collection, vacuum (except for the database step of that name)
 
+**Window**:
+The span of posting times a command limits messages to, from a start to an end, either of which may be open.
+_Avoid_: range, date range, period
+
 **Owning machine**:
 The one machine allowed to open an archive. Another machine must take ownership, once a synced folder has finished syncing, before it opens the archive.
 _Avoid_: host (except in messages naming it), owner (unqualified)
