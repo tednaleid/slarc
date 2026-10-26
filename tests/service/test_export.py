@@ -3,7 +3,6 @@
 import base64
 import os
 import re
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -17,7 +16,7 @@ from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
 from slarc.ports import Commit, SlarcError
 from slarc.service.export import Exported, export
 from tests.fakes import FakeArchiveLock, InMemoryBlobStore, InMemoryExportWriter
-from tests.recorded_fixtures import RECORDED_TEAM, recorded_blobs, recorded_lake
+from tests.recorded_fixtures import RECORDED_TEAM
 
 OUT = Path("exported")
 ALL_NALEID = "C0CA5396G03"
@@ -61,23 +60,6 @@ THREADS = {
         "1792427960.377109": ["1792427974.789599"],
     },
 }
-
-
-@pytest.fixture
-def archive(tmp_path: Path) -> Path:
-    return recorded_lake(tmp_path / "archive")
-
-
-@pytest.fixture
-def store(archive: Path, ext_dir: Path) -> Iterator[DuckLakeArchiveStore]:
-    store = DuckLakeArchiveStore(archive, ext_dir, FakeArchiveLock())
-    yield store
-    store.close()
-
-
-@pytest.fixture(scope="module")
-def blobs() -> InMemoryBlobStore:
-    return recorded_blobs()
 
 
 def run_export(

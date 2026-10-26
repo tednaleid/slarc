@@ -33,7 +33,7 @@ lazy from slarc.adapters.credentials import (
 lazy from slarc.adapters.desktop_session import DesktopSessionSource
 lazy from slarc.adapters.downloader import HttpDownloader
 lazy from slarc.adapters.duckdb_index import DuckDbQueryIndex
-lazy from slarc.adapters.export_writer import FsExportWriter
+lazy from slarc.adapters.export_writer import FsExportWriter, StdoutExportWriter
 lazy from slarc.adapters.host import host_name, machine_id
 lazy from slarc.adapters.lake import (
     CATALOG,
@@ -204,6 +204,10 @@ def shared_index(root: Path, archive: DuckLakeArchiveStore) -> Generator[QueryIn
 
 def export_writer() -> ExportWriter:
     return FsExportWriter()
+
+
+def stdout_writer() -> ExportWriter:
+    return StdoutExportWriter()
 
 
 @dataclass(frozen=True)

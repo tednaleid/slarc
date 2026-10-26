@@ -34,6 +34,7 @@ from slarc.domain.links import (
 from slarc.domain.render.blocks import render_message_html
 from slarc.domain.render.mrkdwn import emoji_html, render_mrkdwn_html
 from slarc.domain.tracking import DownloadState
+from slarc.domain.window import OPEN_WINDOW, Window
 from slarc.ports import (
     ArchiveStore,
     BlobStore,
@@ -43,11 +44,14 @@ from slarc.ports import (
     SlarcError,
 )
 from slarc.service.downloads import size_text
+from slarc.service.export_markdown import page_markdown
 from slarc.service.listing import workspace_domains
 from slarc.service.selectors import archived_conversation, only_workspace
 
 ISO_SECONDS = "%Y-%m-%dT%H:%M:%SZ"
 DEFAULT_TITLE = "slarc export"
+# The out path that sends a one-file export to standard output.
+STDOUT = Path("-")
 CONTENT_TYPE_EXTENSIONS = {
     "image/png": "png",
     "image/gif": "gif",
@@ -155,8 +159,13 @@ type FileKind = Literal[
 ]
 
 
+ExportFormat = Literal["html", "markdown"]
+
+
 @dataclass(frozen=True)
 class FileView:
+    """link is where to find a file the export does not hold; permalink is its Slack page."""
+
     kind: FileKind
     name: str
     src: str | None = None
@@ -165,6 +174,7 @@ class FileView:
     code: Markup | None = None
     note: str = ""
     link: str | None = None
+    permalink: str | None = None
 
 
 @dataclass(frozen=True)
@@ -199,6 +209,9 @@ class MessageView:
     deleted: Moment | None
     broadcast: Literal["to_channel", "from_thread"] | None
     thread_anchor: str | None
+    source: dict
+    context: bool = False
+    linked: bool = False
 
 
 @dataclass(frozen=True)
@@ -212,7 +225,8 @@ class Entry:
 
 @dataclass(frozen=True)
 class Page:
-    """A conversation's page, or with thread_ts a thread's; rows are its archived messages."""
+    """A conversation's page, or with thread_ts a thread's; rows are its archived messages in
+    the window, plus parents older than the window, marked context. count leaves those out."""
 
     filename: str
     name: str
@@ -223,6 +237,7 @@ class Page:
     team: str
     channel: str
     rows: list[dict]
+    window: Window = OPEN_WINDOW
 
     @property
     def section_id(self) -> str:
@@ -255,16 +270,24 @@ def export(
     blobs: BlobStore,
     archive: ArchiveStore,
     writer: ExportWriter,
+    *,
+    fmt: ExportFormat = "html",
+    window: Window = OPEN_WINDOW,
+    whole_conversation: bool = False,
+    local_zone: tzinfo = UTC,
 ) -> Exported:
     """Writes what selectors name and returns where, the directory or the file with single_file,
     with what it holds.
 
     A workspace selector names every tracked conversation of the workspace, and every tracked
-    thread or message whose conversation is not tracked itself, that has archived messages.
-    Without out, the export goes to slarc-export-<first conversation's name>, or the first
-    workspace's domain, under the current directory.
+    thread or message whose conversation is not tracked itself, that has archived messages in
+    the window. With whole_conversation a message link names its whole conversation. Without
+    out, the export goes to slarc-export-<first conversation's name>, or the first workspace's
+    domain, under the current directory; out STDOUT writes one file to standard output.
+    Markdown shows times in tz, else local_zone; HTML shows them in tz, else the viewer's zone.
     """
-    zone = _zone(tz)
+    markdown = fmt == "markdown"
+    zone = _zone(tz) if tz or not markdown else local_zone
     domains = {domain: team for team, domain in workspace_domains(index).items()}
     used: dict[str, str] = {}
     styles: dict[str, str] = {}
@@ -274,13 +297,13 @@ def export(
         team = _team(selector, domains, archive)
         if team not in workspaces:
             workspaces[team] = _Workspace.load(
-                team, archive, blobs, single_file, used, styles, zone
+                team, archive, blobs, single_file, used, styles, zone, markdown
             )
         workspace = workspaces[team]
         if isinstance(selector, WorkspaceSel):
-            found = _workspace_pages(selector, workspace, index, archive, include_deleted)
+            found = _workspace_pages(selector, workspace, index, archive, include_deleted, window)
         else:
-            found = [_page(selector, workspace, index, include_deleted)]
+            found = [_page(selector, workspace, index, include_deleted, window, whole_conversation)]
         for page in found:
             pages.setdefault(page.filename, page)
     first = next(iter(pages.values()))
@@ -288,7 +311,23 @@ def export(
         stem = selectors[0].domain
     else:
         stem = first.name + (f"-{first.thread_ts}" if first.thread_ts else "")
-    default = "slarc-export-" + (UNSAFE_FILENAME.sub("-", stem).strip("-.") or "export")
+    default = Path("slarc-export-" + (UNSAFE_FILENAME.sub("-", stem).strip("-.") or "export"))
+    if markdown:
+        team_domains = {team: domain for domain, team in domains.items()}
+        texts = {
+            page.filename: page_markdown(
+                page, team_domains.get(page.team, page.team), workspaces[page.team].view, zone, tz
+            )
+            for page in pages.values()
+        }
+        if single_file or out == STDOUT:
+            target = out if out == STDOUT else _suffixed(out or default, ".md")
+            writer.write(target, "\n\n".join(texts.values()).encode())
+        else:
+            target = out or default
+            for filename, text in texts.items():
+                writer.write(target / _markdown_name(filename), text.encode())
+        return _exported(target, pages.values(), workspaces.values())
     css = _static("viewer.css") + HtmlFormatter().get_style_defs(".highlight")
     if single_file:
         css += "".join(
@@ -297,15 +336,15 @@ def export(
     js = _static("viewer.js")
     common = {"tz": tz, "inline": single_file, "css": Markup(css), "js": Markup(js)}
     conversation = _templates().get_template("conversation.html.j2")
-    if single_file:
-        target = _html_path(out or Path(default))
+    if single_file or out == STDOUT:
+        target = out if out == STDOUT else _suffixed(out or default, ".html", ".htm")
         title = next(iter(pages.values())).title if len(pages) == 1 else DEFAULT_TITLE
         html = conversation.render(
             title=title, pages=list(pages.values()), nav=len(pages) > 1, **common
         )
         writer.write(target, html.encode())
         return _exported(target, pages.values(), workspaces.values())
-    target = out or Path(default)
+    target = out or default
     index_html = (
         _templates()
         .get_template("index.html.j2")
@@ -330,6 +369,8 @@ def _exported(path: Path, pages: Iterable[Page], workspaces: Iterable[_Workspace
         if page.thread_ts is not None:
             threads.add((page.team, page.channel, page.thread_ts))
         for row in page.rows:
+            if row.get("context"):
+                continue
             messages[(page.team, page.channel, row["ts"])] = row["object"]
             parent = row["thread_ts"]
             if parent is not None and parent != row["ts"]:
@@ -382,8 +423,15 @@ def _zone(tz: str | None) -> tzinfo:
         raise SlarcError(f"Unknown time zone '{tz}'. Use a name such as America/Chicago.") from None
 
 
-def _html_path(path: Path) -> Path:
-    return path if path.suffix.lower() in (".html", ".htm") else path.with_name(path.name + ".html")
+def _suffixed(path: Path, suffix: str, *also: str) -> Path:
+    """path, with suffix added unless it already ends in it or one of also."""
+    if path.suffix.lower() in (suffix, *also):
+        return path
+    return path.with_name(path.name + suffix)
+
+
+def _markdown_name(filename: str) -> str:
+    return filename.removesuffix(".html") + ".md"
 
 
 def _team(selector: Selector, domains: dict[str, str], archive: ArchiveStore) -> str:
@@ -408,8 +456,9 @@ def _workspace_pages(
     index: QueryIndex,
     archive: ArchiveStore,
     include_deleted: bool,
+    window: Window,
 ) -> list[Page]:
-    """The pages of a workspace's tracked items that have messages."""
+    """The pages of a workspace's tracked items that have messages in the window."""
     tracked = [item for item in archive.tracked_items().values() if item.team_id == workspace.team]
     conversations = {item.channel for item in tracked if item.kind == "conversation"}
     pages = []
@@ -422,9 +471,11 @@ def _workspace_pages(
         else:
             continue
         try:
-            pages.append(_page(item_selector, workspace, index, include_deleted))
+            pages.append(_page(item_selector, workspace, index, include_deleted, window, False))
         except _NoMessages:
             continue
+    if not pages and window != OPEN_WINDOW:
+        raise SlarcError(f"No messages of workspace {selector.domain} fall in the window.")
     if not pages:
         raise SlarcError(
             f"The archive holds no messages for workspace {selector.domain}. Pull it first."
@@ -443,19 +494,41 @@ def _page(
     workspace: _Workspace,
     index: QueryIndex,
     include_deleted: bool,
+    window: Window,
+    whole_conversation: bool,
 ) -> Page:
+    """The page a selector names: a conversation's, or a message link's thread, or with
+    whole_conversation the conversation the link is in. A message the link names is marked
+    linked, and a thread parent older than the window comes along marked context."""
     team = workspace.team
+    linked = selector.ts if isinstance(selector, MessageSel) else None
+    if isinstance(selector, MessageSel) and whole_conversation:
+        selector = ConversationSel(selector.domain, selector.channel, None, None)
     channel = _channel(selector, workspace)
     label = workspace.view.conversation_label(channel)
     if isinstance(selector, ConversationSel):
-        rows = index.messages(team, channel, None, None, include_deleted)
+        rows = index.messages(team, channel, window.since, window.until, include_deleted)
+        if window != OPEN_WINDOW:
+            rows = _with_parents(rows, index, team, channel, include_deleted)
         filename, title, thread_ts = f"{channel}.html", label, None
+        named = label
     else:
         thread_ts = selector.thread_ts or _thread_of(index, team, channel, selector.ts)
-        rows = index.thread(team, channel, thread_ts, include_deleted)
+        rows = [
+            row
+            for row in index.thread(team, channel, thread_ts, include_deleted)
+            if row["ts"] == thread_ts or window.contains(row["ts"])
+        ]
         filename, title = f"{channel}-{thread_ts}.html", f"Thread in {label}"
+        named = f"the thread in {label}"
     rows = [row for row in rows if row["object"] is not None]
-    if not rows:
+    for row in rows:
+        row["context"] = not window.contains(row["ts"])
+        row["linked"] = row["ts"] == linked
+    shown = [row for row in rows if not row["context"]]
+    if not shown and window != OPEN_WINDOW:
+        raise _NoMessages(f"No messages of {named} fall in the window.")
+    if not shown:
         raise _NoMessages(f"The archive holds no messages for {title}. Pull it first.")
     messages = _top_level(rows, channel, workspace, thread_ts is not None)
     return Page(
@@ -463,12 +536,33 @@ def _page(
         name=workspace.view.conversation_name(channel),
         thread_ts=thread_ts,
         title=title,
-        count=len(rows),
+        count=len(shown),
         entries=_entries(messages),
         team=team,
         channel=channel,
         rows=rows,
+        window=window,
     )
+
+
+def _with_parents(
+    rows: list[dict], index: QueryIndex, team: str, channel: str, include_deleted: bool
+) -> list[dict]:
+    """rows, plus the parent of each thread whose replies are in rows but whose parent is not,
+    in ts order."""
+    present = {row["ts"] for row in rows}
+    missing = {
+        row["thread_ts"]
+        for row in rows
+        if row["thread_ts"] and row["thread_ts"] != row["ts"] and row["thread_ts"] not in present
+    }
+    parents = [
+        row
+        for ts in sorted(missing, key=MessageTs)
+        for row in index.thread(team, channel, ts, include_deleted)
+        if row["ts"] == ts
+    ]
+    return sorted([*rows, *parents], key=lambda row: MessageTs(row["ts"])) if parents else rows
 
 
 def _thread_of(index: QueryIndex, team: str, channel: str, ts: str) -> str:
@@ -608,6 +702,7 @@ class _Workspace:
     assets: _Assets
     downloads: dict[tuple[str, str], DownloadState]
     zone: tzinfo
+    markdown: bool = False
     missing_files: set[str] = field(default_factory=set)
 
     @classmethod
@@ -620,6 +715,7 @@ class _Workspace:
         used: dict[str, str],
         styles: dict[str, str],
         zone: tzinfo,
+        markdown: bool = False,
     ) -> _Workspace:
         emoji = archive.directory_objects(team, "emoji")
         view = DirectoryView(
@@ -642,7 +738,7 @@ class _Workspace:
             file_states=archive.directory_state(team, "file"),
             file_objects=archive.directory_objects(team, "file"),
         )
-        return cls(team, archive, blobs, view, assets, archive.downloads(), zone)
+        return cls(team, archive, blobs, view, assets, archive.downloads(), zone, markdown)
 
     def thread(
         self, rows: list[dict], parent: MessageView, channel: str, thread_page: bool
@@ -691,15 +787,21 @@ class _Workspace:
             time=self.moment(_seconds(row["ts"])),
             author_time=self.author_time(message, _seconds(row["ts"])) if named else "",
             edited=self.moment(_seconds(edited)) if edited and not system else None,
-            body=render_message_html(message, self.view, self.assets),
-            attachments=self.attachments(message),
+            # Markdown renders the body, attachments and reactions from source.
+            body=Markup("")
+            if self.markdown
+            else render_message_html(message, self.view, self.assets),
+            attachments=[] if self.markdown else self.attachments(message),
             files=[self.file(entry) for entry in _dicts(message.get("files"))],
-            reactions=self.reactions(message),
+            reactions=[] if self.markdown else self.reactions(message),
             thread=thread,
             system=system,
             deleted=self.moment(_parse_iso(deleted_at)) if deleted_at else None,
             broadcast=broadcast,
             thread_anchor=_thread_anchor(channel, parent) if broadcast == "from_thread" else None,
+            source=message,
+            context=bool(row.get("context")),
+            linked=bool(row.get("linked")),
         )
 
     def moment(self, seconds: int) -> Moment:
@@ -813,33 +915,37 @@ class _Workspace:
         name = _text(obj.get("title")) or _text(obj.get("name")) or file_id or "file"
         mode = obj.get("mode")
         mimetype = _text(obj.get("mimetype"))
+        permalink = obj.get("permalink")
+        permalink = permalink if is_web_url(permalink) else None
         if mode == "tombstone":
             return FileView("tombstone", name)
         if mode == "hidden_by_limit":
-            return FileView("hidden_by_limit", name)
+            return FileView("hidden_by_limit", name, permalink=permalink)
         if obj.get("is_external") or mode == "external":
             link = obj.get("external_url")
             return FileView("external", name, link=link if is_web_url(link) else None)
+        size = obj.get("size")
+        shown_size = size_text(size) if isinstance(size, int) else ""
+        if mode == "snippet" and self.markdown:
+            return FileView("snippet", name, size=shown_size, permalink=permalink)
         if mode == "snippet":
             return self.snippet(file_id, obj, name)
         src = self.assets.file_src(file_id)
-        size = obj.get("size")
-        shown_size = size_text(size) if isinstance(size, int) else ""
         if src is None:
             self.missing_files.add(file_id)
             state = self.downloads.get((self.team, file_id))
-            link = obj.get("permalink")
             return FileView(
                 "too_large" if state and state.status == "too_large" else "missing",
                 name,
                 size=shown_size,
-                link=link if is_web_url(link) else None,
+                link=permalink,
+                permalink=permalink,
             )
         kind: FileKind = "download"
         for prefix in ("image", "video", "audio"):
             if mimetype.startswith(prefix + "/"):
                 kind = prefix
-        return FileView(kind, name, src, mimetype, shown_size)
+        return FileView(kind, name, src, mimetype, shown_size, permalink=permalink)
 
     def snippet(self, file_id: str, obj: dict, name: str) -> FileView:
         """A snippet's full text from its blob, highlighted, or its preview without a blob."""

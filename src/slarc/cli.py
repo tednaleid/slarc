@@ -33,7 +33,7 @@ from slarc.domain.window import Window
 from slarc.formats import OutputFormat, write_rows
 from slarc.ports import ItemProgress, NoArchive, NoSession, SearchHit, SlarcError
 lazy from slarc.service.auth import AuthStatus, auth_status, store_pasted
-lazy from slarc.service.export import Exported, export
+lazy from slarc.service.export import STDOUT, Exported, ExportFormat, export
 lazy from slarc.service.listing import (
     ArchiveListing,
     ListedDownload,
@@ -790,13 +790,25 @@ def export_command(
         typer.Option(
             "--out",
             metavar="DIR",
-            help="Directory to write, or the HTML file with --single-file. "
-            "Default: slarc-export-<conversation name or workspace> here.",
+            help="Directory to write, or the file with --single-file; - writes one file to "
+            "stdout. Default: slarc-export-<conversation name or workspace> here.",
         ),
     ] = None,
+    fmt: Annotated[
+        ExportFormat,
+        typer.Option(
+            "--format", help="html for a browser; markdown to read as text, without assets."
+        ),
+    ] = "html",
+    channel: Annotated[
+        bool,
+        typer.Option("--channel", help="Export the whole conversation a message link is in."),
+    ] = False,
+    since: Annotated[str | None, typer.Option(metavar="WHEN", help=SINCE_HELP)] = None,
+    until: Annotated[str | None, typer.Option(metavar="WHEN", help=UNTIL_HELP)] = None,
     single_file: Annotated[
         bool,
-        typer.Option("--single-file", help="Write one HTML file with every asset inlined."),
+        typer.Option("--single-file", help="Write one file, with every HTML asset inlined."),
     ] = False,
     include_deleted: Annotated[
         bool,
@@ -806,7 +818,8 @@ def export_command(
         str | None,
         typer.Option(
             metavar="ZONE",
-            help="Show times in this zone, such as America/Chicago, instead of the viewer's.",
+            help="Show times in this zone, such as America/Chicago, instead of the viewer's "
+            "(HTML) or this machine's (markdown).",
         ),
     ] = None,
     open_page: Annotated[
@@ -816,12 +829,15 @@ def export_command(
         Path | None, typer.Option(metavar="DIR", help="The archive directory to use.")
     ] = None,
 ) -> None:
-    """Write static HTML of the archived conversations and threads the links name."""
+    """Write static HTML or markdown of the archived conversations and threads the links name."""
     try:
         parsed = [parse_selector(text) for text in selectors]
     except ValueError as error:
         _fail(str(error))
     services: bootstrap.Services = ctx.obj
+    now = services.clock.now()
+    window = _window(since, until, now)
+    to_stdout = out_path == STDOUT
     try:
         archive_root = _existing_archive(root, services.env, services.home)
         global_config = read_global_config(services.env, services.home)
@@ -839,13 +855,22 @@ def export_command(
                 index,
                 blobs,
                 archive,
-                bootstrap.export_writer(),
+                bootstrap.stdout_writer() if to_stdout else bootstrap.export_writer(),
+                fmt=fmt,
+                window=window,
+                whole_conversation=channel,
+                local_zone=now.astimezone().tzinfo or UTC,
             )
     except SlarcError as error:
         _fail(str(error))
-    page = (exported.path if single_file else exported.path / "index.html").absolute()
-    out.print(f"Exported {_exported_parts(exported)} to", markup=False)
-    out.print(Text(str(page), style=Style(link=page.as_uri())))
+    if to_stdout:
+        err.print(f"Exported {_exported_parts(exported)} to stdout.", markup=False)
+        page = None
+    else:
+        out.print(f"Exported {_exported_parts(exported)} to", markup=False)
+        is_dir = not single_file and fmt == "html"
+        page = (exported.path / "index.html" if is_dir else exported.path).absolute()
+        out.print(Text(str(page), style=Style(link=page.as_uri())))
     if exported.files_missing:
         missing = _plural(exported.files_missing, "file")
         verb = "is" if exported.files_missing == 1 else "are"
@@ -854,7 +879,7 @@ def export_command(
             f"{missing} {verb} not in the export; run slarc list {listed} to see why.",
             markup=False,
         )
-    if open_page and not services.open_page(page.as_uri()):
+    if open_page and page is not None and not services.open_page(page.as_uri()):
         err.print("No browser could be opened; open the page above instead.", markup=False)
 
 

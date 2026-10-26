@@ -138,7 +138,8 @@ section.conversation > header h1 {
 }
 
 .permalink,
-.edited {
+.edited,
+.context-note {
   color: var(--muted);
   font-size: 12px;
   text-decoration: none;

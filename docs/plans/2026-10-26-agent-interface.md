@@ -249,7 +249,7 @@
 - [x] **Step 3.** Implement. Share list nesting with `blocks.py` by moving `_List`, `_Item` and the grouping walk into a helper both renderers call, so the nesting logic exists once.
 - [x] **Step 4.** Run `just check`, then commit: "Render message bodies as markdown".
 
-### Task 8: Export markdown, windows, `--channel` and stdout
+### Task 8 [done]: Export markdown, windows, `--channel` and stdout
 
 **Files:**
 - Modify: `src/slarc/service/export.py`, `src/slarc/cli.py`, `src/slarc/bootstrap.py` (a stdout `ExportWriter`), `src/slarc/ports.py` if `ExportWriter` needs it, `docs/spec.md` and `README.md`.
@@ -285,7 +285,7 @@ Body text
 - A window with no start reads `the start`, and one with no end reads `now`.
 
 **Steps:**
-- [ ] **Step 1.** Write failing tests:
+- [x] **Step 1.** Write failing tests:
   - `test_markdown_page_has_header_threads_files_and_reactions`;
   - `test_markdown_window_marks_an_older_parent_as_context`;
   - `test_window_drops_workspace_conversations_without_messages_in_it`;
@@ -293,14 +293,14 @@ Body text
   - `test_html_export_honors_the_window`;
   - `test_cli_export_to_stdout_keeps_notes_on_stderr`, where stdout equals the rendered page exactly;
   - `test_cli_export_markdown_directory_has_one_md_per_page`.
-- [ ] **Step 2.** Run them and watch them fail.
-- [ ] **Step 3.** Implement:
+- [x] **Step 2.** Run them and watch them fail.
+- [x] **Step 3.** Implement:
   - `--out -` makes the export one file written by the stdout writer, and the CLI prints the "Exported" lines to stderr;
   - the default directory name stays `slarc-export-<name>`, with `.md` files;
   - `--channel` with a `MessageSel` becomes a `ConversationSel` of its channel, keeping the linked ts;
   - context parents come from `index.thread` and are added once, before their first windowed reply.
-- [ ] **Step 4.** Spec and README: update the export row and section, with an example of `--format markdown --out -`.
-- [ ] **Step 5.** Run `just check`, then commit: "Export markdown, honor windows, and export a link's whole conversation".
+- [x] **Step 4.** Spec and README: update the export row and section, with an example of `--format markdown --out -`.
+- [x] **Step 5.** Run `just check`, then commit: "Export markdown, honor windows, and export a link's whole conversation".
 
 ### Task 9: Schema comments and `sql --help` examples
 

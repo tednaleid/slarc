@@ -16,6 +16,9 @@
 {% if m.edited %}
 <time class="edited" datetime="{{ m.edited.iso }}" data-format="edited" title="Edited {{ m.edited.full }}">(edited)</time>
 {% endif %}
+{% if m.context %}
+<span class="context-note" title="Older than the export's window; shown for its replies">(context)</span>
+{% endif %}
 </div>
 {% if m.deleted %}
 <div class="deleted-marker">Deleted from Slack, noticed <time datetime="{{ m.deleted.iso }}" data-format="full">{{ m.deleted.full }}</time></div>

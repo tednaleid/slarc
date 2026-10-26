@@ -174,3 +174,59 @@ def test_cli_export_without_archive_fails(tmp_path: Path, monkeypatch) -> None:
     result = invoke(tmp_path, "export", "#all-naleid")
     assert result.exit_code == 2
     assert "No slarc archive found" in result.output
+
+
+def test_cli_export_to_stdout_keeps_notes_on_stderr(archive: Path, tmp_path: Path) -> None:
+    result = invoke(
+        tmp_path,
+        "export",
+        "#all-naleid",
+        "--format",
+        "markdown",
+        "--out",
+        "-",
+        "--root",
+        str(archive),
+    )
+    assert result.exit_code == 0, result.output
+    assert result.stdout.startswith("# #all-naleid (naleidworkspace)\n")
+    assert "Exported" not in result.stdout
+    assert result.stderr.startswith("Exported 1 workspace, 1 conversation")
+    assert list((tmp_path / "work").iterdir()) == []
+
+
+def test_cli_export_markdown_directory_has_one_md_per_page(archive: Path, tmp_path: Path) -> None:
+    result = invoke(
+        tmp_path, "export", "naleidworkspace", "--format", "markdown", "--root", str(archive)
+    )
+    assert result.exit_code == 0, result.output
+    out = tmp_path / "work" / "slarc-export-naleidworkspace"
+    names = {path.name for path in out.iterdir()}
+    assert "C0CA5396G03.md" in names
+    assert all(name.endswith(".md") for name in names)
+    assert result.stdout.splitlines()[-1] == str(out)
+
+
+def test_cli_export_window_and_channel(archive: Path, tmp_path: Path) -> None:
+    link = "https://naleidworkspace.slack.com/archives/C0CA5396G03/p1792427577619569"
+    result = invoke(
+        tmp_path,
+        "export",
+        link,
+        "--channel",
+        "--since",
+        "2000-01-01",
+        "--format",
+        "markdown",
+        "--out",
+        "-",
+        "--root",
+        str(archive),
+    )
+    assert result.exit_code == 0, result.output
+    assert result.stdout.count("(linked)") == 1
+    empty = invoke(
+        tmp_path, "export", "#all-naleid", "--until", "2000-01-01", "--root", str(archive)
+    )
+    assert empty.exit_code == 2
+    assert "fall in the window" in empty.stderr
