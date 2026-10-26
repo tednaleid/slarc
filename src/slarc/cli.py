@@ -3,6 +3,7 @@
 import dataclasses
 import shlex
 import signal
+import sys
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +29,7 @@ from slarc.config import (
     read_global_config,
 )
 from slarc.domain.links import WorkspaceSel, parse_selector
+from slarc.formats import OutputFormat, write_rows
 from slarc.ports import ItemProgress, NoArchive, NoSession, SlarcError
 lazy from slarc.service.auth import AuthStatus, auth_status, store_pasted
 lazy from slarc.service.export import Exported, export
@@ -83,6 +85,10 @@ NOTHING_REMOVED = "Nothing removed."
 CANNOT_PULL_AGAIN = "Messages deleted from Slack since they were pulled cannot be pulled again."
 LEFTOVERS = "what is left of removed items"
 SPACE_FREED_LATER = "the space is freed when the running slarc command finishes"
+FORMAT_OPTION = typer.Option(
+    "--format",
+    help="table for people; jsonl or csv for scripts, never truncated.",
+)
 
 
 def _print_version(value: bool) -> None:
@@ -499,6 +505,7 @@ def _cell(value: object) -> Text:
 def sql_command(
     ctx: typer.Context,
     query: Annotated[str, typer.Argument(help="A DuckDB query over the archive's views.")],
+    fmt: Annotated[OutputFormat, FORMAT_OPTION] = "table",
     root: Annotated[
         Path | None, typer.Option(metavar="DIR", help="The archive directory to use.")
     ] = None,
@@ -511,6 +518,9 @@ def sql_command(
             columns, rows = index.sql(query)
     except SlarcError as error:
         _fail(str(error))
+    if fmt != "table":
+        write_rows(sys.stdout, fmt, columns, rows)
+        return
     table = Table()
     for column in columns:
         table.add_column(Text(column), overflow="fold")

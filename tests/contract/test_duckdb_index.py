@@ -1,5 +1,6 @@
 # ABOUTME: Tests for the DuckDB query index over a lake loaded from the recorded test workspace.
 # ABOUTME: Covers latest-wins views, deleted messages, repeated rows, lake errors and `slarc sql`.
+import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -518,6 +519,13 @@ def test_cli_sql_uses_root_flag(archive: Path, tmp_path: Path) -> None:
     result = run_sql(tmp_path, "SELECT count(*) AS n FROM conversation", "--root", str(archive))
     assert result.exit_code == 0, result.output
     assert "5" in result.output
+
+
+def test_cli_sql_format_jsonl_is_parseable_and_untruncated(archive: Path, tmp_path: Path) -> None:
+    query = "SELECT repeat('x', 500) AS t, 2 AS n"
+    result = run_sql(tmp_path, query, "--format", "jsonl", "--root", str(archive))
+    assert result.exit_code == 0, result.output
+    assert [json.loads(line) for line in result.stdout.splitlines()] == [{"t": "x" * 500, "n": 2}]
 
 
 def test_cli_sql_without_archive_fails(tmp_path: Path, monkeypatch) -> None:

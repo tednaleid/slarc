@@ -112,7 +112,7 @@
 - [x] **Step 4.** Spec: add the stdout rule and the exit-code table under Commands.
 - [x] **Step 5.** Run `just check`, then commit: "Keep stdout for results and exit 2 on errors, 1 on no matches".
 
-### Task 2: Output formats and `sql --format`
+### Task 2 [done]: Output formats and `sql --format`
 
 **Files:** create `src/slarc/formats.py`; modify `src/slarc/cli.py`. Test: create `tests/test_formats.py`, and extend `tests/test_cli.py`.
 
@@ -122,14 +122,14 @@
   - JSONL writes one object per row, keyed by column. Values are converted as follows: datetimes become ISO 8601 with their offset, `Decimal` and UUIDs become strings, lists and dicts stay as they are, and bytes become base64.
   - CSV writes a header row, then the rows, with `None` as an empty cell.
 
-- [ ] **Step 1.** Write failing tests:
+- [x] **Step 1.** Write failing tests:
   - `test_jsonl_writes_one_object_per_row_with_iso_times`;
   - `test_csv_writes_header_and_empty_cells_for_null`;
   - `test_cli_sql_format_jsonl_is_parseable_and_untruncated`, which takes a 500-character text value from `sql "SELECT repeat('x', 500) AS t"`.
-- [ ] **Step 2.** Run them and watch them fail.
-- [ ] **Step 3.** Implement. `sql` gets `--format` (`typer.Option`, a `click.Choice` of the three values). The table path is unchanged.
-- [ ] **Step 4.** Spec: update the `sql` row of the command table.
-- [ ] **Step 5.** Run `just check`, then commit: "Add --format jsonl and csv to slarc sql".
+- [x] **Step 2.** Run them and watch them fail.
+- [x] **Step 3.** Implement. `sql` gets `--format` (`typer.Option`, a `click.Choice` of the three values). The table path is unchanged.
+- [x] **Step 4.** Spec: update the `sql` row of the command table.
+- [x] **Step 5.** Run `just check`, then commit: "Add --format jsonl and csv to slarc sql".
 
 ### Task 3: Window grammar
 
