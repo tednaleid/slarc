@@ -335,6 +335,63 @@ ENTITY_VIEWS = {
     "message_readable": f"SELECT {READABLE_COLUMNS} FROM message m {READABLE_JOINS}",
 }
 
+# One line per view and per column a reader may not guess, shown by duckdb_views() and
+# duckdb_columns(). Times named *_at without a type are ISO 8601 UTC strings.
+VIEW_COMMENTS = {
+    "message_row": "Every stored message row; the message views read the lake through it.",
+    "message_version": "Every stored version of every message, one row per observed change.",
+    "message_current": "The newest version of each message; message builds on it.",
+    "message": "The current version of each message, with thread and author facts.",
+    "message_readable": "Each current message with names, text and its Slack link resolved.",
+    "reaction": "One row per emoji reaction on a current message.",
+    "message_file": "The files attached to each current message, in order.",
+    "file": "Each file a message referenced, with its metadata and blob.",
+    "image": "Each image URL (previews, avatars, icons) with its downloaded blob.",
+    "user": "Each user of a workspace, newest profile.",
+    "user_snapshot": "Every stored version of each user's profile.",
+    "bot": "Each bot of a workspace.",
+    "emoji": "Each custom emoji of a workspace.",
+    "usergroup": "Each usergroup (@handle) of a workspace, with its members.",
+    "conversation": "Each channel, DM and group DM a workspace's directory holds.",
+    "run": "Each command that wrote to the archive, such as a pull or rm.",
+    "workspace": "Each workspace in the archive, from its latest auth.",
+    "tracked_item": "Each conversation, thread or message the archive keeps pulling.",
+    "download": "Each file or image download not yet saved, and why.",
+}
+COLUMN_COMMENTS = {
+    "message": {
+        "ts": "Slack's message id and posting time, as seconds.micros text.",
+        "thread_ts": "The thread parent's ts for a reply or a parent; null outside threads.",
+        "is_thread_parent": "True when the message starts a thread with stored replies.",
+        "author_kind": "user, bot or system (joins, topic changes and the like).",
+        "text_mrkdwn": "Slack's raw mrkdwn, with <@U...> mention tokens.",
+        "plain": "Plain text with names resolved, prefixed by the author and a colon.",
+        "first_seen_at": "When a pull first stored the message.",
+        "last_seen_at": "When a pull last stored a version of the message.",
+        "deleted_at": "When slarc noticed Slack no longer returns the message; else null.",
+        "posted_at": "When the message was posted.",
+        "edited_at": "When the message was last edited; else null.",
+        "thread_root_ts": "thread_ts, else ts: group by it to gather each thread.",
+        "is_reply": "True for a reply inside a thread.",
+    },
+    "message_readable": {
+        "team_id": "The workspace's team id.",
+        "workspace": "The workspace's domain, as in its slack.com address.",
+        "channel_id": "The conversation's id.",
+        "conversation": "#channel, @user for a DM, or the group DM's name.",
+        "ts": "Slack's message id and posting time, as seconds.micros text.",
+        "thread_ts": "The thread parent's ts for a reply or a parent; null outside threads.",
+        "posted_at": "When the message was posted.",
+        "author": "The author's display name, else the bot or app name.",
+        "text": "The message as plain text with names resolved.",
+        "link": "The message's Slack link.",
+        "deleted_at": "When slarc noticed Slack no longer returns the message; else null.",
+        "first_seen_at": "When a pull first stored the message.",
+    },
+    "workspace": {"user_id": "The user of the latest auth, whom me names in search."},
+    "run": {"started": "When the run started; first_seen_at at or after it is new in it."},
+}
+
 # Matches newest first, the plain text ILIKE $pattern when one is given. A user filter names
 # a user by id, name, display name or real name, or "me", each workspace's latest auth user.
 # Mentions match <@ID> and <!subteam^ID> tokens of the user's usergroups, not system messages.
@@ -380,6 +437,22 @@ MESSAGE_COLUMNS = """
     latest_reply, author_kind, user_id, bot_id, subtype, edited_ts, edited_by, plain,
     deleted_at, object
 """
+
+
+def _comments() -> list[str]:
+    statements = [
+        f'COMMENT ON VIEW "{name}" IS {_quoted(text)}' for name, text in VIEW_COMMENTS.items()
+    ]
+    statements += [
+        f'COMMENT ON COLUMN "{view}"."{column}" IS {_quoted(text)}'
+        for view, columns in COLUMN_COMMENTS.items()
+        for column, text in columns.items()
+    ]
+    return statements
+
+
+def _quoted(text: str) -> str:
+    return "'" + text.replace("'", "''") + "'"
 
 
 def _like_pattern(text: str) -> str:
@@ -429,7 +502,13 @@ class DuckDbQueryIndex:
             self._db.execute("USE memory")
             self._db.execute(
                 ";\n".join(
-                    f'CREATE VIEW "{name}" AS {query}' for name, query in ENTITY_VIEWS.items()
+                    [
+                        *(
+                            f'CREATE VIEW "{name}" AS {query}'
+                            for name, query in ENTITY_VIEWS.items()
+                        ),
+                        *_comments(),
+                    ]
                 )
             )
         except BaseException:

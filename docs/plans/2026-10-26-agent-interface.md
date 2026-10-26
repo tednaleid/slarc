@@ -302,16 +302,16 @@ Body text
 - [x] **Step 4.** Spec and README: update the export row and section, with an example of `--format markdown --out -`.
 - [x] **Step 5.** Run `just check`, then commit: "Export markdown, honor windows, and export a link's whole conversation".
 
-### Task 9: Schema comments and `sql --help` examples
+### Task 9 [done]: Schema comments and `sql --help` examples
 
 **Files:** modify `src/slarc/adapters/duckdb_index.py` (a `VIEW_COMMENTS` dict that the index applies after creating the views) and `src/slarc/cli.py` (the `sql` docstring as help, with Typer's `rich_markup_mode` off for that text, or examples in an epilog). Tests: `tests/contract/test_duckdb_index.py` and `tests/test_cli.py`.
 
-- [ ] **Step 1.** Write failing tests:
+- [x] **Step 1.** Write failing tests:
   - `test_every_view_has_a_comment`, using `duckdb_views()` where `internal = false`;
   - `test_readable_columns_have_comments`;
   - `test_sql_help_shows_examples`.
-- [ ] **Step 2.** Run them and watch them fail.
-- [ ] **Step 3.** Implement. Comments are one line each, in glossary terms. Measure `slarc sql "SELECT 1"` with and without them. If the comments add more than 10 ms, apply them in one `execute` with the view DDL.
+- [x] **Step 2.** Run them and watch them fail.
+- [x] **Step 3.** Implement. Comments are one line each, in glossary terms. Measure `slarc sql "SELECT 1"` with and without them. If the comments add more than 10 ms, apply them in one `execute` with the view DDL.
 
   The help examples:
   - list the views: `SELECT view_name, comment FROM duckdb_views() WHERE NOT internal`;
@@ -319,7 +319,7 @@ Body text
   - a conversation since a date;
   - mentions of me;
   - what the latest pull added: `first_seen_at >= (SELECT max(started) FROM run WHERE command = 'pull')`, with the cast the column needs.
-- [ ] **Step 4.** Run `just check`, then commit: "Describe the views in DuckDB comments and show sql examples".
+- [x] **Step 4.** Run `just check`, then commit: "Describe the views in DuckDB comments and show sql examples".
 
 ### Task 10: `slarc guide`
 

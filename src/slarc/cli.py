@@ -509,7 +509,30 @@ def _cell(value: object) -> Text:
     return Text("NULL", style="dim") if value is None else Text(str(value))
 
 
-@app.command("sql")
+SQL_EXAMPLES = """Examples:
+
+  # the views, then one view's columns, each with a description
+  slarc sql "SELECT view_name, comment FROM duckdb_views() WHERE NOT internal"
+  slarc sql "SELECT column_name, data_type, comment FROM duckdb_columns()
+    WHERE table_name = 'message_readable'"
+
+  # a conversation since a date, oldest first, as JSON Lines
+  slarc sql --format jsonl "SELECT posted_at, author, text, link FROM message_readable
+    WHERE conversation = '#general' AND posted_at >= DATE '2026-10-19' ORDER BY posted_at"
+
+  # messages that mention me, the user of each workspace's latest auth
+  slarc sql "SELECT r.posted_at, r.conversation, r.author, r.text, r.link
+    FROM message_readable r JOIN message m USING (team_id, channel_id, ts)
+    JOIN workspace w USING (team_id)
+    WHERE contains(m.text_mrkdwn, '<@' || w.user_id) AND m.author_kind <> 'system'"
+
+  # what the latest pull added
+  slarc sql "SELECT conversation, author, text, link FROM message_readable
+    WHERE first_seen_at >= (SELECT max(started) FROM run WHERE command = 'pull')"
+"""
+
+
+@app.command("sql", epilog=SQL_EXAMPLES)
 def sql_command(
     ctx: typer.Context,
     query: Annotated[str, typer.Argument(help="A DuckDB query over the archive's views.")],

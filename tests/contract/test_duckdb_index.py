@@ -184,6 +184,26 @@ def test_readable_names_author_and_conversation(index: DuckDbQueryIndex) -> None
     ]
 
 
+def test_every_view_has_a_comment(index: DuckDbQueryIndex) -> None:
+    rows = index.sql("SELECT view_name, comment FROM duckdb_views() WHERE NOT internal")[1]
+    assert {name for name, _ in rows} >= set(VIEWS)
+    assert [name for name, comment in rows if not comment] == []
+
+
+def test_readable_columns_have_comments(index: DuckDbQueryIndex) -> None:
+    rows = index.sql(
+        "SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'message_readable'"
+    )[1]
+    assert [name for name, comment in rows if not comment] == []
+
+
+def test_sql_help_shows_examples(tmp_path: Path) -> None:
+    result = run_sql(tmp_path, "--help")
+    assert result.exit_code == 0, result.output
+    assert "duckdb_views()" in result.stdout
+    assert "FROM message_readable" in result.stdout
+
+
 def test_readable_link_matches_message_link(index: DuckDbQueryIndex) -> None:
     rows = index.sql("SELECT workspace, channel_id, ts, thread_ts, link FROM message_readable")[1]
     assert rows
