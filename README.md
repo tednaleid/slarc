@@ -36,6 +36,7 @@ slarc export https://yourworkspace.slack.com/archives/C0123456789 --out ./share 
 slarc export acme --open                                                      # static HTML of everything tracked in workspace acme, opened in the browser
 slarc export '#general' --since 7d --format markdown --out -                 # the last week of #general as markdown on stdout, threads quoted
 slarc rm https://yourworkspace.slack.com/archives/C0123456789                 # stop tracking it and delete what only it kept (asks first)
+slarc guide                                                                   # how agents and scripts should read the archive
 slarc --take-ownership list                                                   # take the archive over from the machine that last used it, once it has synced
 ```
 

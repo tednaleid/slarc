@@ -450,6 +450,10 @@ class _NoMessages(SlarcError):
     """A selected conversation or thread has no archived messages."""
 
 
+class EmptyWindow(_NoMessages):
+    """A selected conversation, thread or workspace has no messages in the window."""
+
+
 def _workspace_pages(
     selector: WorkspaceSel,
     workspace: _Workspace,
@@ -475,7 +479,7 @@ def _workspace_pages(
         except _NoMessages:
             continue
     if not pages and window != OPEN_WINDOW:
-        raise SlarcError(f"No messages of workspace {selector.domain} fall in the window.")
+        raise EmptyWindow(f"No messages of workspace {selector.domain} fall in the window.")
     if not pages:
         raise SlarcError(
             f"The archive holds no messages for workspace {selector.domain}. Pull it first."
@@ -527,7 +531,7 @@ def _page(
         row["linked"] = row["ts"] == linked
     shown = [row for row in rows if not row["context"]]
     if not shown and window != OPEN_WINDOW:
-        raise _NoMessages(f"No messages of {named} fall in the window.")
+        raise EmptyWindow(f"No messages of {named} fall in the window.")
     if not shown:
         raise _NoMessages(f"The archive holds no messages for {title}. Pull it first.")
     messages = _top_level(rows, channel, workspace, thread_ts is not None)

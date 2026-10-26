@@ -321,19 +321,19 @@ Body text
   - what the latest pull added: `first_seen_at >= (SELECT max(started) FROM run WHERE command = 'pull')`, with the cast the column needs.
 - [x] **Step 4.** Run `just check`, then commit: "Describe the views in DuckDB comments and show sql examples".
 
-### Task 10: `slarc guide`
+### Task 10 [done]: `slarc guide`
 
 **Files:**
 - Create: `src/slarc/data/guide.md`.
 - Modify: `src/slarc/cli.py` (the `guide` command, plus a top-level help line: `Agents and scripts: run slarc guide for workflows, output formats and exit codes.`), `docs/spec.md` (Goals gains agent use; the command table gains `guide`) and `README.md`.
 - Test: create `tests/test_guide.py`.
 
-- [ ] **Step 1.** Write failing tests:
+- [x] **Step 1.** Write failing tests:
   - `test_guide_prints_the_packaged_guide`;
   - `test_help_points_to_the_guide`;
   - `test_guide_examples_run_against_the_recorded_archive`. It extracts each line starting with `slarc ` from the guide's sh blocks, except `pull` and `rm`, and runs it through `CliRunner` with `--root` set to a `recorded_lake`. It asserts exit 0 or 1 and valid JSON on every stdout line when `--format jsonl` is present. Guide examples use fixture names (`#all-naleid`) and dates inside the fixture data.
-- [ ] **Step 2.** Run them and watch them fail.
-- [ ] **Step 3.** Write the guide, in this order:
+- [x] **Step 2.** Run them and watch them fail.
+- [x] **Step 3.** Write the guide, in this order:
   - **What slarc is:** two lines.
   - **What an agent may run** (Decision 21, with `rm` in bold).
   - **Recipes**, each a sh block:
@@ -346,7 +346,7 @@ Body text
   - **Output formats and exit codes.**
   - **Reading results:** links, `ts` and `posted_at`, `thread_ts`.
   - **The views worth knowing,** with `message_readable` first, and how to list the rest.
-- [ ] **Step 4.** Run `just check`, then commit: "Add slarc guide for agents".
+- [x] **Step 4.** Run `just check`, then commit: "Add slarc guide for agents".
 
 ### Task 11: Finish
 

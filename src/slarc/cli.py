@@ -6,6 +6,7 @@ import signal
 import sys
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from importlib.resources import files
 from pathlib import Path
 from types import FrameType, TracebackType
 from typing import Annotated, Any, NoReturn
@@ -33,7 +34,7 @@ from slarc.domain.window import Window
 from slarc.formats import OutputFormat, write_rows
 from slarc.ports import ItemProgress, NoArchive, NoSession, SearchHit, SlarcError
 lazy from slarc.service.auth import AuthStatus, auth_status, store_pasted
-lazy from slarc.service.export import STDOUT, Exported, ExportFormat, export
+lazy from slarc.service.export import STDOUT, EmptyWindow, Exported, ExportFormat, export
 lazy from slarc.service.listing import (
     ArchiveListing,
     ListedDownload,
@@ -48,7 +49,8 @@ lazy from slarc.service.search import DEFAULT_LIMIT, search
 lazy from slarc.unit_of_work import UnitOfWork
 
 app = typer.Typer(
-    help="Archive the Slack conversations you can see into searchable, re-renderable files.",
+    help="Archive the Slack conversations you can see into searchable, re-renderable files.\n\n"
+    "Agents and scripts: run slarc guide for workflows, output formats and exit codes.",
     no_args_is_help=True,
 )
 
@@ -884,6 +886,9 @@ def export_command(
                 whole_conversation=channel,
                 local_zone=now.astimezone().tzinfo or UTC,
             )
+    except EmptyWindow as error:
+        err.print(str(error), markup=False)
+        raise typer.Exit(NO_MATCH_EXIT) from None
     except SlarcError as error:
         _fail(str(error))
     if to_stdout:
@@ -976,6 +981,12 @@ def _removal_result(removal: Removal, maintained: bool | None) -> str:
         kept = _plural(removal.kept_messages, "message")
         result += f" Kept {kept} that other tracked items cover."
     return result
+
+
+@app.command("guide")
+def guide_command() -> None:
+    """Explain to agents and scripts how to read the archive: recipes, formats, exit codes."""
+    sys.stdout.write(files("slarc").joinpath("data/guide.md").read_text(encoding="utf-8"))
 
 
 @app.command("rm")

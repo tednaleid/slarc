@@ -228,5 +228,5 @@ def test_cli_export_window_and_channel(archive: Path, tmp_path: Path) -> None:
     empty = invoke(
         tmp_path, "export", "#all-naleid", "--until", "2000-01-01", "--root", str(archive)
     )
-    assert empty.exit_code == 2
-    assert "fall in the window" in empty.stderr
+    assert empty.exit_code == 1
+    assert empty.stderr.strip() == "No messages of #all-naleid fall in the window."

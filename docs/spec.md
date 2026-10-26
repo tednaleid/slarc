@@ -21,6 +21,7 @@ Python 3.15 with uv, `slack_sdk`, Typer and DuckDB. Hexagonal architecture in th
 7. Decent speed: a 100k-message channel in minutes, not hours.
 8. Fast unit tests that never touch the network.
 9. Several workspaces in one archive (`team_id` in every key).
+10. Agents and scripts can read the archive without wrapper scripts or hand-written joins: machine-readable output, windows, mention filters, markdown export, described views, plain exit codes, and `slarc guide` to explain them. `pull` and `rm` stay human-directed.
 
 **Non-goals**
 
@@ -45,11 +46,12 @@ The CLI is the product's surface, so it stays small and each command does a lot.
 | `slarc rm SELECTOR... [--channel] [--yes]` | Stops tracking what the links name and deletes the messages, files, images and blobs that no remaining tracked item needs. It shows a summary and asks first (default No); `--yes` skips the prompt. A selector naming only already removed items finishes an interrupted removal. The removal is committed at once and rm never waits for other commands. The space is freed when rm ends, or, if another slarc command has the archive open, when a later pull or rm finds it idle; rm then says the messages are no longer in the archive and the space is freed when the running slarc command finishes |
 | `slarc auth [--paste]` | Lists the Slack sessions found and who the user is in each workspace. `--paste` prompts for a browser token and cookie and stores them in the OS keychain |
 | `slarc sql QUERY [--format table\|jsonl\|csv]` | Runs a DuckDB query against the archive's views; the escape hatch. `table` (the default) is for people; `jsonl` prints one JSON object per row and `csv` a header row then the rows, never truncated, with times in ISO 8601. Each view, and each column a reader may not guess, has a one-line description in `duckdb_views()` and `duckdb_columns()`; `slarc sql --help` shows example queries |
+| `slarc guide` | Prints the guide for agents and scripts, packaged with slarc: what they may run (`rm` only when the user explicitly asks), recipes as runnable commands, windows, output formats, exit codes, how to read results and which views to query. `slarc --help` points to it. A test runs every read command in it against the recorded archive |
 | `slarc serve` | Planned: a local web viewer over one archive |
 
 `pull`, `list`, `search`, `export` and `rm` accept the same selectors: a Slack link, a conversation id, `#channel-name` or `@user` for a DM. `pull`, `export` and `rm` also accept a workspace name such as `acme`, which stands for everything tracked in that workspace; `search --in` does not. Only `pull` and `auth` need Slack credentials. Every command that opens the archive checks its owner record, the machine that last used it. On another machine it stops with a message naming that host; once the synced folder holding the archive has finished syncing, the global option `slarc --take-ownership <command>` takes the archive over for this machine. Developer tooling (fixture recording, the LevelDB comparison check, test workspace seeding) lives in `just` recipes, not in the CLI.
 
-Stdout carries only a command's result, so it can be piped. Notes, hints, warnings, "nothing matched" messages, progress and errors go to stderr. Every command exits 0 when it succeeds, 2 when it fails (a bad selector or query, no archive, rejected credentials, a declined prompt), and 130 when interrupted; `search` exits 1 when nothing matches, as grep does. `sql` exits 0 on an empty result.
+Stdout carries only a command's result, so it can be piped. Notes, hints, warnings, "nothing matched" messages, progress and errors go to stderr. Every command exits 0 when it succeeds, 2 when it fails (a bad selector or query, no archive, rejected credentials, a declined prompt), and 130 when interrupted; `search` exits 1 when nothing matches, as grep does, and so does `export` when no message falls in its window. `sql` exits 0 on an empty result.
 
 **Links**
 
@@ -398,7 +400,7 @@ Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cas
 
 ## Status
 
-slarc pulls conversations, threads and single messages with windows, search-based reply discovery, active-thread re-reads, `--full` and delete inference; downloads files and images; keeps the users, emoji, usergroups and bots directory; and provides `auth`, `list`, `search`, `sql`, `export` and `rm`. The desktop session is read on macOS and Linux, with env and paste fallbacks.
+slarc pulls conversations, threads and single messages with windows, search-based reply discovery, active-thread re-reads, `--full` and delete inference; downloads files and images; keeps the users, emoji, usergroups and bots directory; and provides `auth`, `list`, `search`, `sql`, `export`, `rm` and `guide`. The desktop session is read on macOS and Linux, with env and paste fallbacks.
 
 **Acceptance criteria**, checked live by `just acceptance` against the test workspace:
 
