@@ -17,7 +17,7 @@ from slarc.cli import app
 from slarc.domain.envelope import Envelope, Meta
 from slarc.domain.links import message_link
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem, run_from_envelope
-from slarc.ports import ArchiveReadFailed, Commit, SlarcError
+from slarc.ports import ArchiveReadFailed, Commit, SearchFilter, SlarcError
 from tests.adapters.test_lake_store import assert_one_plain_sentence
 from tests.fakes import FakeArchiveLock, FakeKeyring
 from tests.jsonl_loader import jsonl_envelopes
@@ -539,7 +539,7 @@ def test_bad_sql_raises_one_line_slarc_error(index: DuckDbQueryIndex) -> None:
 
 
 QUERIES: dict[str, Callable[[DuckDbQueryIndex], object]] = {
-    "search": lambda index: index.search("wave", None, None, 10),
+    "search": lambda index: index.search(SearchFilter(text="wave", limit=10)),
     "conversation_counts": lambda index: index.conversation_counts(),
     "messages": lambda index: index.messages(RECORDED_TEAM, ALL_NALEID, None, None, False),
     "thread": lambda index: index.thread(RECORDED_TEAM, ALL_NALEID, WAVE_PARENT, False),

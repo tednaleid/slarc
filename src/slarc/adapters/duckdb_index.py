@@ -9,9 +9,9 @@ from typing import Any
 import duckdb
 
 from slarc.adapters.lake import CATALOG, connect_lake, lake_errors
-from slarc.domain.links import SLACK_HOST_SUFFIX, message_link
+from slarc.domain.links import SLACK_HOST_SUFFIX
 from slarc.domain.plain import snippet
-from slarc.ports import ArchiveLock, ArchiveReadFailed, SearchHit, SlarcError
+from slarc.ports import ArchiveLock, ArchiveReadFailed, SearchFilter, SearchHit, SlarcError
 
 # Slack ts strings ordered as numbers.
 TS_ORDER = "TRY_CAST({} AS DECIMAL(18, 6))"
@@ -25,6 +25,36 @@ LATEST_DIRECTORY_ROW = """
     QUALIFY row_number() OVER (
         PARTITION BY team, id ORDER BY fetched_at DESC, run DESC, blob NULLS LAST, hash
     ) = 1
+"""
+
+# message_readable's columns over `message m` and the joins they need; SEARCH selects the same.
+READABLE_COLUMNS = f"""
+    m.team_id, coalesce(w.domain, m.team_id) AS workspace, m.channel_id,
+    coalesce(
+        CASE c.kind
+            WHEN 'dm' THEN '@' || coalesce(dm_user.display, c.dm_user_id)
+            WHEN 'channel' THEN '#' || c.name
+            ELSE c.name
+        END,
+        m.channel_id
+    ) AS conversation,
+    m.ts, m.thread_ts, m.posted_at,
+    CASE WHEN m.user_id IS NOT NULL THEN coalesce(author.display, m.user_id)
+        ELSE coalesce(m.object -> 'bot_profile' ->> 'name', m.object ->> 'username', 'unknown')
+    END AS author,
+    regexp_replace(m.plain, '^.*?:( |$)', '') AS text,
+    'https://' || coalesce(w.domain, m.team_id) || '{SLACK_HOST_SUFFIX}/archives/'
+        || m.channel_id || '/p' || replace(m.ts, '.', '')
+        || CASE WHEN m.is_reply
+            THEN '?thread_ts=' || m.thread_ts || '&cid=' || m.channel_id
+            ELSE '' END AS link,
+    m.deleted_at, m.first_seen_at
+"""
+READABLE_JOINS = """
+    LEFT JOIN "user" author ON author.team_id = m.team_id AND author.id = m.user_id
+    LEFT JOIN conversation c ON c.team_id = m.team_id AND c.id = m.channel_id
+    LEFT JOIN "user" dm_user ON dm_user.team_id = c.team_id AND dm_user.id = c.dm_user_id
+    LEFT JOIN workspace w ON w.team_id = m.team_id
 """
 
 # The message views read the lake only through message_row, which messages() and thread()
@@ -302,68 +332,47 @@ ENTITY_VIEWS = {
     """,
     # Names and links resolved for reading. text is plain without its "Author: " prefix,
     # taken through the first ": ", so a display name holding ": " keeps its later part.
-    "message_readable": f"""
-        SELECT m.team_id, coalesce(w.domain, m.team_id) AS workspace, m.channel_id,
-            coalesce(
-                CASE c.kind
-                    WHEN 'dm' THEN '@' || coalesce(dm_user.display, c.dm_user_id)
-                    WHEN 'channel' THEN '#' || c.name
-                    ELSE c.name
-                END,
-                m.channel_id
-            ) AS conversation,
-            m.ts, m.thread_ts, m.posted_at,
-            CASE WHEN m.user_id IS NOT NULL THEN coalesce(author.display, m.user_id)
-                ELSE coalesce(
-                    m.object -> 'bot_profile' ->> 'name', m.object ->> 'username', 'unknown'
-                )
-            END AS author,
-            regexp_replace(m.plain, '^.*?:( |$)', '') AS text,
-            'https://' || coalesce(w.domain, m.team_id) || '{SLACK_HOST_SUFFIX}/archives/'
-                || m.channel_id || '/p' || replace(m.ts, '.', '')
-                || CASE WHEN m.is_reply
-                    THEN '?thread_ts=' || m.thread_ts || '&cid=' || m.channel_id
-                    ELSE '' END AS link,
-            m.deleted_at, m.first_seen_at
-        FROM message m
-        LEFT JOIN "user" author ON author.team_id = m.team_id AND author.id = m.user_id
-        LEFT JOIN conversation c ON c.team_id = m.team_id AND c.id = m.channel_id
-        LEFT JOIN "user" dm_user ON dm_user.team_id = c.team_id AND dm_user.id = c.dm_user_id
-        LEFT JOIN workspace w ON w.team_id = m.team_id
-    """,
+    "message_readable": f"SELECT {READABLE_COLUMNS} FROM message m {READABLE_JOINS}",
 }
 
-# Matches newest first. Authors and conversations are named as DirectoryView names them, and a
-# link's domain falls back to the team id for a workspace no run line has authenticated.
+# Matches newest first, the plain text ILIKE $pattern when one is given. A user filter names
+# a user by id, name, display name or real name, or "me", each workspace's latest auth user.
+# Mentions match <@ID> and <!subteam^ID> tokens of the user's usergroups, not system messages.
+USER_MATCH = """
+    SELECT team_id, id FROM "user"
+    WHERE {param} = id OR lower({param}) IN (lower(name), lower(display_name), lower(real_name))
+    UNION
+    SELECT team_id, user_id FROM workspace WHERE lower({param}) = 'me' AND user_id IS NOT NULL
+"""
 SEARCH = f"""
-    SELECT m.team_id, m.channel_id, m.ts, m.thread_ts, m.plain,
-        CASE WHEN m.user_id IS NOT NULL THEN coalesce(author.display, m.user_id)
-            ELSE coalesce(
-                m.object -> 'bot_profile' ->> 'name', m.object ->> 'username', 'unknown'
-            )
-        END AS author,
-        coalesce(
-            CASE c.kind
-                WHEN 'dm' THEN '@' || coalesce(dm_user.display, c.dm_user_id)
-                WHEN 'channel' THEN '#' || c.name
-                ELSE c.name
-            END,
-            m.channel_id
-        ) AS conversation,
-        coalesce(w.domain, m.team_id) AS domain
-    FROM message m
-    LEFT JOIN "user" author ON author.team_id = m.team_id AND author.id = m.user_id
-    LEFT JOIN conversation c ON c.team_id = m.team_id AND c.id = m.channel_id
-    LEFT JOIN "user" dm_user ON dm_user.team_id = c.team_id AND dm_user.id = c.dm_user_id
-    LEFT JOIN workspace w ON w.team_id = m.team_id
+    WITH sender AS ({USER_MATCH.format(param="$from_user")}),
+        mentioned AS ({USER_MATCH.format(param="$mentions")}),
+        mention_token AS (
+            SELECT team_id, '<@' || id || '>' AS token FROM mentioned
+            UNION SELECT team_id, '<@' || id || '|' FROM mentioned
+            UNION SELECT g.team_id, '<!subteam^' || g.id FROM usergroup g
+                JOIN mentioned u ON u.team_id = g.team_id AND list_contains(g.user_ids, u.id)
+        )
+    SELECT {READABLE_COLUMNS}, m.plain
+    FROM message m {READABLE_JOINS}
     WHERE m.deleted_at IS NULL
-        AND m.plain ILIKE $pattern ESCAPE '\\'
+        AND ($pattern IS NULL OR m.plain ILIKE $pattern ESCAPE '\\')
         AND ($in_channel IS NULL OR m.channel_id = $in_channel OR c.name = $in_channel)
-        AND ($from_user IS NULL OR m.user_id = $from_user OR lower($from_user) IN (
-            lower(author.name), lower(author.display_name), lower(author.real_name)
+        AND ($in_dm_user IS NULL OR c.kind = 'dm' AND (c.dm_user_id = $in_dm_user
+            OR lower($in_dm_user) IN (
+                lower(dm_user.name), lower(dm_user.display_name), lower(dm_user.real_name)
+            )))
+        AND ($from_user IS NULL OR EXISTS (
+            SELECT 1 FROM sender WHERE sender.team_id = m.team_id AND sender.id = m.user_id
         ))
+        AND ($mentions IS NULL OR m.author_kind <> 'system' AND EXISTS (
+            SELECT 1 FROM mention_token t
+            WHERE t.team_id = m.team_id AND contains(m.text_mrkdwn, t.token)
+        ))
+        AND ($since IS NULL OR {TS_ORDER.format("m.ts")} > {TS_ORDER.format("$since")})
+        AND ($until IS NULL OR {TS_ORDER.format("m.ts")} < {TS_ORDER.format("$until")})
     ORDER BY {TS_ORDER.format("m.ts")} DESC, m.team_id, m.channel_id
-    LIMIT $limit
+    {{limit}}
 """
 
 MESSAGE_COLUMNS = """
@@ -452,32 +461,20 @@ class DuckDbQueryIndex:
         except duckdb.Error as error:
             raise SlarcError(_error_message(error)) from None
 
-    def search(
-        self, text: str, in_channel: str | None, from_user: str | None, limit: int
-    ) -> list[SearchHit]:
-        """Current messages whose plain text contains text, ignoring case, newest first.
-
-        in_channel is a conversation id or name; from_user a user id, name, display name or
-        real name, compared ignoring case.
-        """
+    def search(self, query: SearchFilter) -> list[SearchHit]:
         params = {
-            "pattern": _like_pattern(text),
-            "in_channel": in_channel,
-            "from_user": from_user,
-            "limit": limit,
+            "pattern": _like_pattern(query.text) if query.text else None,
+            "in_channel": query.in_channel,
+            "in_dm_user": query.in_dm_user,
+            "from_user": query.from_user,
+            "mentions": query.mentions,
+            "since": query.window.since,
+            "until": query.window.until,
         }
+        limit = f"LIMIT {int(query.limit)}" if query.limit else ""
         with lake_errors(self._catalog, ArchiveReadFailed):
-            rows = self._db.execute(SEARCH, params).fetchall()
-        return [
-            SearchHit(
-                author=author,
-                conversation=conversation,
-                ts=ts,
-                snippet=snippet(plain, text),
-                link=message_link(domain, channel, ts, thread_ts if thread_ts != ts else None),
-            )
-            for _, channel, ts, thread_ts, plain, author, conversation, domain in rows
-        ]
+            rows = self._db.execute(SEARCH.format(limit=limit), params).fetchall()
+        return [SearchHit(*row[:-1], snippet=snippet(row[-1], query.text or "")) for row in rows]
 
     def conversation_counts(self) -> dict[tuple[str, str], int]:
         with lake_errors(self._catalog, ArchiveReadFailed):

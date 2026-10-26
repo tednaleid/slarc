@@ -14,6 +14,7 @@ from slarc.ports import (
     Commit,
     CommitConflict,
     Committed,
+    SearchFilter,
     SearchHit,
     SlarcError,
 )
@@ -61,9 +62,7 @@ class WorkspaceIndex:
         assert "FROM workspace" in query
         return ["team_id", "domain"], [(TEAM, "naleidworkspace"), (OTHER_TEAM, "other")]
 
-    def search(
-        self, text: str, in_channel: str | None, from_user: str | None, limit: int
-    ) -> list[SearchHit]:
+    def search(self, query: SearchFilter) -> list[SearchHit]:
         raise AssertionError("rm does not search")
 
     def conversation_counts(self) -> dict[tuple[str, str], int]:

@@ -56,3 +56,7 @@ class Window:
         return (self.since is None or MessageTs(ts) > self.since) and (
             self.until is None or MessageTs(ts) < self.until
         )
+
+
+# A window with both sides open.
+OPEN_WINDOW = Window()

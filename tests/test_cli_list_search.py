@@ -1,5 +1,6 @@
 # ABOUTME: Tests for the `slarc list` and `slarc search` commands over a copy of the recorded data.
 # ABOUTME: Credentials and Slack are fakes swapped in through bootstrap; only --remote uses them.
+import json
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -59,6 +60,45 @@ def test_cli_search_prints_hits(archive: Path, tmp_path: Path) -> None:
     assert lines[0] == f"Ted Naleid in #slarc-fixtures, {when}"
     assert "slarc seed v1" in lines[1]
     assert lines[2].strip() == SEED_LINK
+
+
+def test_cli_search_format_jsonl_keys(archive: Path, tmp_path: Path) -> None:
+    result = invoke(tmp_path, "search", "SLARC SEED V1", "--format", "jsonl")
+    assert result.exit_code == 0, result.output
+    [hit] = [json.loads(line) for line in result.stdout.splitlines()]
+    assert list(hit) == [
+        "team_id",
+        "workspace",
+        "channel_id",
+        "conversation",
+        "ts",
+        "thread_ts",
+        "posted_at",
+        "author",
+        "text",
+        "link",
+        "deleted_at",
+        "first_seen_at",
+        "snippet",
+    ]
+    assert hit["link"] == SEED_LINK
+    assert datetime.fromisoformat(hit["posted_at"]).timestamp() == 1792437061.952039
+
+
+def test_cli_search_limit_hint_on_stderr(archive: Path, tmp_path: Path) -> None:
+    result = invoke(tmp_path, "search", "--in", "#all-naleid", "--limit", "2")
+    assert result.exit_code == 0, result.output
+    assert result.stdout.count("/archives/") == 2
+    assert result.stderr.strip() == "Showing 2; --limit for more."
+
+
+def test_cli_search_takes_a_window(archive: Path, tmp_path: Path) -> None:
+    result = invoke(tmp_path, "search", "--since", "2000-01-01", "--until", "2000-01-02")
+    assert result.exit_code == 1
+    assert result.stderr.strip() == "No messages match."
+    bad = invoke(tmp_path, "search", "seed", "--since", "last week")
+    assert bad.exit_code == 2
+    assert bad.stderr.startswith("--since must be a date")
 
 
 def test_cli_search_filters_and_reports_no_matches(archive: Path, tmp_path: Path) -> None:

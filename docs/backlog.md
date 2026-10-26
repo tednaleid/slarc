@@ -44,7 +44,6 @@ Known problems and future work, grouped by theme. Each line says what is wrong o
 - `slarc list` loads every message of each tracked item to count them, through raw SQL on `QueryIndex.sql` instead of a narrow method (`service/listing.py`).
 - `service/listing.py` imports `Settings` from `config.py`; move it to a pure module or pass the fields.
 - `slarc list` shows the team id as the domain when no run has an `auth` entry for the workspace (`service/listing.py`).
-- `slarc search --in @user` is refused although the spec gives `search` pull's selectors (`service/search.py`, `SEARCH` in `adapters/duckdb_index.py`).
 - With `--root DIR` and no `slarc.toml`, `NoArchive` still says "here or in any parent directory" (`ports.py`, `cli.py`).
 - `FsBlobStore` write failures surface as a raw `OSError` traceback, and `export_writer.py` raises a plain `SlarcError` rather than `ArchiveWriteFailed` (`adapters/blob_store.py`, `adapters/export_writer.py`).
 - A failing `ROLLBACK` replaces the error that caused it, in the store's `_transaction` and in `_record_owner` (`adapters/lake_store.py`, `adapters/lake.py`).

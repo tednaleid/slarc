@@ -30,6 +30,7 @@ slarc pull --full                                                             # 
 slarc pull acme --retry-skipped                                               # also try again the downloads skipped in acme
 slarc list                                                                    # the archive, its config files and each tracked item
 slarc search "deploy" --in '#general'                                         # archived messages, newest first, with their Slack links
+slarc search --mentions me --since 7d --format jsonl                          # what mentioned you this week, one JSON object per line
 slarc sql "SELECT channel_id, count(*) FROM message GROUP BY 1"               # DuckDB over the archive's views
 slarc export https://yourworkspace.slack.com/archives/C0123456789 --out ./share  # static HTML
 slarc export acme --open                                                      # static HTML of everything tracked in workspace acme, opened in the browser

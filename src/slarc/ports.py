@@ -9,6 +9,7 @@ from typing import Literal, Protocol
 
 from slarc.domain.envelope import Envelope, Kind
 from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem
+from slarc.domain.window import Window
 
 PASTE_HINT = "Run `slarc auth --paste` to store a token and cookie instead."
 
@@ -293,21 +294,46 @@ class ArchiveLock(Protocol):
 
 
 @dataclass(frozen=True)
-class SearchHit:
-    """A stored message matching a search; ts is the message's Slack ts, link its permalink."""
+class SearchFilter:
+    """What a search matches. Every field narrows it; text is matched in plain, ignoring case.
 
-    author: str
+    in_channel is a conversation id or name, in_dm_user a user a DM is with. from_user and
+    mentions are a user id, name, display name or real name, or "me", the user of each
+    workspace's latest auth. limit 0 means no limit.
+    """
+
+    text: str | None = None
+    in_channel: str | None = None
+    in_dm_user: str | None = None
+    from_user: str | None = None
+    mentions: str | None = None
+    window: Window = field(default_factory=Window)
+    limit: int = 0
+
+
+@dataclass(frozen=True)
+class SearchHit:
+    """A stored message matching a search, with message_readable's fields and a snippet of
+    its text around the match."""
+
+    team_id: str
+    workspace: str
+    channel_id: str
     conversation: str
     ts: str
-    snippet: str
+    thread_ts: str | None
+    posted_at: datetime
+    author: str
+    text: str
     link: str
+    deleted_at: str | None
+    first_seen_at: str | None
+    snippet: str
 
 
 class QueryIndex(Protocol):
     def sql(self, query: str) -> tuple[list[str], list[tuple]]: ...
-    def search(
-        self, text: str, in_channel: str | None, from_user: str | None, limit: int
-    ) -> list[SearchHit]: ...
+    def search(self, query: SearchFilter) -> list[SearchHit]: ...
     def conversation_counts(self) -> dict[tuple[str, str], int]: ...
     def messages(
         self, team: str, channel: str, since: str | None, until: str | None, include_deleted: bool

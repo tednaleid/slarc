@@ -31,7 +31,7 @@ from slarc.config import (
 from slarc.domain.links import WorkspaceSel, parse_selector
 from slarc.domain.window import Window
 from slarc.formats import OutputFormat, write_rows
-from slarc.ports import ItemProgress, NoArchive, NoSession, SlarcError
+from slarc.ports import ItemProgress, NoArchive, NoSession, SearchHit, SlarcError
 lazy from slarc.service.auth import AuthStatus, auth_status, store_pasted
 lazy from slarc.service.export import Exported, export
 lazy from slarc.service.listing import (
@@ -43,7 +43,7 @@ lazy from slarc.service.listing import (
 )
 lazy from slarc.service.pull import PullOptions, PullReport, pull
 lazy from slarc.service.remove import Removal, apply_removal, plan_removal
-lazy from slarc.service.search import search
+lazy from slarc.service.search import DEFAULT_LIMIT, search
 lazy from slarc.unit_of_work import UnitOfWork
 
 app = typer.Typer(
@@ -698,38 +698,67 @@ def list_command(
 @app.command("search")
 def search_command(
     ctx: typer.Context,
-    query: Annotated[str, typer.Argument(help="Text to find in messages, ignoring case.")],
+    query: Annotated[
+        str | None,
+        typer.Argument(help="Text to find in messages, ignoring case. Optional with a filter."),
+    ] = None,
     in_conv: Annotated[
         str | None,
         typer.Option(
-            "--in", metavar="CONV", help="Only this conversation: #channel-name or its id."
+            "--in", metavar="CONV", help="Only this conversation: #channel-name, @user or its id."
         ),
     ] = None,
     from_user: Annotated[
         str | None,
-        typer.Option("--from", metavar="USER", help="Only messages by this user: a name or id."),
+        typer.Option(
+            "--from", metavar="USER", help="Only messages by this user: a name, an id or me."
+        ),
     ] = None,
+    mentions: Annotated[
+        str | None,
+        typer.Option(
+            metavar="USER",
+            help="Only messages mentioning this user or a usergroup they are in: a name, an id "
+            "or me.",
+        ),
+    ] = None,
+    since: Annotated[str | None, typer.Option(metavar="WHEN", help=SINCE_HELP)] = None,
+    until: Annotated[str | None, typer.Option(metavar="WHEN", help=UNTIL_HELP)] = None,
+    limit: Annotated[
+        int, typer.Option(metavar="N", min=0, help="Most matches to show; 0 shows every one.")
+    ] = DEFAULT_LIMIT,
+    fmt: Annotated[OutputFormat, FORMAT_OPTION] = "table",
     root: Annotated[
         Path | None, typer.Option(metavar="DIR", help="The archive directory to use.")
     ] = None,
 ) -> None:
-    """Find archived messages containing the text, newest first, with their Slack links."""
+    """Find archived messages by text, conversation, author, mention or window, newest first."""
     services: bootstrap.Services = ctx.obj
+    window = _window(since, until, services.clock.now())
     try:
         archive_root = _existing_archive(root, services.env, services.home)
         with bootstrap.query_index(archive_root, services.take_ownership) as index:
-            hits = search(index, query, in_conv, from_user)
+            found = search(
+                index, query, in_conv, from_user, mentions=mentions, window=window, limit=limit
+            )
     except SlarcError as error:
         _fail(str(error))
-    if not hits:
+    if not found.hits:
         err.print(NO_MATCHES, markup=False)
         raise typer.Exit(NO_MATCH_EXIT)
-    for number, hit in enumerate(hits):
-        if number:
-            out.print()
-        out.print(f"{hit.author} in {hit.conversation}, {_ts_time(hit.ts)}", markup=False)
-        out.print(f"  {hit.snippet}", markup=False)
-        out.print(f"  {hit.link}", markup=False)
+    if fmt != "table":
+        columns = [f.name for f in dataclasses.fields(SearchHit)]
+        rows = [dataclasses.astuple(hit) for hit in found.hits]
+        write_rows(sys.stdout, fmt, columns, rows)
+    else:
+        for number, hit in enumerate(found.hits):
+            if number:
+                out.print()
+            out.print(f"{hit.author} in {hit.conversation}, {_ts_time(hit.ts)}", markup=False)
+            out.print(f"  {hit.snippet}", markup=False)
+            out.print(f"  {hit.link}", markup=False)
+    if found.more:
+        err.print(f"Showing {limit:,}; --limit for more.", markup=False)
 
 
 @app.command("export")

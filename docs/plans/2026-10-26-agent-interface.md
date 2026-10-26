@@ -180,7 +180,7 @@
 - [x] **Step 4.** Update the Data model table.
 - [x] **Step 5.** Run `just check`, then commit: "Add time columns to message and a message_readable view".
 
-### Task 5: Search filters, formats and limit
+### Task 5 [done]: Search filters, formats and limit
 
 **Files:** modify `src/slarc/service/search.py`, `src/slarc/adapters/duckdb_index.py` (`SEARCH` and `DuckDbQueryIndex.search`), `src/slarc/ports.py` (`SearchHit`, `QueryIndex.search` and a new `SearchFilter`), `src/slarc/cli.py`, `docs/spec.md` and `docs/backlog.md` (delete the `--in @user` item). Tests: `tests/service/test_search.py` and `tests/test_cli_list_search.py`.
 
@@ -197,7 +197,7 @@
 - `SearchHit` gains `team_id`, `workspace`, `channel_id`, `thread_ts`, `posted_at: datetime`, `text`, and keeps `snippet`. Its JSONL keys are `message_readable`'s columns plus `snippet`.
 - `search(index, text, in_conv, from_user, mentions, window, limit)` returns `(hits, more: bool)`. It queries `limit + 1` rows to learn `more`.
 
-- [ ] **Step 1.** Write failing tests:
+- [x] **Step 1.** Write failing tests:
   - `test_search_without_text_lists_the_window`;
   - `test_search_since_until_bounds_posting_time`;
   - `test_search_in_dm_user`;
@@ -207,15 +207,15 @@
   - `test_search_without_any_filter_or_text_is_an_error`;
   - `test_cli_search_format_jsonl_keys`;
   - `test_cli_search_limit_hint_on_stderr`.
-- [ ] **Step 2.** Run them and watch them fail.
-- [ ] **Step 3.** Implement:
+- [x] **Step 2.** Run them and watch them fail.
+- [x] **Step 3.** Implement:
   - `SEARCH` selects from `message_readable`;
   - `me` maps to `workspace.user_id` inside the SQL, per team;
   - mentions match `text_mrkdwn` for `<@ID>`, `<@ID|`, and `<!subteam^GID` for groups whose `user_ids` hold the user;
   - the CLI gets `--since`, `--until`, `--mentions`, `--limit` and `--format`;
   - QUERY becomes optional.
-- [ ] **Step 4.** Spec: update the `search` row and its paragraph.
-- [ ] **Step 5.** Run `just check`, then commit: "Search by window, mentions and DM, with --limit and --format".
+- [x] **Step 4.** Spec: update the `search` row and its paragraph.
+- [x] **Step 5.** Run `just check`, then commit: "Search by window, mentions and DM, with --limit and --format".
 
 ### Task 6: `list --format`
 
