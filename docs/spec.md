@@ -12,7 +12,7 @@ Python 3.15 with uv, `slack_sdk`, Typer and DuckDB. Hexagonal architecture in th
 
 **Goals**
 
-1. Pull any conversation the user can see (public and private channels, DMs, group DMs), a single thread, or a single message, given a Slack link. Optional date range on conversations.
+1. Pull any conversation the user can see (public and private channels, DMs, group DMs), a single thread, or a single message, given a Slack link. Optional window on conversations.
 2. Archive faithfully enough to re-render "like Slack" later: formatting, mentions, emoji (custom, animated, skin tones), reactions, files and snippets with full content, images, link previews, threads, edit status.
 3. Pulls are incremental, resumable and idempotent. Re-running is cheap and safe; a crash mid-conversation resumes where it stopped.
 4. Ease of use: `slarc pull <link>` works on a fresh machine with no setup beyond a signed-in Slack desktop app.
@@ -38,7 +38,7 @@ The CLI is the product's surface, so it stays small and each command does a lot.
 
 | Command | Purpose |
 | --- | --- |
-| `slarc pull [selector ...] [--since DATE] [--until DATE] [--channel] [--full] [--retry-skipped] [--downloads N] [--max-file-size MB] [--yes]` | With links: start tracking what they name and pull it. With a workspace name: refresh everything tracked in that workspace; `--since` and `--until` do not apply to it. Without: refresh everything tracked. Every pull also drains the pending and previously failed downloads of the workspaces it pulls. `--full` re-reads everything instead of only what is new. `--retry-skipped` tries again the skipped downloads that the pulled items' stored messages reference, without re-reading them |
+| `slarc pull [selector ...] [--since WHEN] [--until WHEN] [--channel] [--full] [--retry-skipped] [--downloads N] [--max-file-size MB] [--yes]` | With links: start tracking what they name and pull it. With a workspace name: refresh everything tracked in that workspace; `--since` and `--until` do not apply to it. Without: refresh everything tracked. Every pull also drains the pending and previously failed downloads of the workspaces it pulls. `--full` re-reads everything instead of only what is new. `--retry-skipped` tries again the skipped downloads that the pulled items' stored messages reference, without re-reading them |
 | `slarc list [SELECTOR...] [--remote]` | Archive location, the config files in effect and the settings they resolve to, then each tracked item with message count, last pull time, and the pending and skipped downloads its messages reference (files, images, authors' avatars and custom emoji). Selectors, as `pull` and `rm` take them, list only what they name, then one line per download their messages reference (workspace, conversation, type, status, attempts, last error, URL), saved ones first and failures last; a file too large to download gives its size and the limit in place of an error. The URL ends the line unpadded, as a terminal link, so it is never wrapped or cut. A pull that leaves downloads unsaved ends with the `slarc list` that shows why. `--remote` lists every conversation the session can see and marks which are tracked, and takes no selectors |
 | `slarc search QUERY [--in CONV] [--from USER]` | Matches with author, conversation, time, snippet and Slack link |
 | `slarc export SELECTOR... [--out DIR] [--single-file] [--include-deleted] [--tz ZONE] [--open]` | Static HTML of what the links name; a workspace name exports every tracked conversation of that workspace, and every tracked thread or message outside a tracked conversation, to `slarc-export-<workspace>`. Ends with what it exported, counting workspaces, conversations, threads, messages, files and reactions (each once, however many pages show it, and only those above zero), then the page to open, its `index.html` or the single file, as a terminal link on its own line, and how many files it shows as not downloaded, if any, with the `slarc list` that says why; `--open` also opens it in the default browser. PDF output is planned |
@@ -61,9 +61,9 @@ URL and selector parsing is a pure function with property tests.
 
 **What a pull covers**
 
-- A conversation link pulls that conversation, every thread whose parent falls in the date range, and every user, emoji, file and image they reference. `--since`/`--until` bound the range; both default to unbounded.
+- A conversation link pulls that conversation, every thread whose parent falls in the window, and every user, emoji, file and image they reference. `--since`/`--until` bound the window; both default to open. Every command that takes them reads them the same way: a date (`2026-10-19`), a time (`2026-10-19T14:30` or `2026-10-19T14:30:15`), read in the machine's local time zone unless it ends in `Z` or an offset such as `+02:00`, or an age counted back from now (`12h`, `7d`, `2w`). A date alone as `--until` runs through the end of that day. Both bounds are exclusive.
 - A message link pulls the thread containing that message. A message that is not part of a thread is pulled alone, with its files, images, emoji and users. `--channel` on a message link pulls the whole conversation instead.
-- The first pull of a link starts tracking it, with its date range. A bare `slarc pull` refreshes every tracked item within its range. Pulling a tracked conversation again with a wider range widens it and backfills.
+- The first pull of a link starts tracking it, with its window. A bare `slarc pull` refreshes every tracked item within its window. Pulling a tracked conversation again with a wider window widens it and backfills.
 
 ## Archive location and config
 
@@ -194,9 +194,9 @@ Items marked (verified) were confirmed against the test workspace; the rest come
 2. Replies under old parents: `search.messages` with `in:<#channel> after:<UTC date of the previous pull minus two days>`, paged. Slack treats `after:` as exclusive and evaluates it in the user's time zone, so two days of margin keep replies from slipping through; the extra re-reads change nothing because unchanged messages add no rows. For every match whose permalink carries a `thread_ts` that was not covered by step 1 or 3, re-read that thread.
 3. Active threads: re-read every thread with a stored reply newer than `active_thread_days` (default 7).
 4. Every thread whose parent arrived in step 1 with replies is read with `conversations.replies`.
-5. `--full` replaces steps 1 and 2 with a complete re-read of the conversation's range and every thread in it.
+5. `--full` replaces steps 1 and 2 with a complete re-read of the conversation's window and every thread in it.
 
-**Slack-archived conversation**: a pull that finishes a conversation while Slack reports it archived (`is_archived` in `conversations.info`) records `archived: true`, unless a thread read failed and is left to retry. A later pull that finds the item `archived: true` and the conversation still archived reads nothing (no history, search or threads) and records the item as pulled, `0 read, 0 new`. A `--since` or `--until` that widens its range is still read. A conversation no longer archived records `archived: false` and is refreshed as usual. `--full` re-reads an archived conversation.
+**Slack-archived conversation**: a pull that finishes a conversation while Slack reports it archived (`is_archived` in `conversations.info`) records `archived: true`, unless a thread read failed and is left to retry. A later pull that finds the item `archived: true` and the conversation still archived reads nothing (no history, search or threads) and records the item as pulled, `0 read, 0 new`. A `--since` or `--until` that widens its window is still read. A conversation no longer archived records `archived: false` and is refreshed as usual. `--full` re-reads an archived conversation.
 
 **Tracked thread or message**: re-read with `conversations.replies` (a lone message comes back as a one-element thread) on every pull.
 
@@ -397,7 +397,7 @@ Hexagonal, in the Cosmic Python shape: a pure domain, a service layer of use cas
 
 ## Status
 
-slarc pulls conversations, threads and single messages with date ranges, search-based reply discovery, active-thread re-reads, `--full` and delete inference; downloads files and images; keeps the users, emoji, usergroups and bots directory; and provides `auth`, `list`, `search`, `sql`, `export` and `rm`. The desktop session is read on macOS and Linux, with env and paste fallbacks.
+slarc pulls conversations, threads and single messages with windows, search-based reply discovery, active-thread re-reads, `--full` and delete inference; downloads files and images; keeps the users, emoji, usergroups and bots directory; and provides `auth`, `list`, `search`, `sql`, `export` and `rm`. The desktop session is read on macOS and Linux, with env and paste fallbacks.
 
 **Acceptance criteria**, checked live by `just acceptance` against the test workspace:
 

@@ -1,7 +1,7 @@
 # ABOUTME: The pull use case: refreshes the workspace directory and the tracked items it is given.
 # ABOUTME: Appends a line only for a new version, records deletes and downloads files and images.
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Literal
 
 import msgspec
@@ -64,6 +64,8 @@ type ThreadReason = Literal["link", "history", "search", "active", "full", "retr
 
 @dataclass
 class PullOptions:
+    """since and until are the window's exclusive ts bounds."""
+
     since: str | None = None
     until: str | None = None
     full: bool = False
@@ -165,17 +167,6 @@ def pull(
     )
 
 
-def date_to_ts(date: str, end_of_day: bool) -> str:
-    """The ts at the start of a YYYY-MM-DD day in UTC, or with end_of_day the start of the next.
-
-    History bounds are exclusive, so the next day's start ends the range after the whole day.
-    """
-    start = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=UTC)
-    if end_of_day:
-        start += timedelta(days=1)
-    return f"{int(start.timestamp())}.000000"
-
-
 def _missing_message(domain: str, channel: str, ts: str) -> str:
     return f"Slack returns no message at {message_link(domain, channel, ts)}; skipping it."
 
@@ -248,14 +239,13 @@ class _PullRun:
         return list(items.values())
 
     def _ranged(self, item: TrackedItem, known: TrackedItem | None) -> TrackedItem:
-        """A new conversation takes the options' date range; a tracked one only widens to it.
+        """A new conversation takes the options' window; a tracked one only widens to it.
 
         Widening since reopens the backfill, which then pages the gap below oldest_ts. Widening
         until clears archived, so the next pull reads the new range even if Slack has archived
         the conversation.
         """
-        since = date_to_ts(self.options.since, end_of_day=False) if self.options.since else None
-        until = date_to_ts(self.options.until, end_of_day=True) if self.options.until else None
+        since, until = self.options.since, self.options.until
         if known is None:
             return msgspec.structs.replace(item, since=since, until=until)
         if since is not None and known.since is not None and MessageTs(since) < known.since:

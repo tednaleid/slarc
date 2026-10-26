@@ -131,7 +131,7 @@
 - [x] **Step 4.** Spec: update the `sql` row of the command table.
 - [x] **Step 5.** Run `just check`, then commit: "Add --format jsonl and csv to slarc sql".
 
-### Task 3: Window grammar
+### Task 3 [done]: Window grammar
 
 **Files:** create `src/slarc/domain/window.py`; modify `src/slarc/cli.py` (`pull_command` and `_check_date`), `src/slarc/service/pull.py` (`date_to_ts` and `PullOptions`), `docs/spec.md` and `GLOSSARY.md` (already has Window). Test: create `tests/domain/test_window.py`; update `tests/test_cli_pull.py`.
 
@@ -141,18 +141,18 @@
   - `Window.parse(since: str | None, until: str | None, now: datetime, zone: tzinfo) -> Window` raises `ValueError` when `since` is not before `until`.
   - `Window.contains(ts: str) -> bool`.
 
-- [ ] **Step 1.** Write failing tests:
+- [x] **Step 1.** Write failing tests:
   - `test_window_bounds`: a parametrized table covering a date, a date as the end bound, a minute, a second, `Z`, `+02:00`, `12h`, `7d`, `2w`, and garbage, using `zone=ZoneInfo("America/Chicago")` and a fixed `now`.
   - `test_window_rejects_since_after_until`.
   - `test_cli_pull_since_reads_local_time`: the stored item's `since` equals the local-midnight ts. Run the CLI with `TZ` set through the runner's env.
-- [ ] **Step 2.** Run them and watch them fail.
-- [ ] **Step 3.** Make the changes:
+- [x] **Step 2.** Run them and watch them fail.
+- [x] **Step 3.** Make the changes:
   - the CLI builds the `Window` with `datetime.now().astimezone().tzinfo` and a `Clock`-free `now`, and passes the ts strings into `PullOptions`;
   - `PullOptions.since` and `until` hold ts strings;
   - `date_to_ts` is deleted;
   - the error text is `--since must be a date, a time or an age such as 2026-10-19, 2026-10-19T14:30 or 7d.`
-- [ ] **Step 4.** Spec: change pull's "YYYY-MM-DD in UTC" to the window grammar. Replace "date range" with "window" throughout.
-- [ ] **Step 5.** Run `just check`, then commit: "Read --since and --until as local times, dates or ages".
+- [x] **Step 4.** Spec: change pull's "YYYY-MM-DD in UTC" to the window grammar. Replace "date range" with "window" throughout.
+- [x] **Step 5.** Run `just check`, then commit: "Read --since and --until as local times, dates or ages".
 
 ### Task 4: Friendlier message columns and `message_readable`
 

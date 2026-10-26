@@ -29,6 +29,7 @@ from slarc.config import (
     read_global_config,
 )
 from slarc.domain.links import WorkspaceSel, parse_selector
+from slarc.domain.window import Window
 from slarc.formats import OutputFormat, write_rows
 from slarc.ports import ItemProgress, NoArchive, NoSession, SlarcError
 lazy from slarc.service.auth import AuthStatus, auth_status, store_pasted
@@ -85,6 +86,11 @@ NOTHING_REMOVED = "Nothing removed."
 CANNOT_PULL_AGAIN = "Messages deleted from Slack since they were pulled cannot be pulled again."
 LEFTOVERS = "what is left of removed items"
 SPACE_FREED_LATER = "the space is freed when the running slarc command finishes"
+SINCE_HELP = (
+    "Start of the window: 2026-10-19, 2026-10-19T14:30 (local unless it has an offset) "
+    "or an age such as 7d."
+)
+UNTIL_HELP = "End of the window, in the same forms; a date alone runs through that day."
 FORMAT_OPTION = typer.Option(
     "--format",
     help="table for people; jsonl or csv for scripts, never truncated.",
@@ -267,13 +273,12 @@ def _local_date(ts: str) -> str:
     return datetime.fromtimestamp(float(ts)).strftime(LOCAL_DATE)
 
 
-def _check_date(flag: str, value: str | None) -> None:
-    if value is None:
-        return
+def _window(since: str | None, until: str | None, now: datetime) -> Window:
+    """The window --since and --until give, read in the machine's local time zone."""
     try:
-        datetime.strptime(value, "%Y-%m-%d")
-    except ValueError:
-        _fail(f"{flag} must be a date like 2026-10-19.")
+        return Window.parse(since, until, now, now.astimezone().tzinfo or UTC)
+    except ValueError as error:
+        _fail(str(error))
 
 
 def _plural(count: int, noun: str) -> str:
@@ -374,12 +379,8 @@ def pull_command(
             show_default=False,
         ),
     ] = None,
-    since: Annotated[
-        str | None, typer.Option(metavar="DATE", help="Start of the range, YYYY-MM-DD in UTC.")
-    ] = None,
-    until: Annotated[
-        str | None, typer.Option(metavar="DATE", help="End of the range, YYYY-MM-DD in UTC.")
-    ] = None,
+    since: Annotated[str | None, typer.Option(metavar="WHEN", help=SINCE_HELP)] = None,
+    until: Annotated[str | None, typer.Option(metavar="WHEN", help=UNTIL_HELP)] = None,
     channel: Annotated[
         bool, typer.Option("--channel", help="Pull the whole conversation a message link is in.")
     ] = False,
@@ -419,10 +420,9 @@ def pull_command(
         _fail(RANGE_NEEDS_SELECTORS)
     if (since or until) and any(isinstance(selector, WorkspaceSel) for selector in parsed):
         _fail(RANGE_NOT_FOR_WORKSPACE)
-    _check_date("--since", since)
-    _check_date("--until", until)
-    all_workspaces = all(isinstance(selector, WorkspaceSel) for selector in parsed)
     services: bootstrap.Services = ctx.obj
+    window = _window(since, until, services.clock.now())
+    all_workspaces = all(isinstance(selector, WorkspaceSel) for selector in parsed)
     flags = {
         "--channel": channel,
         "--full": full,
@@ -439,8 +439,8 @@ def pull_command(
         overrides = {"downloads": downloads, "max_file_size_mb": max_file_size}
         settings = load_settings(archive_root, global_config, services.env, overrides)
         options = PullOptions(
-            since=since,
-            until=until,
+            since=window.since,
+            until=window.until,
             full=full,
             retry_skipped=retry_skipped,
             channel_mode=channel,

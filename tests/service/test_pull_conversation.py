@@ -1,11 +1,13 @@
-# ABOUTME: Tests for pulling whole conversations: date ranges, paging, backfill and thread reads.
+# ABOUTME: Tests for pulling whole conversations: windows, paging, backfill and thread reads.
 # ABOUTME: A fake gateway pages history newest first; some tests interrupt or observe its paging.
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from slarc.domain.envelope import Envelope, Kind
+from slarc.domain.window import parse_bound
 from slarc.ports import (
     ArchiveReadFailed,
     ArchiveWriteFailed,
@@ -17,7 +19,7 @@ from slarc.ports import (
     SlarcError,
     ThreadNotFound,
 )
-from slarc.service.pull import PullOptions, date_to_ts
+from slarc.service.pull import PullOptions
 from tests.service.pull_harness import (
     BASE,
     CHANNEL,
@@ -44,6 +46,11 @@ BROADCAST_TS = "1792422700.000100"
 SECOND_CHANNEL = "C0SECOND001"
 SECOND_LINK = f"https://naleidworkspace.slack.com/archives/{SECOND_CHANNEL}"
 UNREACHABLE = "Could not reach Slack to call conversations.replies."
+
+
+def utc_day(date: str, end: bool = False) -> str:
+    """The window bound a pull's --since or --until date gives in UTC."""
+    return f"{parse_bound(date, datetime.now(UTC), UTC, end).timestamp():.6f}"
 
 
 def history_calls(h: Harness) -> list[tuple[str | None, ...]]:
@@ -209,7 +216,7 @@ def test_progress_reads_back_to_since_when_the_channel_was_created_earlier(h: Ha
     h.serve([ts_on(19, 12)])
     created_on(h, 17)
 
-    h.pull(BASE, options=PullOptions(since="2026-10-18"))
+    h.pull(BASE, options=PullOptions(since=utc_day("2026-10-18")))
 
     assert h.reporter.progress_updates[-1][1].target == "1792281600.000000"
 
@@ -244,11 +251,12 @@ def test_since_until_bound_history(h: Harness):
     stamps = {day: ts_on(day, 12) for day in (17, 18, 19, 20)}
     h.serve(list(stamps.values()))
 
-    h.pull(BASE, options=PullOptions(since="2026-10-18", until="2026-10-19"))
+    h.pull(
+        BASE,
+        options=PullOptions(since=utc_day("2026-10-18"), until=utc_day("2026-10-19", end=True)),
+    )
 
     assert message_ts_since(h, 0) == [stamps[19], stamps[18]]
-    assert date_to_ts("2026-10-18", end_of_day=False) == "1792281600.000000"
-    assert date_to_ts("2026-10-19", end_of_day=True) == "1792454400.000000"
     assert history_calls(h) == [("1792281600.000000", "1792454400.000000")]
     [item] = h.tracked()
     assert (item.since, item.until) == ("1792281600.000000", "1792454400.000000")
@@ -261,7 +269,7 @@ def test_threads_in_range_are_read(h: Harness):
         message(ts_on(17, 2), thread_ts=old_parent),
     ]
 
-    h.pull(BASE, options=PullOptions(since="2026-10-18"))
+    h.pull(BASE, options=PullOptions(since=utc_day("2026-10-18")))
 
     replies = [call for call in h.gateway.calls if call[0] == "conversations.replies"]
     assert replies == [("conversations.replies", CHANNEL, PARENT_TS)]
@@ -400,13 +408,13 @@ def test_interrupted_first_pull_keeps_the_new_item(h: Harness, monkeypatch: pyte
 
 def test_interrupted_pull_keeps_a_widened_since(h: Harness, monkeypatch: pytest.MonkeyPatch):
     h.serve([ts_on(17, 9), ts_on(18, 9)])
-    h.pull(BASE, options=PullOptions(since="2026-10-18"))
+    h.pull(BASE, options=PullOptions(since=utc_day("2026-10-18")))
     interrupt_history(h, monkeypatch, on_page=1)
     with pytest.raises(KeyboardInterrupt):
-        h.pull(BASE, options=PullOptions(since="2026-10-17"))
+        h.pull(BASE, options=PullOptions(since=utc_day("2026-10-17")))
     [item] = h.tracked()
     assert (item.since, item.backfill_complete) == (
-        date_to_ts("2026-10-17", end_of_day=False),
+        utc_day("2026-10-17"),
         False,
     )
 
@@ -434,11 +442,11 @@ def test_interrupted_pull_keeps_every_new_item(h: Harness, monkeypatch: pytest.M
 def test_wider_since_backfills_gap(h: Harness):
     stamps = {day: ts_on(day, 12) for day in (17, 18, 19)}
     h.serve(list(stamps.values()))
-    h.pull(BASE, options=PullOptions(since="2026-10-19"))
+    h.pull(BASE, options=PullOptions(since=utc_day("2026-10-19")))
     h.gateway.calls.clear()
     before = len(h.archive.lines)
 
-    h.pull(BASE, options=PullOptions(since="2026-10-17"))
+    h.pull(BASE, options=PullOptions(since=utc_day("2026-10-17")))
 
     assert message_ts_since(h, before) == [stamps[18], stamps[17]]
     assert history_calls(h) == [("1792195200.000000", stamps[19]), (stamps[19], None)]
@@ -450,11 +458,11 @@ def test_wider_since_backfills_gap(h: Harness):
 def test_later_until_widens_range(h: Harness):
     stamps = {day: ts_on(day, 12) for day in (17, 18, 19)}
     h.serve(list(stamps.values()))
-    h.pull(BASE, options=PullOptions(until="2026-10-18"))
+    h.pull(BASE, options=PullOptions(until=utc_day("2026-10-18", end=True)))
     h.gateway.calls.clear()
     before = len(h.archive.lines)
 
-    h.pull(BASE, options=PullOptions(until="2026-10-19"))
+    h.pull(BASE, options=PullOptions(until=utc_day("2026-10-19", end=True)))
 
     assert message_ts_since(h, before) == [stamps[19]]
     assert history_calls(h) == [(stamps[18], "1792454400.000000")]
@@ -466,11 +474,11 @@ def test_wider_since_backfills_gap_of_archived_conversation(h: Harness):
     stamps = {day: ts_on(day, 12) for day in (17, 18, 19)}
     h.serve(list(stamps.values()))
     h.set_archived(True)
-    h.pull(BASE, options=PullOptions(since="2026-10-19"))
+    h.pull(BASE, options=PullOptions(since=utc_day("2026-10-19")))
     h.pull()
     before = len(h.archive.lines)
 
-    h.pull(BASE, options=PullOptions(since="2026-10-17"))
+    h.pull(BASE, options=PullOptions(since=utc_day("2026-10-17")))
 
     assert message_ts_since(h, before) == [stamps[18], stamps[17]]
     [item] = h.tracked()
@@ -481,11 +489,11 @@ def test_later_until_widens_range_of_archived_conversation(h: Harness):
     stamps = {day: ts_on(day, 12) for day in (17, 18, 19)}
     h.serve(list(stamps.values()))
     h.set_archived(True)
-    h.pull(BASE, options=PullOptions(until="2026-10-18"))
+    h.pull(BASE, options=PullOptions(until=utc_day("2026-10-18", end=True)))
     h.pull()
     before = len(h.archive.lines)
 
-    h.pull(BASE, options=PullOptions(until="2026-10-19"))
+    h.pull(BASE, options=PullOptions(until=utc_day("2026-10-19", end=True)))
 
     assert message_ts_since(h, before) == [stamps[19]]
     [item] = h.tracked()
@@ -729,14 +737,14 @@ def test_workspace_selector_with_nothing_tracked_there_fails(h: Harness):
 
 
 def test_workspace_selector_keeps_an_item_an_earlier_selector_widened(h: Harness):
-    h.pull(BASE, options=PullOptions(since="2026-10-18"))
+    h.pull(BASE, options=PullOptions(since=utc_day("2026-10-18")))
     [narrow] = h.tracked()
 
-    h.pull(BASE, "naleidworkspace", options=PullOptions(since="2026-10-01"))
+    h.pull(BASE, "naleidworkspace", options=PullOptions(since=utc_day("2026-10-01")))
 
     [widened] = h.tracked()
     assert narrow.since is not None
-    assert widened.since == date_to_ts("2026-10-01", end_of_day=False)
+    assert widened.since == utc_day("2026-10-01")
 
 
 def test_interrupted_thread_read_keeps_the_pages_committed_before_it(
