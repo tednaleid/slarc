@@ -8,7 +8,7 @@ from typing import Any, Protocol
 import websocket
 
 from slarc.adapters.slack_gateway import USER_AGENT
-from slarc.ports import ConnectionLost, Session, SlackGateway
+from slarc.ports import AuthFailed, ConnectionLost, NoSession, Session, SlackGateway, SlarcError
 
 OPEN_TIMEOUT_S = 30.0
 
@@ -40,7 +40,14 @@ class RtmConnection:
             return None
         except websocket.WebSocketException, OSError:
             raise ConnectionLost(f"The event connection to {self._workspace} closed.") from None
-        return json.loads(frame)
+        # websocket-client answers a close frame and returns an empty frame.
+        try:
+            event = json.loads(frame) if frame else None
+        except ValueError:
+            event = None
+        if not isinstance(event, dict):
+            raise ConnectionLost(f"The event connection to {self._workspace} closed.")
+        return event
 
     def ping(self) -> None:
         self._pings += 1
@@ -68,12 +75,18 @@ class RtmConnector:
         self._gateways: dict[str, SlackGateway] = {}
 
     def open(self, workspace: str) -> RtmConnection:
-        gateway = self._gateways.get(workspace)
-        if gateway is None:
-            gateway = self._gateways[workspace] = self._sessions.connect(workspace)
-        session = self._sessions.authenticated[gateway.auth_test()["team_id"]]
-        url = gateway.rtm_url()
         failed = ConnectionLost(f"Could not open the event connection to {workspace}.")
+        try:
+            gateway = self._gateways.get(workspace)
+            if gateway is None:
+                gateway = self._gateways[workspace] = self._sessions.connect(workspace)
+            session = self._sessions.authenticated[gateway.auth_test()["team_id"]]
+            url = gateway.rtm_url()
+        except AuthFailed, NoSession:
+            raise
+        except SlarcError:
+            # Slack unreachable or failing for now: the caller backs off and tries again.
+            raise failed from None
         try:
             socket = self._create(
                 url,

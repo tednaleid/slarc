@@ -394,6 +394,8 @@ class Clock(Protocol):
         """Returns an aware UTC datetime."""
         ...
 
+    def sleep(self, seconds: float) -> None: ...
+
 
 @dataclass(frozen=True)
 class ItemProgress:

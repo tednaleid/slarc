@@ -324,6 +324,9 @@ class FakeClock:
     def advance(self, seconds: float) -> None:
         self.current += timedelta(seconds=seconds)
 
+    def sleep(self, seconds: float) -> None:
+        self.advance(seconds)
+
 
 SPIKE_AUTH = {
     "ok": True,
@@ -605,11 +608,13 @@ class FakeAssetResolver:
 
 
 class FakeEventConnection:
-    """Serves queued events in order; an exception queued is raised from receive instead. Each
-    ping is answered with a pong unless answers_pings is false."""
+    """Serves queued events in order; an exception queued is raised from receive instead, and a
+    None reads as no event. Each ping is answered with a pong unless answers_pings is false."""
 
-    def __init__(self, events: Iterable[dict | Exception] = (), answers_pings: bool = True) -> None:
-        self.events: deque[dict | Exception] = deque(events)
+    def __init__(
+        self, events: Iterable[dict | Exception | None] = (), answers_pings: bool = True
+    ) -> None:
+        self.events: deque[dict | Exception | None] = deque(events)
         self.answers_pings = answers_pings
         self.pings = 0
         self.closed = False

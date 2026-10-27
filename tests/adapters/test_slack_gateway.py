@@ -24,6 +24,7 @@ from slarc.adapters.slack_gateway import (
     READ_METHODS,
     SessionConnector,
     SessionTokenGateway,
+    session_gateway,
     web_api,
 )
 from slarc.ports import (
@@ -543,3 +544,13 @@ def test_usergroups_asks_for_members():
     gateway, _ = make_gateway(api)
     gateway.usergroups()
     assert api.calls == [("usergroups.list", {"include_users": True})]
+
+
+def test_gateways_for_one_session_share_its_workspace_limiter() -> None:
+    session = Session("T0CB5LYPVFA", "naleidworkspace", "naleid", "desktop", "xoxc-1", "xoxd-1")
+
+    first = session_gateway(session)
+    second = session_gateway(session)
+
+    assert isinstance(first, SessionTokenGateway) and isinstance(second, SessionTokenGateway)
+    assert first.limiter is second.limiter

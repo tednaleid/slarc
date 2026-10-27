@@ -7,7 +7,7 @@ import pytest
 import websocket
 
 from slarc.adapters.rtm import RtmConnector
-from slarc.ports import ConnectionLost, Session
+from slarc.ports import AuthFailed, ConnectionLost, Session, SlarcError
 from tests.fakes import FakeCredentialSource, FakeSlackGateway
 
 NALEID = Session("T0CB5LYPVFA", "naleidworkspace", "naleid", "desktop", "xoxc-1", "xoxd-1")
@@ -131,3 +131,44 @@ def test_the_rtm_url_is_never_in_an_error(failure: Callable[[], Exception]) -> N
 def test_open_without_hello_raises_connection_lost() -> None:
     with pytest.raises(ConnectionLost):
         connector(FakeSocket([MESSAGE]), []).open("naleidworkspace")
+
+
+class FramesAsSent(FakeSocket):
+    """Returns string frames as they are, as websocket-client returns "" after a close frame."""
+
+    def recv(self) -> str:
+        frame = self.frames.pop(0)
+        return frame if isinstance(frame, str) else json.dumps(frame)
+
+
+def test_a_close_frame_counts_as_connection_lost() -> None:
+    socket = FramesAsSent([{"type": "hello"}, ""])
+    connection = RtmConnector(FakeSessions(), create=lambda url, **kw: socket).open("naleid")
+
+    with pytest.raises(ConnectionLost):
+        connection.receive(1.0)
+
+
+class OfflineGateway(RtmGateway):
+    def __init__(self, error: SlarcError) -> None:
+        super().__init__()
+        self.error = error
+
+    def rtm_url(self) -> str:
+        raise self.error
+
+
+def test_rtm_connect_that_cannot_reach_slack_counts_as_connection_lost() -> None:
+    sessions = FakeSessions()
+    sessions.gateway = OfflineGateway(SlarcError("Could not reach Slack to call rtm.connect."))
+
+    with pytest.raises(ConnectionLost):
+        RtmConnector(sessions, create=lambda url, **kw: FakeSocket([])).open("naleidworkspace")
+
+
+def test_rejected_credentials_on_rtm_connect_still_propagate() -> None:
+    sessions = FakeSessions()
+    sessions.gateway = OfflineGateway(AuthFailed("desktop", "naleidworkspace"))
+
+    with pytest.raises(AuthFailed):
+        RtmConnector(sessions, create=lambda url, **kw: FakeSocket([])).open("naleidworkspace")

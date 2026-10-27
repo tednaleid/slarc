@@ -77,6 +77,7 @@ RANGE_NOT_FOR_WORKSPACE = (
 )
 INTERRUPTED = "Interrupted; progress so far is saved."
 INTERRUPTED_EXIT = 130
+STOPPING = "Stopping once the current step ends; press Ctrl-C again to stop now."
 # Like grep: 1 when a search finds nothing, 2 when a command fails.
 NO_MATCH_EXIT = 1
 ERROR_EXIT = 2
@@ -989,7 +990,10 @@ def listen_command(
     stopping: list[int] = []
 
     def stop(signum: int, frame: FrameType | None) -> None:
+        if stopping:
+            raise KeyboardInterrupt
         stopping.append(signum)
+        err.print(STOPPING, markup=False)
 
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
@@ -1034,6 +1038,9 @@ def listen_command(
         _fail(str(error))
     except SlarcError as error:
         _fail(str(error))
+    except KeyboardInterrupt:
+        err.print(INTERRUPTED, markup=False)
+        raise typer.Exit(INTERRUPTED_EXIT) from None
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)

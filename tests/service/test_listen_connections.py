@@ -33,11 +33,13 @@ class LoggedConnector(FakeEventConnector):
         return super().open(workspace)
 
 
-def run(connections: Connections, clock: FakeClock, seconds: int) -> list[tuple[str, dict]]:
+def run(
+    connections: Connections, clock: FakeClock, seconds: int, timeout: float = 0.1
+) -> list[tuple[str, dict]]:
     """Polls once a second for the given seconds, collecting the events."""
     events = []
     for _ in range(seconds):
-        events += connections.poll(0.1)
+        events += connections.poll(timeout)
         clock.advance(1)
     return events
 
@@ -126,7 +128,7 @@ def test_reconnects_back_off():
             raise ConnectionLost("down")
 
     connections = Connections(Failing(), clock, [ACME])
-    run(connections, clock, 200)
+    run(connections, clock, 200, timeout=0)
 
     gaps = [later - earlier for earlier, later in pairwise(attempts)]
     assert gaps == [5, 10, 20, 40, 60, 60]
@@ -164,3 +166,36 @@ def test_a_pong_waiting_in_the_socket_after_a_long_block_keeps_the_connection():
 
     assert not connection.closed
     assert connector.opened == [ACME]
+
+
+def test_a_handover_after_a_long_silence_counts_as_lost():
+    clock = FakeClock()
+    connector = FakeEventConnector()
+    connections = Connections(connector, clock, [ACME])
+    run(connections, clock, 12)
+
+    clock.advance(10 * 3600)  # the laptop slept; Slack dropped the socket meanwhile
+    run(connections, clock, 3)
+
+    assert connector.opened == [ACME, ACME]
+    assert connections.take_lost() == {ACME}
+
+
+def test_poll_waits_its_timeout_when_no_connection_is_open():
+    clock = FakeClock()
+    connections = Connections(FakeEventConnector({ACME: [ConnectionLost("down")]}), clock, [ACME])
+    start = clock.now()
+
+    connections.poll(1.0)
+    connections.poll(1.0)
+
+    assert (clock.now() - start).total_seconds() == pytest.approx(2.0)
+
+
+def test_poll_with_no_workspaces_waits_its_timeout():
+    clock = FakeClock()
+    start = clock.now()
+
+    Connections(FakeEventConnector(), clock, []).poll(1.0)
+
+    assert (clock.now() - start).total_seconds() == pytest.approx(1.0)

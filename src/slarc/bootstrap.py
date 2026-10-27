@@ -3,6 +3,7 @@
 import os
 import secrets
 import sys
+import time
 from collections.abc import Callable, Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
@@ -73,6 +74,9 @@ def _no_wait_shown(seconds: int) -> None:
 class SystemClock:
     def now(self) -> datetime:
         return datetime.now(UTC)
+
+    def sleep(self, seconds: float) -> None:
+        time.sleep(seconds)
 
 
 @contextmanager

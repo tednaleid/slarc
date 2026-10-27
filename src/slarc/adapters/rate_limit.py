@@ -5,7 +5,8 @@ from collections import deque
 from collections.abc import Callable
 
 TIER_RATES = {1: 1, 2: 20, 3: 50, 4: 100}
-WINDOW_S = 60.0
+# A minute plus a second of margin, so Slack never sees more than a tier's rate in its minute.
+WINDOW_S = 61.0
 METHOD_TIERS = {
     "rtm.connect": 1,
     "search.messages": 2,
@@ -49,7 +50,8 @@ class MinuteWindow:
         if len(calls) >= self._rate:
             waited = calls.popleft() + WINDOW_S - now
             self._sleep(waited)
-            now += waited
+            # A sleep can run long; the window counts from when the call really goes out.
+            now = max(self._clock(), now + waited)
         calls.append(now)
         return waited
 
@@ -68,3 +70,14 @@ class TieredLimiter:
 
     def acquire(self, method: str) -> float:
         return self._windows[METHOD_TIERS[method]].acquire(method)
+
+
+_workspace_limiters: dict[str, TieredLimiter] = {}
+
+
+def workspace_limiter(workspace: str) -> TieredLimiter:
+    """The one limiter this process uses for a workspace, so every gateway to it shares its
+    windows; a fresh window per gateway would let a new one burst a whole minute's rate."""
+    if workspace not in _workspace_limiters:
+        _workspace_limiters[workspace] = TieredLimiter()
+    return _workspace_limiters[workspace]

@@ -2,11 +2,13 @@
 # ABOUTME: catch-up pulls after a lost connection, hour-long segments and rejected credentials.
 from collections.abc import Callable
 
+import msgspec
 import pytest
 
 from slarc import __version__
 from slarc.domain.tracking import TrackedItem
-from slarc.ports import AuthFailed, ConnectionLost
+from slarc.ports import AuthFailed, Commit, ConnectionLost, SlarcError
+from slarc.service import listen as listen_module
 from slarc.service.listen import ListenOptions, listen, unheard_items
 from slarc.unit_of_work import UnitOfWork
 from tests.fakes import FakeEventConnection, FakeEventConnector
@@ -134,3 +136,117 @@ def test_unheard_items_are_pulled_every_fifteen_minutes(h: Harness):
     assert h.reporter.infos[0] == (
         "Listening to naleidworkspace (1 tracked item; 1 not heard, pulled every 15 minutes)."
     )
+
+
+def remove_tracked(h: Harness) -> None:
+    """Commits the removal of the one tracked item, as an rm in another process would."""
+    with h.archive.elsewhere() as archive:
+        [item] = archive.tracked_items().values()
+        archive.commit(Commit(items=[msgspec.structs.replace(item, status="removed")]))
+
+
+def at_call(h: Harness, count: int, call: int, action: Callable[[], None]) -> Callable[[], bool]:
+    """ticks(h, count) that also runs action on the given stop check."""
+    base = ticks(h, count)
+    calls = [0]
+
+    def stop() -> bool:
+        calls[0] += 1
+        if calls[0] == call:
+            action()
+        return base()
+
+    return stop
+
+
+def test_listen_connects_before_its_first_pull(h: Harness):
+    events = FakeEventConnector()
+    opened_at_first_read: list[list[str]] = []
+    h.gateway.before_history_page(1, lambda: opened_at_first_read.append(list(events.opened)))
+
+    run_listen(h, events, ticks(h, 3))
+
+    assert opened_at_first_read == [[TEAM]]
+
+
+def test_bare_listen_with_rejected_credentials_raises(h: Harness):
+    h.gateway.auth_error = AuthFailed("desktop", TEAM)
+
+    with pytest.raises(AuthFailed):
+        run_listen(h, FakeEventConnector(), ticks(h, 5))
+
+
+def test_a_catch_up_that_cannot_reach_slack_is_tried_again_later(h: Harness):
+    dropped = FakeEventConnection([ConnectionLost("closed")])
+    events = FakeEventConnector({TEAM: [dropped, FakeEventConnection()]})
+
+    def offline() -> None:
+        h.gateway.auth_error = SlarcError("Could not reach Slack to call auth.test.")
+
+    def online() -> None:
+        h.gateway.auth_error = None
+
+    stop = at_call(h, 200, 2, offline)
+    late = at_call(h, 200, 100, online)
+
+    run_listen(h, events, lambda: stop() or late())
+
+    assert history_reads(h) == 2
+    assert any("Could not reach Slack" in warning for warning in h.reporter.warnings)
+
+
+def test_rm_of_an_unheard_item_stays_removed(h: Harness):
+    h.set_member(False)
+    h.pull()
+
+    run_listen(h, FakeEventConnector(), at_call(h, 20 * 60, 60, lambda: remove_tracked(h)))
+
+    assert h.archive.tracked_items() == {}
+
+
+def test_rm_of_a_workspace_then_a_profile_change_keeps_listening(h: Harness):
+    connection = FakeEventConnection()
+    user = {"id": "U0NEWUSER1", "name": "ada", "real_name": "Ada", "profile": {}}
+
+    def rm_then_profile_change() -> None:
+        remove_tracked(h)
+        connection.events.append({"type": "user_change", "user": user})
+
+    events = FakeEventConnector({TEAM: [connection]})
+    run_listen(h, events, at_call(h, 60, 5, rm_then_profile_change))
+
+    assert not [env for env in h.lines("user") if env.meta.id == "U0NEWUSER1"]
+
+
+def test_a_stop_skips_the_catch_up_a_lost_connection_asked_for(h: Harness):
+    events = FakeEventConnector({TEAM: [FakeEventConnection([ConnectionLost("closed")])]})
+
+    def reconnected() -> bool:
+        h.clock.advance(1)
+        return len(events.opened) >= 2
+
+    run_listen(h, events, reconnected)
+
+    assert history_reads(h) == 1
+
+
+def test_a_segment_reads_the_directory_once_for_many_batches(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+):
+    reads: list[str] = []
+    stored_view = listen_module._stored_view
+
+    def counted(uow: UnitOfWork, team_id: str):
+        reads.append(team_id)
+        return stored_view(uow, team_id)
+
+    monkeypatch.setattr(listen_module, "_stored_view", counted)
+    gap: list[dict | None] = [None, None, None]
+    spaced = [event("1792500001.000100"), *gap, event("1792500002.000100"), *gap]
+    spaced.append(event("1792500003.000100"))
+    events = FakeEventConnector({TEAM: [FakeEventConnection(spaced)]})
+
+    run_listen(h, events, ticks(h, 30))
+
+    assert len([line for line in h.reporter.infos if "new message" in line]) == 3
+    assert reads == [TEAM]

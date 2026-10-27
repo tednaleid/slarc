@@ -73,3 +73,30 @@ def test_cli_listen_with_nothing_tracked_exits_2(f: Fixture):
 
     assert result.exit_code == 2
     assert "No tracked items yet" in result.output
+
+
+class InterruptTwice(FakeEventConnection):
+    """Sends this process SIGINT twice in a row, as pressing Ctrl-C twice would."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.interrupted = False
+
+    def receive(self, timeout: float) -> dict | None:
+        if not self.interrupted:
+            self.interrupted = True
+            signal.raise_signal(signal.SIGINT)
+            signal.raise_signal(signal.SIGINT)
+        return super().receive(timeout)
+
+
+def test_cli_listen_stops_at_once_on_a_second_interrupt(f: Fixture):
+    assert f.pull("--yes", BASE).exit_code == 0
+    connector = FakeEventConnector({TEAM: [InterruptTwice()]})
+    services = dataclasses.replace(f.services(), event_connector=lambda _: connector)
+
+    with bootstrap.override(services):
+        result = runner.invoke(app, ["listen"])
+
+    assert result.exit_code == 130
+    assert "Interrupted" in result.stderr

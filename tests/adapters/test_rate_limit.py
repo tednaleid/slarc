@@ -4,7 +4,13 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from slarc.adapters.rate_limit import METHOD_TIERS, TIER_RATES, MinuteWindow, TieredLimiter
+from slarc.adapters.rate_limit import (
+    METHOD_TIERS,
+    TIER_RATES,
+    MinuteWindow,
+    TieredLimiter,
+    workspace_limiter,
+)
 
 
 class FakeTimer:
@@ -25,8 +31,8 @@ def test_window_allows_a_burst_of_rate_calls_then_waits_for_the_oldest():
     window = MinuteWindow(3, timer.clock, timer.sleep)
     assert [window.acquire("conversations.replies") for _ in range(3)] == [0, 0, 0]
     timer.now += 10
-    assert window.acquire("conversations.replies") == pytest.approx(50)
-    assert timer.sleeps == [pytest.approx(50)]
+    assert window.acquire("conversations.replies") == pytest.approx(51)
+    assert timer.sleeps == [pytest.approx(51)]
 
 
 def test_window_forgets_calls_older_than_a_minute():
@@ -34,7 +40,7 @@ def test_window_forgets_calls_older_than_a_minute():
     window = MinuteWindow(2, timer.clock, timer.sleep)
     window.acquire("search.messages")
     window.acquire("search.messages")
-    timer.now += 60
+    timer.now += 61
     assert window.acquire("search.messages") == 0
     assert timer.sleeps == []
 
@@ -70,8 +76,8 @@ def test_tiered_limiter_uses_each_method_tier_rate():
     limiter = TieredLimiter(timer.clock, timer.sleep)
     for method, rate in (("search.messages", 20), ("conversations.history", 50)):
         assert [limiter.acquire(method) for _ in range(rate)] == [0] * rate
-        assert limiter.acquire(method) == pytest.approx(60)
-        timer.now += 60
+        assert limiter.acquire(method) == pytest.approx(61)
+        timer.now += 61
 
 
 def test_rtm_connect_is_tier_1_so_a_second_call_waits_a_minute():
@@ -79,7 +85,7 @@ def test_rtm_connect_is_tier_1_so_a_second_call_waits_a_minute():
     limiter = TieredLimiter(timer.clock, timer.sleep)
     assert METHOD_TIERS["rtm.connect"] == 1
     assert limiter.acquire("rtm.connect") == 0
-    assert limiter.acquire("rtm.connect") == pytest.approx(60)
+    assert limiter.acquire("rtm.connect") == pytest.approx(61)
 
 
 def test_tiers_match_slack_documentation():
@@ -102,3 +108,21 @@ def test_tiers_match_slack_documentation():
         "auth.test",
         "users.info",
     }
+
+
+def test_window_counts_from_when_a_long_sleep_actually_ended():
+    timer = FakeTimer()
+
+    def oversleep(seconds: float) -> None:
+        timer.sleep(seconds + 2)
+
+    window = MinuteWindow(1, timer.clock, oversleep)
+    window.acquire("users.list")
+    window.acquire("users.list")
+
+    assert window.acquire("users.list") == pytest.approx(61)
+
+
+def test_gateways_for_one_workspace_share_one_limiter():
+    assert workspace_limiter("T0CB5LYPVFA") is workspace_limiter("T0CB5LYPVFA")
+    assert workspace_limiter("T0CB5LYPVFA") is not workspace_limiter("T0OTHER0001")

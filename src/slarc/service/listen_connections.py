@@ -19,6 +19,7 @@ class _Link:
     connection: EventConnection | None = None
     opened_at: datetime | None = None
     last_ping: datetime | None = None
+    last_heard: datetime | None = None  # when any frame last arrived
     awaiting_since: datetime | None = None  # the oldest ping with no pong yet
     retry_at: datetime | None = None
     failures: int = 0
@@ -39,7 +40,9 @@ class Connections:
         """Opens connections that are due, keeps them alive and returns their events, waiting
         up to timeout for each connection's first. AuthFailed from an open propagates."""
         events: list[tuple[str, dict]] = []
-        wait = timeout / max(1, len(self._links))
+        # A real socket cannot wait zero seconds, so each read waits at least QUICK_S.
+        wait = max(timeout / max(1, len(self._links)), QUICK_S)
+        waited = False
         for workspace, link in self._links.items():
             now = self._clock.now()
             if link.connection is None:
@@ -50,15 +53,25 @@ class Connections:
                     continue
             try:
                 # Reading first takes a pong that arrived while another open blocked the loop.
+                waited = True
                 events += [(workspace, event) for event in self._receive(workspace, link, wait)]
                 self._keep_alive(workspace, link, self._clock.now())
             except ConnectionLost:
                 self._drop(link, now)
+        if not waited:
+            # Nothing open to wait on, so wait here rather than spin.
+            self._clock.sleep(timeout)
         return events
 
     @property
     def teams(self) -> list[str]:
         return list(self._links)
+
+    def forget(self, workspace: str) -> None:
+        """Closes the workspace's connection and stops opening it."""
+        link = self._links.pop(workspace, None)
+        if link is not None and link.connection is not None:
+            link.connection.close()
 
     def take_lost(self) -> set[str]:
         lost, self._lost = self._lost, set()
@@ -83,7 +96,7 @@ class Connections:
 
     def _attach(self, link: _Link, connection: EventConnection, now: datetime) -> None:
         link.connection = connection
-        link.opened_at = link.last_ping = now
+        link.opened_at = link.last_ping = link.last_heard = now
         link.awaiting_since = link.retry_at = None
         link.failures = 0
         link.lost = False
@@ -108,6 +121,7 @@ class Connections:
             event = link.connection.receive(wait if not events else QUICK_S)
             if event is None:
                 break
+            link.last_heard = self._clock.now()
             match event.get("type"):
                 case "pong":
                     link.awaiting_since = None
@@ -120,12 +134,16 @@ class Connections:
 
     def _handover(self, workspace: str, link: _Link, now: datetime) -> None:
         """Opens the workspace's next connection, then closes the old one; a failed open counts
-        as losing the old one."""
+        as losing the old one. An old connection silent past the pong deadline, as after the
+        machine slept, may have missed events, so the handover counts as a loss too."""
         old = link.connection
-        assert old is not None
+        assert old is not None and link.last_heard is not None
+        silent = (now - link.last_heard).total_seconds() > PONG_DEADLINE_S
         new = self._connector.open(workspace)
         old.close()
         self._attach(link, new, now)
+        if silent:
+            self._lost.add(workspace)
 
     def _drop(self, link: _Link, now: datetime) -> None:
         if link.connection is not None:

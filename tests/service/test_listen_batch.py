@@ -7,7 +7,7 @@ import pytest
 
 from slarc import __version__
 from slarc.domain.events import Change, DeleteMessage, Reread, StoreMessage, UserChanged
-from slarc.ports import Commit, StoredMessage
+from slarc.ports import Commit, SlarcError, StoredMessage
 from slarc.service.listen import ListenOptions, Pending, apply_batch
 from slarc.service.workspaces import Workspaces
 from slarc.unit_of_work import UnitOfWork
@@ -141,3 +141,14 @@ def test_pending_rereads_wait_until_quiet() -> None:
     assert pending.due(start + timedelta(seconds=17)) == []
     assert pending.due(start + timedelta(seconds=18)) == [(TEAM, CHANNEL, PARENT_TS)]
     assert pending.due(start + timedelta(seconds=30)) == []
+
+
+def test_a_batch_that_cannot_reach_slack_queues_a_catch_up(h: Harness):
+    h.gateway.auth_error = SlarcError("Could not reach Slack to call auth.test.")
+    pending = Pending()
+
+    said = apply(h, [StoreMessage(CHANNEL, message(NEW_TS))], pending)
+
+    assert pending.catch_up == {TEAM}
+    assert lines_at(h, NEW_TS) == []
+    assert said == [f"{TEAM}  Could not reach Slack to call auth.test. Pulling it next."]

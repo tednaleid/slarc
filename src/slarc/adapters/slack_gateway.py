@@ -10,7 +10,7 @@ lazy from slack_sdk.errors import SlackApiError
 lazy from slack_sdk.http_retry.builtin_handlers import ConnectionErrorRetryHandler
 
 from slarc import __version__
-from slarc.adapters.rate_limit import METHOD_TIERS, TieredLimiter
+from slarc.adapters.rate_limit import METHOD_TIERS, workspace_limiter
 from slarc.ports import (
     AuthFailed,
     CredentialSource,
@@ -93,7 +93,7 @@ class SessionTokenGateway:
         client_factory: Callable[[Session], WebApi] = web_api,
     ) -> None:
         self._session = session
-        self._limiter = limiter
+        self.limiter = limiter
         self._api = client_factory(session)
         self._workspace = session.domain or session.team_id or "unknown"
         self._auth: dict | None = None
@@ -175,7 +175,7 @@ class SessionTokenGateway:
     def _call(self, method: str, **params: Any) -> dict:
         if method not in READ_METHODS:
             raise ValueError(f"{method} is not a read method slarc may call")
-        self.rate_limit_wait_s += self._limiter.acquire(method)
+        self.rate_limit_wait_s += self.limiter.acquire(method)
         self.api_calls[method] = self.api_calls.get(method, 0) + 1
         try:
             return self._api.call(method, params)
@@ -200,7 +200,8 @@ def session_gateway(
     session: Session, waiting: Callable[[int], None] = no_wait_shown
 ) -> SlackGateway:
     """A gateway for the session that calls waiting while it waits out a rate-limited call."""
-    return SessionTokenGateway(session, TieredLimiter(), partial(web_api, waiting=waiting))
+    limiter = workspace_limiter(session.team_id or session.domain)
+    return SessionTokenGateway(session, limiter, partial(web_api, waiting=waiting))
 
 
 class SessionConnector:
