@@ -24,6 +24,7 @@ from tests.service.test_export import (
     OUT,
     SYNTHETIC,
     TED,
+    TEN_K_SNIPPET,
     THREAD_PAGE,
     append_line,
 )
@@ -270,3 +271,59 @@ def test_markdown_directory_export_writes_an_index(archive, store, blobs) -> Non
         f"- [{FIXTURES_PAGE}.md]({FIXTURES_PAGE}.md): #slarc-fixtures (naleidworkspace), "
     )
     assert len(index) == 5
+
+
+def fenced_after(page: str, marker: str) -> list[str]:
+    """The lines of the fenced block that starts on the line after the one holding marker,
+    fences included."""
+    lines = page.splitlines()
+    start = next(n for n, line in enumerate(lines) if marker in line) + 1
+    fence = lines[start].rstrip("abcdefghijklmnopqrstuvwxyz")
+    end = lines.index(fence, start + 1)
+    return lines[start : end + 1]
+
+
+def test_markdown_snippet_text_follows_its_file_line(archive, store, blobs) -> None:
+    _, writer = exported(archive, store, blobs, "#all-naleid")
+    page = writer.text(OUT / f"{ALL_NALEID_PAGE}.md")
+    block = fenced_after(page, "[file: test-snippet-2.txt")
+    assert block[0] == "```text"
+    assert block[-1] == "```"
+    assert len(block) > 600
+    assert "[cut at" not in page.split("[file: test-snippet-2.txt")[1].split("\n\n")[0]
+
+
+def test_markdown_snippet_over_the_limit_is_cut(archive, store, blobs) -> None:
+    _, writer = exported(archive, store, blobs, "#all-naleid")
+    page = writer.text(OUT / f"{ALL_NALEID_PAGE}.md")
+    block = fenced_after(page, "[file: 10k-snippet.txt")
+    whole = blobs.read(TEN_K_SNIPPET).decode()
+    shown = "\n".join(block[1:-1])
+    assert whole.startswith(shown)
+    assert 199 * 1024 < len(shown.encode()) <= 200 * 1024
+    after = page.split(f"{shown}\n```\n", 1)[1].splitlines()[0]
+    assert after == "[cut at 200 KB; the rest: slarc file F0CA7TKM285]"
+
+
+def test_markdown_snippet_fence_outlasts_backticks_in_its_text(archive, store, blobs) -> None:
+    text = "before\n```\ncode\n```\nafter\n"
+    blob = blobs.write([text.encode()])[0]
+    file = {"id": "F0FENCE", "name": "notes.md", "mode": "snippet", "filetype": "markdown"}
+    append_line(store, "file", {**file, "size": len(text)}, id="F0FENCE", blob=blob)
+    message = {"type": "message", "ts": SYNTHETIC, "user": TED, "text": "n", "files": [file]}
+    append_line(store, "message", message, channel=FIXTURES, ts=SYNTHETIC)
+    window = Window(since="1792490000.000000")
+    _, writer = exported(archive, store, blobs, "#slarc-fixtures", window=window)
+    page = writer.text(OUT / f"{FIXTURES_PAGE}.md")
+    assert "\n````markdown\nbefore\n```\ncode\n```\nafter\n````\n" in page
+
+
+def test_markdown_snippet_without_a_blob_shows_its_preview(archive, store, blobs) -> None:
+    file = {"id": "F0PREVIEW", "name": "p.txt", "mode": "snippet", "filetype": "text"}
+    append_line(store, "file", {**file, "preview": "first lines"}, id="F0PREVIEW")
+    message = {"type": "message", "ts": SYNTHETIC, "user": TED, "text": "n", "files": [file]}
+    append_line(store, "message", message, channel=FIXTURES, ts=SYNTHETIC)
+    window = Window(since="1792490000.000000")
+    _, writer = exported(archive, store, blobs, "#slarc-fixtures", window=window)
+    page = writer.text(OUT / f"{FIXTURES_PAGE}.md")
+    assert "```text\nfirst lines\n```\nOnly the start of this snippet was archived.\n" in page

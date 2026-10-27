@@ -295,6 +295,8 @@ class ArchiveLock(Protocol):
 
 # How many matches a search returns unless asked for more.
 SEARCH_LIMIT = 50
+# How much of a text file markdown export shows and search reads, in bytes.
+SNIPPET_LIMIT = 200 * 1024
 
 
 @dataclass(frozen=True)

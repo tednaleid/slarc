@@ -38,6 +38,7 @@ from slarc.domain.tracking import DownloadState
 from slarc.domain.window import OPEN_WINDOW, Window
 from slarc.formats import ExportFormat
 from slarc.ports import (
+    SNIPPET_LIMIT,
     ArchiveStore,
     BlobStore,
     DirectoryState,
@@ -164,7 +165,8 @@ type FileKind = Literal[
 
 @dataclass(frozen=True)
 class FileView:
-    """link is where to find a file the export does not hold; permalink is its Slack page."""
+    """link is where to find a file the export does not hold; permalink is its Slack page.
+    For markdown, a snippet carries its text in language, cut to SNIPPET_LIMIT bytes."""
 
     kind: FileKind
     name: str
@@ -175,6 +177,10 @@ class FileView:
     note: str = ""
     link: str | None = None
     permalink: str | None = None
+    file_id: str = ""
+    text: str = ""
+    language: str = ""
+    cut: bool = False
 
 
 @dataclass(frozen=True)
@@ -961,7 +967,7 @@ class _Workspace:
         size = obj.get("size")
         shown_size = size_text(size) if isinstance(size, int) else ""
         if mode == "snippet" and self.markdown:
-            return FileView("snippet", name, size=shown_size, permalink=permalink)
+            return self.snippet_text(file_id, obj, name, shown_size, permalink)
         if mode == "snippet":
             return self.snippet(file_id, obj, name)
         src = self.assets.file_src(file_id)
@@ -993,6 +999,32 @@ class _Workspace:
             note = "Only the start of this snippet was archived."
         return FileView(
             "snippet", name, code=Markup(highlight(text, lexer, HtmlFormatter())), note=note
+        )
+
+    def snippet_text(
+        self, file_id: str, obj: dict, name: str, size: str, permalink: str | None
+    ) -> FileView:
+        """A snippet's text from its blob, cut to SNIPPET_LIMIT bytes, or its preview."""
+        blob = self.assets.file_blob(file_id)
+        if blob is not None:
+            data = self.blobs.read(blob)
+            cut = len(data) > SNIPPET_LIMIT
+            text = data[:SNIPPET_LIMIT].decode("utf-8", errors="replace")
+            # A cut can split the last character's bytes.
+            text, note = (text.rstrip("\ufffd") if cut else text), ""
+        else:
+            text, cut = _text(obj.get("preview")), False
+            note = "Only the start of this snippet was archived."
+        return FileView(
+            "snippet",
+            name,
+            size=size,
+            note=note,
+            permalink=permalink,
+            file_id=file_id,
+            text=text,
+            language=_text(obj.get("filetype")),
+            cut=cut,
         )
 
 

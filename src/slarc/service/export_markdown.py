@@ -1,17 +1,20 @@
 # ABOUTME: page_markdown renders an export page as markdown for reading as text, by people or
 # ABOUTME: agents: a header with the window and counts, then messages with threads quoted.
+import re
 from datetime import datetime, tzinfo
 from typing import TYPE_CHECKING
 
 from slarc.domain.links import MessageTs, is_web_url, message_link
 from slarc.domain.render import dict_list, text_field
 from slarc.domain.render.markdown import mrkdwn_markdown, render_message_markdown
+from slarc.ports import SNIPPET_LIMIT
 
 if TYPE_CHECKING:
     from slarc.domain.directory import DirectoryView
     from slarc.service.export import Entry, FileView, MessageView, Page
 
 BOUND = "%Y-%m-%d %H:%M"
+BACKTICKS = re.compile("`+")
 
 
 def page_markdown(
@@ -110,7 +113,8 @@ class _Renderer:
         if body:
             lines += body.split("\n")
         lines += self.attachments(message.source)
-        lines += [_file_line(file) for file in message.files]
+        for file in message.files:
+            lines += [_file_line(file), *_snippet_lines(file)]
         reactions = _reactions(message.source)
         if reactions:
             lines.append(reactions)
@@ -187,6 +191,23 @@ def _file_line(file: FileView) -> str:
         details.append("not in the archive")
     label = f"[file: {', '.join(details)}]"
     return f"{label}({file.permalink})" if file.permalink else label
+
+
+def _snippet_lines(file: FileView) -> list[str]:
+    """A snippet's text as a fenced block longer than any run of backticks in it, then a note
+    when the text is cut or only its preview was archived."""
+    if file.kind != "snippet":
+        return []
+    lines = []
+    if file.text:
+        longest = max((len(run) for run in BACKTICKS.findall(file.text)), default=0)
+        fence = "`" * max(3, longest + 1)
+        lines = [fence + file.language, *file.text.removesuffix("\n").split("\n"), fence]
+    if file.cut:
+        lines.append(f"[cut at {SNIPPET_LIMIT // 1024} KB; the rest: slarc file {file.file_id}]")
+    if file.note:
+        lines.append(file.note)
+    return lines
 
 
 def _reactions(source: dict) -> str:
