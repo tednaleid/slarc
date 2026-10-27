@@ -28,6 +28,7 @@ slarc pull                                                                    # 
 slarc pull acme                                                               # refresh everything tracked in workspace acme
 slarc pull --full                                                             # re-read everything tracked, catching edits and deletes
 slarc pull acme --retry-skipped                                               # also try again the downloads skipped in acme
+slarc listen                                                                  # keep everything tracked current as Slack pushes changes, until Ctrl-C
 slarc list                                                                    # the archive, its config files and each tracked item
 slarc search "deploy" --in '#general'                                         # archived messages, newest first, with their Slack links
 slarc search --mentions me --since 7d --format jsonl                          # what mentioned you this week, one JSON object per line

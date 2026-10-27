@@ -8,8 +8,8 @@ section alone is enough to search, query with SQL and read a file.
 - slarc keeps a local archive of the Slack conversations a person can see. `search`, `sql`,
   `list`, `export`, `file` and `guide` only read it (`export` and `file` also write the files
   you ask for), so run them freely.
-- `slarc pull` contacts Slack and writes the archive. Run it only when the user asks for fresh
-  data.
+- `slarc pull` and `slarc listen` contact Slack and write the archive; `listen` runs until
+  stopped. Run them only when the user asks for fresh data.
 - **Never run `slarc rm` unless the user explicitly asked to remove that exact item. Show them
   the command and ask first, and never pass `--yes`.**
 - `slarc sql` runs DuckDB SQL, not SQLite: there is no `datetime()`; write

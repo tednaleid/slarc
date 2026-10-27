@@ -9,22 +9,26 @@
 # slarc = { path = "..", editable = true }
 # ///
 # ABOUTME: Live check of slarc's acceptance criteria against the naleidworkspace test workspace.
-# ABOUTME: Pulls into scratch archives; edits and first-run posts go through seed-test-workspace.py.
+# ABOUTME: Pulls and listens into scratch archives; posts and edits use seed-test-workspace.py.
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from slarc.adapters.desktop_session import DesktopSessionSource
 from slarc.adapters.lake import connect_lake, extension_directory
 from slarc.adapters.lake_store import VERSION_ORDER
+from slarc.adapters.slack_gateway import web_api
 
 REPO = Path(__file__).resolve().parent.parent
 SEED = REPO / "scripts" / "seed-test-workspace.py"
@@ -39,6 +43,10 @@ SAME_PULL = "(a) pulling the same channels twice adds no message or directory ro
 EXPORT = "(d) the export shows seeded messages, giphy, a link preview, snippets, a deleted file"
 REPLY = "(b) a new reply under an older parent lands as exactly one new line"
 EDIT = "(c) an edit lands as exactly one new line by pull --full"
+LISTEN = "(e) listen stores pushed posts, edits and deletes, and leaves presence as it was"
+LISTEN_START_S = 180
+LISTEN_SETTLE_S = 20
+LISTEN_STOP_S = 60
 
 
 def link(channel: str) -> str:
@@ -260,6 +268,75 @@ def check_edit(root: Path, fixed: dict, tag: str) -> Criterion:
     return criterion
 
 
+def presence() -> dict:
+    """The connected user's presence in the test workspace, read with users.getPresence."""
+    sessions = DesktopSessionSource(Path.home(), sys.platform).sessions()
+    session = next(s for s in sessions if s.team_id == TEAM_ID)
+    client = web_api(session).client
+    user = client.auth_test()["user_id"]
+    found = client.users_getPresence(user=user).data
+    return {key: found.get(key) for key in ("presence", "manual_away")}
+
+
+def version_rows(root: Path, channel: str, ts: str) -> list[tuple[str, str, str | None]]:
+    """The (kind, api, text) of every message_version row of one message, oldest first."""
+    query = (
+        "SELECT kind, api, object ->> 'text' FROM message_version "
+        f"WHERE team = ? AND channel = ? AND ts = ? ORDER BY {VERSION_ORDER}"
+    )
+    return lake_rows(root, query, [TEAM_ID, channel, ts])
+
+
+def check_listen(root: Path) -> Criterion:
+    criterion = Criterion(LISTEN)
+    timed = Timed(criterion)
+    before = presence()
+    started = time.monotonic()
+    listening = subprocess.Popen(
+        ["uv", "run", "slarc", "listen", WORKSPACE, "--root", str(root)],
+        cwd=REPO,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    lines: list[str] = []
+    reader = threading.Thread(target=lambda: lines.extend(listening.stdout or []), daemon=True)
+    reader.start()
+    try:
+        while not any("Listening to" in line for line in lines):
+            if listening.poll() is not None or time.monotonic() - started > LISTEN_START_S:
+                raise RuntimeError(f"listen did not start: {''.join(lines).strip()}")
+            time.sleep(1)
+        criterion.timings.append(f"listen start {time.monotonic() - started:.1f}s")
+        posted = seed(timed, "seed events", "events")
+        time.sleep(LISTEN_SETTLE_S)
+        during = presence()
+    finally:
+        listening.send_signal(signal.SIGINT)
+        code = listening.wait(timeout=LISTEN_STOP_S)
+        reader.join(timeout=5)
+    criterion.notes += [f"listen: {line.rstrip()}" for line in lines]
+    criterion.check(code == 0, f"listen exited {code} after SIGINT")
+    channel, parent, reply = posted["channel"], posted["parent"], posted["reply"]
+    parent_rows = version_rows(root, channel, parent)
+    criterion.check(
+        any(api == "rtm" for _, api, _ in parent_rows), f"the parent came from rtm: {parent_rows}"
+    )
+    last_text = parent_rows[-1][2] if parent_rows else None
+    criterion.check(
+        bool(last_text and last_text.endswith("(edited)")),
+        f"the parent's newest text: {last_text!r}",
+    )
+    reply_kinds = [kind for kind, _, _ in version_rows(root, channel, reply)]
+    criterion.check(reply_kinds[-1:] == ["deleted"], f"the reply's versions: {reply_kinds}")
+    after = presence()
+    criterion.check(
+        before == during == after,
+        f"presence before {before}, while listening {during}, after {after}",
+    )
+    return criterion
+
+
 def report(criterion: Criterion) -> None:
     status = "PASS" if criterion.passed else "FAIL"
     print(f"{status} {criterion.name} [{', '.join(criterion.timings)}]", flush=True)
@@ -300,6 +377,10 @@ def main() -> int:
         results.append(attempt(EDIT, lambda: check_edit(acceptance, fixed[0], tag)))
     else:
         results.append(attempt(EDIT, lambda: Criterion(f"{EDIT}: skipped, (b) failed", False)))
+    if fixed:
+        results.append(attempt(LISTEN, lambda: check_listen(acceptance)))
+    else:
+        results.append(attempt(LISTEN, lambda: Criterion(f"{LISTEN}: skipped, (b) failed", False)))
     if all(c.passed for c in results):
         shutil.rmtree(tmp)
         return 0

@@ -12,6 +12,14 @@ _Avoid_: store, vault, repository, root (except when naming the directory path)
 Copying content from Slack into an archive. The first pull of a conversation, thread or message starts tracking it; later pulls refresh what is tracked.
 _Avoid_: sync, archive (as a verb), download, fetch
 
+**Listen**:
+Keeping an archive current from the events Slack pushes to a signed-in client, for as long as the command runs. Only changes to tracked items are kept.
+_Avoid_: subscribe, watch, stream, sync
+
+**Catch-up pull**:
+The pull listen runs when it starts, and again after a lost connection, to fetch what changed while it was not listening.
+_Avoid_: resync, backfill (which means reading older history)
+
 **Version**:
 One observed state of a message. An edit, a reaction change or a removed link preview produces a new version; earlier versions are kept.
 _Avoid_: revision (for a message version), history entry
@@ -21,7 +29,7 @@ A conversation, thread or message the archive keeps pulling. The first pull of i
 _Avoid_: target, subscription, watched item
 
 **Run**:
-One invocation of a command that writes to the archive, such as a pull or a removal, with a record of when it started, what it did and how it ended.
+One invocation of a command that writes to the archive, such as a pull or a removal, or one hour of listening, with a record of when it started, what it did and how it ended.
 _Avoid_: job, session, execution
 
 **Batch**:
