@@ -82,6 +82,7 @@ def test_cli_search_format_jsonl_keys(archive: Path, tmp_path: Path) -> None:
         "files",
         "deleted_at",
         "first_seen_at",
+        "matched_file",
     ]
     csv_header = invoke(tmp_path, "search", "SLARC SEED V1", "--format", "csv").stdout
     assert "excerpt" not in csv_header.splitlines()[0]

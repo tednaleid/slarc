@@ -710,6 +710,11 @@ def test_page_stems_name_conversations_and_threads() -> None:
     assert page_stems([("#general", "C1", "1.2")]) == ["general-thread-1.2"]
 
 
+def test_page_stems_never_take_the_index_name() -> None:
+    assert page_stems([("#index", "C1", None)]) == ["index-C1"]
+    assert page_stems([("#Index", "C2", None)]) == ["Index-C2"]
+
+
 def test_page_stems_add_the_channel_when_names_collide() -> None:
     stems = page_stems([("#general", "C1", None), ("#General", "C2", None), ("#ops", "C3", None)])
     assert stems == ["general-C1", "General-C2", "ops"]

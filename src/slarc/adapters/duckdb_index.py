@@ -435,15 +435,20 @@ SEARCH = f"""
                 JOIN mentioned u ON u.team_id = g.team_id AND list_contains(g.user_ids, u.id)
         ),
         file_hit AS (
-            SELECT mf.team_id, mf.channel_id, mf.ts, first(f.name || ': ' || t.text) AS text
+            SELECT mf.team_id, mf.channel_id, mf.ts, mf.file_id,
+                coalesce(nullif(f.name, ''), nullif(f.title, ''), f.id) AS name, t.text
             FROM message_file mf
             JOIN file f ON f.team_id = mf.team_id AND f.id = mf.file_id
             JOIN file_text t ON t.blob = f.blob
             WHERE t.text ILIKE $pattern ESCAPE '\\'
-            GROUP BY ALL
+            QUALIFY row_number() OVER (
+                PARTITION BY mf.team_id, mf.channel_id, mf.ts ORDER BY mf.position
+            ) = 1
         )
-    SELECT {READABLE_COLUMNS}, m.plain,
-        CASE WHEN m.plain ILIKE $pattern ESCAPE '\\' THEN NULL ELSE fh.text END AS file_match
+    SELECT {READABLE_COLUMNS},
+        CASE WHEN m.plain ILIKE $pattern ESCAPE '\\' THEN NULL ELSE fh.file_id END
+            AS matched_file,
+        m.plain, fh.name, fh.text
     FROM message m {READABLE_JOINS}
     LEFT JOIN file_hit fh
         ON fh.team_id = m.team_id AND fh.channel_id = m.channel_id AND fh.ts = m.ts
@@ -626,10 +631,13 @@ class DuckDbQueryIndex:
                 self._load_file_text()
             rows = self._db.execute(SEARCH.format(limit=limit), params).fetchall()
         hits = []
-        for *fields, plain, file_match in rows:
-            name, _, text = (file_match or "").partition(": ")
-            shown = f"{name}: {excerpt(text, query.text or '')}" if file_match else None
-            hits.append(SearchHit(*fields, excerpt=shown or excerpt(plain, query.text or "")))
+        needle = query.text or ""
+        for *fields, matched_file, plain, file_name, file_text in rows:
+            if matched_file:
+                shown = f"{file_name}: {excerpt(file_text, needle)}"
+            else:
+                shown = excerpt(plain, needle)
+            hits.append(SearchHit(*fields, matched_file, excerpt=shown))
         return hits
 
     def _load_file_text(self) -> None:

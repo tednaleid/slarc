@@ -4,6 +4,7 @@ import shutil
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -12,7 +13,7 @@ from slarc.adapters.duckdb_index import DuckDbQueryIndex
 from slarc.domain.envelope import Envelope, Kind, Meta
 from slarc.domain.links import MessageTs
 from slarc.domain.window import Window
-from slarc.ports import SearchHit, SlarcError
+from slarc.ports import QueryIndex, SearchHit, SlarcError
 from slarc.service.search import search
 from tests.contract.test_duckdb_index import (
     LATER,
@@ -282,9 +283,11 @@ def test_search_matches_text_files_and_cites_them(with_blobs: Path, ext_dir: Pat
         assert hit.ts == TEN_K_TS
         assert hit.excerpt.startswith("10k-snippet.txt: ...")
         assert "test snippet line 5000" in hit.excerpt
+        assert hit.matched_file == "F0CA7TKM285"
         # A match in the message's own text keeps its excerpt from that text.
         [own] = search(index, "10k lines long", None, None).hits
         assert own.excerpt.startswith("Ted Naleid: yet another snippet")
+        assert own.matched_file is None
 
 
 def test_search_reads_only_the_start_of_a_text_file(with_blobs: Path, ext_dir: Path) -> None:
@@ -295,7 +298,8 @@ def test_search_reads_only_the_start_of_a_text_file(with_blobs: Path, ext_dir: P
 
 def test_search_reads_text_files_with_invalid_bytes(with_blobs: Path, ext_dir: Path) -> None:
     blob, size = FsBlobStore(with_blobs).write([b"caf\xe9 \xff marker words"])
-    file = {"id": "F0LATIN1X", "name": "latin.txt", "mode": "snippet", "size": size}
+    # Only a title, and a ": " inside it.
+    file = {"id": "F0LATIN1X", "title": "Notes: v2", "mode": "snippet", "size": size}
     meta = Meta(
         kind="file",
         team=TEAM,
@@ -313,3 +317,24 @@ def test_search_reads_text_files_with_invalid_bytes(with_blobs: Path, ext_dir: P
     with DuckDbQueryIndex(with_blobs, ext_dir, FakeArchiveLock()) as index:
         [hit] = search(index, "marker words", None, None).hits
     assert hit.ts == "1792500001.000001"
+    assert hit.excerpt.startswith("Notes: v2: caf")
+    assert hit.matched_file == "F0LATIN1X"
+
+
+class NoUsers:
+    """An index that knows every conversation and no user, as an archive with no auth does."""
+
+    def knows_conversation(self, channel: str | None, dm_user: str | None) -> bool:
+        return True
+
+    def knows_user(self, user: str) -> bool:
+        return False
+
+
+def test_me_without_an_auth_user_says_so() -> None:
+    index = cast(QueryIndex, NoUsers())
+    with pytest.raises(SlarcError) as raised:
+        search(index, None, None, "me")
+    assert str(raised.value) == (
+        "No workspace in the archive records who me is; run slarc pull first."
+    )

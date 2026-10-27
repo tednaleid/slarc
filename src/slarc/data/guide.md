@@ -111,6 +111,8 @@ an offset (`Z`, `+02:00`) or else in this machine's time zone, or an age counted
 - `conversation` is `#name`, `@user` for a DM, or a group DM's name.
 - `author` is the display name people see in Slack; `author_real_name` is the person's real
   name. Use the real name when writing for people.
+- A search hit whose words were found only in a file it carries gives that file's id in
+  `matched_file`; read the file with `slarc file`.
 - `reactions` reads `:name: count`, joined by commas. `files` lists each file's `id` and
   `name`; `slarc file` takes the id.
 - In markdown, authors read `**Real Name** (display name)`. `(context)` marks a thread parent

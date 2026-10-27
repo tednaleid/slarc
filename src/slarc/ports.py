@@ -332,8 +332,8 @@ class FileRecord:
 
 @dataclass(frozen=True)
 class SearchHit:
-    """A stored message matching a search, with message_readable's fields and an excerpt of
-    its text around the match."""
+    """A stored message matching a search, with message_readable's fields, the id of the file
+    the text matched in when it matched only there, and an excerpt around the match."""
 
     team_id: str
     workspace: str
@@ -350,6 +350,7 @@ class SearchHit:
     files: list[dict] | None
     deleted_at: str | None
     first_seen_at: str | None
+    matched_file: str | None
     excerpt: str
 
 

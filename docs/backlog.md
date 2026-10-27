@@ -75,6 +75,9 @@ Known problems and future work, grouped by theme. Each line says what is wrong o
 - `service/export.py` keeps its own `_text` and `_dicts` beside `text_field` and `dict_list` in `domain/render`.
 - `slarc file` reads the whole blob into memory before writing it, which is heavy for a large video (`service/files.py`; `BlobStore` has no streaming read).
 - A text search reads every downloaded text file's first 200 KB into memory once per command, whatever the query narrows to (`adapters/duckdb_index.py` `_load_file_text`).
+- Markdown export reads a whole snippet blob before cutting it to 200 KB; `read_start` is only on `FsBlobStore`, which the index builds itself, not on the `BlobStore` port (`service/export.py` `snippet_text`).
+- `slarc sql` shows the `file_text` table, empty there, which only search fills (`adapters/duckdb_index.py`).
+- Piping output into a reader that exits early, such as `slarc file F... | head -c 10`, likely prints a `BrokenPipeError` traceback; no command handles it (`cli.py`).
 
 ### Tests and tooling
 - Only link parsing has Hypothesis tests; the spec also asks for `ts` ordering and idempotency properties.

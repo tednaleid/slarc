@@ -456,14 +456,15 @@ def _suffixed(path: Path, suffix: str, *also: str) -> Path:
 def page_stems(pages: list[tuple[str, str, str | None]]) -> list[str]:
     """The file stem for each (conversation label, channel, thread_ts): the label without its
     #, made safe for a file name, with -thread-<ts> for a thread. Stems that would be equal,
-    ignoring case, each gain their channel id."""
+    ignoring case, each gain their channel id, and so does a stem of index, which names the
+    export's own index page."""
     stems = []
     for label, channel, thread_ts in pages:
         base = FILE_STEM_UNSAFE.sub("-", label.removeprefix("#")).strip("-.") or channel
         stems.append(f"{base}-thread-{thread_ts}" if thread_ts else base)
     counts = Counter(stem.lower() for stem in stems)
     return [
-        f"{stem}-{channel}" if counts[stem.lower()] > 1 else stem
+        f"{stem}-{channel}" if counts[stem.lower()] > 1 or stem.lower() == "index" else stem
         for stem, (_, channel, _) in zip(stems, pages, strict=True)
     ]
 

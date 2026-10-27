@@ -65,6 +65,8 @@ def _known_user(index: QueryIndex, text: str | None) -> str | None:
         return None
     user = text.removeprefix("@")
     if not index.knows_user(user):
+        if user.lower() == "me":
+            raise SlarcError("No workspace in the archive records who me is; run slarc pull first.")
         raise SlarcError(f"No user named {user} in the archive.")
     return user
 

@@ -790,7 +790,8 @@ def search_command(
         err.print(NO_MATCHES, markup=False)
         raise typer.Exit(NO_MATCH_EXIT)
     if fmt != "table":
-        # text already holds the whole message, so the excerpt only serves the table.
+        # text holds the whole message and matched_file names a file the match was in, so the
+        # excerpt only serves the table.
         _write_dataclasses(fmt, SearchHit, found.hits, omit=frozenset({"excerpt"}))
     else:
         for number, hit in enumerate(found.hits):
