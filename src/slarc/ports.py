@@ -331,6 +331,8 @@ class SearchHit:
     author_real_name: str
     text: str
     link: str
+    reactions: str | None
+    files: list[dict] | None
     deleted_at: str | None
     first_seen_at: str | None
     excerpt: str

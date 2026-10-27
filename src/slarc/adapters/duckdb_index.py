@@ -50,6 +50,14 @@ READABLE_COLUMNS = f"""
         || CASE WHEN m.is_reply
             THEN '?thread_ts=' || m.thread_ts || '&cid=' || m.channel_id
             ELSE '' END AS link,
+    nullif(array_to_string(list_transform(
+        CAST(m.object -> 'reactions' AS JSON[]),
+        lambda r: ':' || (r ->> 'name') || ': ' || coalesce(r ->> 'count', '1')
+    ), ', '), '') AS reactions,
+    list_transform(
+        CAST(m.object -> 'files' AS JSON[]),
+        lambda f: struct_pack(id := f ->> 'id', name := coalesce(f ->> 'name', f ->> 'title'))
+    ) AS files,
     m.deleted_at, m.first_seen_at
 """
 READABLE_JOINS = """
@@ -388,6 +396,8 @@ COLUMN_COMMENTS = {
         "author_real_name": "The author's real name, else the author column.",
         "text": "The message as plain text with names resolved.",
         "link": "The message's Slack link.",
+        "reactions": "Each reaction as :name: count, joined by commas; null without any.",
+        "files": "The id and name of each file on the message; slarc file F... gives one.",
         "deleted_at": "When slarc noticed Slack no longer returns the message; else null.",
         "first_seen_at": "When a pull first stored the message.",
     },

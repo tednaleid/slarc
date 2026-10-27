@@ -78,6 +78,8 @@ def test_cli_search_format_jsonl_keys(archive: Path, tmp_path: Path) -> None:
         "author_real_name",
         "text",
         "link",
+        "reactions",
+        "files",
         "deleted_at",
         "first_seen_at",
     ]

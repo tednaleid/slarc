@@ -184,8 +184,20 @@ def test_readable_names_author_and_conversation(index: DuckDbQueryIndex) -> None
         "author_real_name",
         "text",
         "link",
+        "reactions",
+        "files",
         "deleted_at",
         "first_seen_at",
+    ]
+
+
+def test_readable_reactions_and_files(index: DuckDbQueryIndex) -> None:
+    query = "SELECT reactions, files FROM message_readable WHERE ts = '{}'"
+    assert index.sql(query.format("1792410693.663869"))[1] == [
+        (":wave::skin-tone-3: 1, :wave: 1", None)
+    ]
+    assert index.sql(query.format("1792422623.464629"))[1] == [
+        (None, [{"id": "F0CB7HWPUTA", "name": "CleanShot 2026-10-19 at 10.09.44.png"}])
     ]
 
 
