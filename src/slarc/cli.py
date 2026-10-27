@@ -531,9 +531,9 @@ SQL_EXAMPLES = """Examples:
     JOIN workspace w USING (team_id)
     WHERE contains(m.text_mrkdwn, '<@' || w.user_id) AND m.author_kind <> 'system'"
 
-  # what the latest pull added
-  slarc sql "SELECT conversation, author, text, link FROM message_readable
-    WHERE first_seen_at >= (SELECT max(started) FROM run WHERE command = 'pull')"
+  # what pulls stored since a time (UTC), whenever the messages were posted
+  slarc sql "SELECT conversation, author_real_name, text, link FROM message_readable
+    WHERE first_seen_at >= '2026-10-20T14:00:00Z' ORDER BY posted_at"
 """
 
 

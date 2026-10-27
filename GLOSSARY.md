@@ -82,6 +82,10 @@ _Avoid_: conversation, reply chain
 A thread reply that was also sent to the conversation, so it appears in both places.
 _Avoid_: thread broadcast, cross-post
 
+**Snippet**:
+A text file posted to Slack as a snippet, which slarc keeps in full and shows as text.
+_Avoid_: snippet for the text search shows around a match; that is the excerpt
+
 **Deleted message**:
 A message the archive still holds after Slack stopped returning it, marked with when slarc noticed.
 _Avoid_: removed message, tombstone (except for Slack's own placeholder for a deleted parent that still has replies)

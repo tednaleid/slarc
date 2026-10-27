@@ -18,8 +18,10 @@ SH_BLOCK = re.compile(r"```sh\n(.*?)```", re.DOTALL)
 # The guide's placeholder names, mapped to ones the recorded archive holds.
 FIXTURE_NAMES = {
     "#general": "#all-naleid",
-    "@arun": "@jim",
-    "arun": "jim",
+    "@ada": "@jim",
+    "ada": "jim",
+    "F0123456789": "F0CA7TKM285",
+    "~/Downloads": ".",
     "acme": "naleidworkspace",
     "https://acme.slack.com/archives/C0123456789/p1712345678000100": (
         "https://naleidworkspace.slack.com/archives/C0CA5396G03/p1792427679271249"

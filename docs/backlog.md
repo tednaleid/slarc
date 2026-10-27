@@ -73,6 +73,8 @@ Known problems and future work, grouped by theme. Each line says what is wrong o
 - Markdown bodies are not escaped, so a message line starting with `# ` reads like a page header in concatenated `--out -` output (`domain/render/markdown.py`).
 - `export --out - --open` ignores `--open` without saying so (`cli.py` `export_command`).
 - `service/export.py` keeps its own `_text` and `_dicts` beside `text_field` and `dict_list` in `domain/render`.
+- `slarc file` reads the whole blob into memory before writing it, which is heavy for a large video (`service/files.py`; `BlobStore` has no streaming read).
+- A text search reads every downloaded text file's first 200 KB into memory once per command, whatever the query narrows to (`adapters/duckdb_index.py` `_load_file_text`).
 
 ### Tests and tooling
 - Only link parsing has Hypothesis tests; the spec also asks for `ts` ordering and idempotency properties.
