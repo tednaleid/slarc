@@ -51,6 +51,10 @@ class AuthFailed(SlarcError):
         super().__init__(f"Slack rejected the {source} credentials for workspace {team}. {hint}")
 
 
+class ConnectionLost(SlarcError):
+    """An event connection closed, failed to open or stopped answering."""
+
+
 class NotVisible(SlarcError):
     def __init__(self, channel: str) -> None:
         self.channel = channel
@@ -143,6 +147,7 @@ class SlackGateway(Protocol):
     def emoji(self) -> dict[str, str]: ...
     def bot_info(self, bot_id: str) -> dict: ...
     def user_info(self, user_id: str) -> dict: ...
+    def rtm_url(self) -> str: ...  # rtm.connect's single-use websocket URL; never shown
     def file_info(self, file_id: str) -> dict: ...  # the file object; raises FileDeleted
     @property
     def rate_limit_wait_s(self) -> float: ...  # seconds its calls waited for the limiter
@@ -153,6 +158,16 @@ class SlackGateway(Protocol):
 class SlackConnector(Protocol):
     def sessions(self) -> list[Session]: ...
     def connect(self, workspace: str) -> SlackGateway: ...  # raises NoSession, AuthFailed
+
+
+class EventConnection(Protocol):
+    def receive(self, timeout: float) -> dict | None: ...  # None on timeout; raises ConnectionLost
+    def ping(self) -> None: ...  # the only frame sent: {"id": n, "type": "ping"}
+    def close(self) -> None: ...
+
+
+class EventConnector(Protocol):
+    def open(self, workspace: str) -> EventConnection: ...  # after hello; raises AuthFailed
 
 
 @dataclass(frozen=True)

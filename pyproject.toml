@@ -20,6 +20,7 @@ dependencies = [
     "secretstorage>=3.5.0 ; sys_platform == 'linux'",
     "slack-sdk>=3.45.0",
     "typer>=0.15",
+    "websocket-client>=1.9.2",
 ]
 
 [project.scripts]

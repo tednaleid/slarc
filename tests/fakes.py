@@ -1,7 +1,7 @@
 # ABOUTME: In-memory doubles for slarc's ports: archive, lock, blobs, exports, Slack, credentials.
 # ABOUTME: The archive fake commits like the lake store; the Slack fake pages and fails like Slack.
 import hashlib
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -21,6 +21,7 @@ from slarc.ports import (
     Commit,
     CommitConflict,
     Committed,
+    ConnectionLost,
     CredentialReadError,
     DirectoryState,
     DownloadJob,
@@ -458,6 +459,10 @@ class FakeSlackGateway:
             raise SlarcError("Slack returned bot_not_found for bots.info.")
         return self.bots[bot_id]
 
+    def rtm_url(self) -> str:
+        self.calls.append(("rtm.connect",))
+        return "wss://fake.invalid/rtm"
+
     def user_info(self, user_id: str) -> dict:
         self.calls.append(("users.info", user_id))
         user = next((u for u in self.users_list if u.get("id") == user_id), None)
@@ -597,3 +602,55 @@ class FakeAssetResolver:
 
     def file_src(self, file_id: str) -> str | None:
         return f"assets/files/{file_id}"
+
+
+class FakeEventConnection:
+    """Serves queued events in order; an exception queued is raised from receive instead. Each
+    ping is answered with a pong unless answers_pings is false."""
+
+    def __init__(self, events: Iterable[dict | Exception] = (), answers_pings: bool = True) -> None:
+        self.events: deque[dict | Exception] = deque(events)
+        self.answers_pings = answers_pings
+        self.pings = 0
+        self.closed = False
+
+    def receive(self, timeout: float) -> dict | None:
+        if self.closed:
+            raise ConnectionLost("The event connection closed.")
+        if not self.events:
+            return None
+        event = self.events.popleft()
+        if isinstance(event, Exception):
+            raise event
+        return event
+
+    def ping(self) -> None:
+        if self.closed:
+            raise ConnectionLost("The event connection closed.")
+        self.pings += 1
+        if self.answers_pings:
+            self.events.append({"type": "pong", "reply_to": self.pings})
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeEventConnector:
+    """Opens the next connection queued for a workspace, or a quiet new one; an exception queued
+    is raised instead. Records each workspace opened, in order."""
+
+    def __init__(
+        self, queued: dict[str, list[FakeEventConnection | Exception]] | None = None
+    ) -> None:
+        self.queued = {name: deque(items) for name, items in (queued or {}).items()}
+        self.opened: list[str] = []
+        self.connections: list[FakeEventConnection] = []
+
+    def open(self, workspace: str) -> FakeEventConnection:
+        self.opened.append(workspace)
+        queue = self.queued.get(workspace)
+        connection = queue.popleft() if queue else FakeEventConnection()
+        if isinstance(connection, Exception):
+            raise connection
+        self.connections.append(connection)
+        return connection

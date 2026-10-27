@@ -50,6 +50,7 @@ READ_ALLOWLIST = {
     "conversations.replies",
     "emoji.list",
     "files.info",
+    "rtm.connect",
     "search.messages",
     "usergroups.list",
     "users.info",
@@ -65,6 +66,7 @@ DEFAULT_RESPONSES = {
     "search.messages": {"messages": {"matches": [], "paging": {"page": 1, "pages": 1}}},
     "users.list": {"members": []},
     "users.info": {"user": {}},
+    "rtm.connect": {"url": "wss://example.invalid/rtm"},
     "usergroups.list": {"usergroups": []},
     "emoji.list": {"emoji": {}},
     "bots.info": {"bot": {}},
@@ -332,6 +334,7 @@ def test_gateway_never_calls_mutating_methods():
     gateway.bot_info("B0CA9EBAH1C")
     gateway.file_info("F0C9XQFTVRD")
     gateway.user_info("U0CA61XJF2R")
+    assert gateway.rtm_url() == "wss://example.invalid/rtm"
 
     assert set(api.methods()) == READ_ALLOWLIST
     assert limiter.acquired == api.methods()

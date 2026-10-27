@@ -4,9 +4,10 @@ import time
 from collections import deque
 from collections.abc import Callable
 
-TIER_RATES = {2: 20, 3: 50, 4: 100}
+TIER_RATES = {1: 1, 2: 20, 3: 50, 4: 100}
 WINDOW_S = 60.0
 METHOD_TIERS = {
+    "rtm.connect": 1,
     "search.messages": 2,
     "users.list": 2,
     "conversations.list": 2,

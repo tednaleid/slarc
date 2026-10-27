@@ -74,8 +74,16 @@ def test_tiered_limiter_uses_each_method_tier_rate():
         timer.now += 60
 
 
+def test_rtm_connect_is_tier_1_so_a_second_call_waits_a_minute():
+    timer = FakeTimer()
+    limiter = TieredLimiter(timer.clock, timer.sleep)
+    assert METHOD_TIERS["rtm.connect"] == 1
+    assert limiter.acquire("rtm.connect") == 0
+    assert limiter.acquire("rtm.connect") == pytest.approx(60)
+
+
 def test_tiers_match_slack_documentation():
-    assert TIER_RATES == {2: 20, 3: 50, 4: 100}
+    assert TIER_RATES == {1: 1, 2: 20, 3: 50, 4: 100}
     assert {m for m, t in METHOD_TIERS.items() if t == 2} == {
         "search.messages",
         "users.list",
