@@ -5,5 +5,5 @@ slarc reads the `xoxc` token and `d` cookie that the Slack desktop app (or a bro
 ## Consequences
 
 - slarc never calls a method that changes anything in Slack. Posting to the test workspace happens only in a separate script that is not part of the tool.
-- slarc uses documented Web API methods only, with an honest User-Agent: no `client.*` endpoints and no browser impersonation.
+- slarc uses documented Web API methods only, with an honest User-Agent: no `client.*` endpoints and no browser impersonation. For pushed events it uses the documented `rtm.connect` and the websocket URL it returns, never the desktop client's own socket URL.
 - Credentials are read fresh from the desktop app on every run and are never written into an archive, log or fixture.

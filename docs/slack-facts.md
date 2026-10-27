@@ -34,3 +34,12 @@ Facts checked against the `naleidworkspace` test workspace (team `T0CB5LYPVFA`, 
 - `files.info` for a snippet returns the full text in a top-level `content` field (all 10,000 lines), plus Slack's syntax-highlighted `content_highlight_html` and `content_highlight_css`, next to the `file` object. Only `file` is the file object; storing the top-level response would put the snippet text in the file's directory entry as well as the blob.
 - A deleted file appears inline as `mode: tombstone`, and `files.info` returns the error `file_deleted`. It needs a placeholder and no retry.
 - A hosted PNG downloaded with matching size and `Content-Type: image/png`.
+
+## Real-time events (RTM)
+
+Checked on 2026-10-27 with a connection that sent only pings, while `scripts/seed-test-workspace.py events` posted, replied, edited, reacted, unreacted and deleted in `#slarc-acceptance`. Background and sources: `docs/research/2026-10-27-slack-push-events.md`.
+
+- `rtm.connect` works with the session token. Its `url` opens a websocket when the `d` cookie is sent on the handshake, and the first event is `hello`.
+- With the user set to manual away, `users.getPresence` stayed `away` and `manual_away: true` throughout. `connection_count` went from 1 (the desktop app) to 2 while connected and back to 1 after. `last_activity`, which `users.getPresence` reports only to the user, moved to the connection time while connected and went back after.
+- Every action arrived without any subscribe step, including the reply in a thread created a moment before: `message`, `message` with `thread_ts`, `message_replied`, `message_changed`, `reaction_added`, `reaction_removed` and `message_deleted`. The reply's author was the connected user, so a thread started by someone else is unverified.
+- A new message event is the message as `conversations.replies` returns it, plus `channel`, `event_ts`, `suppress_notification`, `source_team` and `user_team`. `message_changed` carries the whole new message in `message`, and its thread fields follow the parent's state at that moment. `message_deleted` carries only `deleted_ts` and the `previous_message`. `reaction_added` and `reaction_removed` carry only the user, the emoji and the item, not the message's reaction list.

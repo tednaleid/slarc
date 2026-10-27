@@ -10,13 +10,14 @@
 # slarc = { path = "..", editable = true }
 # ///
 # ABOUTME: Developer-only script that posts test content to the naleidworkspace test workspace.
-# ABOUTME: Aborts on any other workspace; its acceptance commands write to #slarc-acceptance.
+# ABOUTME: Aborts on any other workspace; its commands write to #slarc-acceptance or set presence.
 import argparse
 import json
 import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 from slack_sdk import WebClient
@@ -342,6 +343,22 @@ def edit_acceptance(client: WebClient, ts: str, text: str) -> dict:
     return {"channel": channel, "ts": ts}
 
 
+def post_events(client: WebClient) -> dict:
+    """Posts a fresh parent in #slarc-acceptance, then replies to it, edits it, reacts and
+    unreacts, and deletes the reply, so a listening client sees one of each event."""
+    channel = acceptance_channel(client)
+    stamp = datetime.now(UTC).isoformat(timespec="seconds")
+    parent = client.chat_postMessage(channel=channel, text=f"slarc events: parent {stamp}")["ts"]
+    reply = client.chat_postMessage(
+        channel=channel, thread_ts=parent, text=f"slarc events: reply {stamp}"
+    )["ts"]
+    client.chat_update(channel=channel, ts=parent, text=f"slarc events: parent {stamp} (edited)")
+    client.reactions_add(channel=channel, timestamp=parent, name="eyes")
+    client.reactions_remove(channel=channel, timestamp=parent, name="eyes")
+    client.chat_delete(channel=channel, ts=reply)
+    return {"channel": channel, "parent": parent, "reply": reply}
+
+
 def connect(workspace: str) -> WebClient | None:
     """A client for the workspace, or None after explaining that it is not the test workspace."""
     sessions = DesktopSessionSource(Path.home(), sys.platform).sessions()
@@ -389,6 +406,14 @@ def main() -> int:
     edit = commands.add_parser("edit", help=f"edit a message in #{ACCEPTANCE_CHANNEL}")
     edit.add_argument("ts")
     edit.add_argument("text")
+    commands.add_parser(
+        "events",
+        help=f"post, reply, edit, react, unreact and delete in #{ACCEPTANCE_CHANNEL}",
+    )
+    presence = commands.add_parser(
+        "presence", help="set the test workspace user's presence to away or auto"
+    )
+    presence.add_argument("state", choices=["away", "auto"])
     args = parser.parse_args()
     if args.command is None and args.channel is None:
         parser.error("--channel is required to seed the fixtures channel")
@@ -401,6 +426,11 @@ def main() -> int:
             return seed(client, args.channel)
         if args.command == "ensure-acceptance":
             result = ensure_acceptance(client)
+        elif args.command == "events":
+            result = post_events(client)
+        elif args.command == "presence":
+            client.users_setPresence(presence=args.state)
+            result = {"presence": args.state}
         else:
             result = edit_acceptance(client, args.ts, args.text)
     except SlackApiError as error:
