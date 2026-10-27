@@ -6,9 +6,7 @@ from typing import Literal
 
 import msgspec
 
-from slarc.domain.directory import DirectoryView, referenced_users
-from slarc.domain.envelope import Envelope
-from slarc.domain.hashing import content_hash
+from slarc.domain.directory import DirectoryView
 from slarc.domain.links import (
     ConversationSel,
     MessageSel,
@@ -17,7 +15,6 @@ from slarc.domain.links import (
     WorkspaceSel,
     message_link,
 )
-from slarc.domain.plain import plain_text
 from slarc.domain.tracking import ItemKey, TrackedItem, item_label
 from slarc.ports import (
     ArchiveFailed,
@@ -30,36 +27,26 @@ from slarc.ports import (
     Reporter,
     SlackConnector,
     SlarcError,
-    StoredMessage,
     ThreadNotFound,
 )
 from slarc.service.appends import (
     LINES_APPENDED,
-    append_directory,
-    append_line,
-    count,
     counted,
     fetched_now,
-    stamped_meta,
 )
 from slarc.service.directory_refresh import (
-    BOTS_API,
-    USERS_API,
     listing_due,
     refresh_directory,
-    unknown_bots,
-    unknown_users,
 )
-from slarc.service.downloads import drain_downloads, queue_downloads, requeue_skipped
+from slarc.service.downloads import drain_downloads, requeue_skipped
 from slarc.service.held_conversation import HeldConversation
+from slarc.service.ingest import MESSAGES_SEEN, MessageWriter
 from slarc.service.selectors import only_workspace, resolve_conversation
 from slarc.service.threads import active_threads, discover_reply_threads, infer_deletes
 from slarc.service.workspaces import Connection, Workspaces
 from slarc.unit_of_work import UnitOfWork
 
 HISTORY_API = "conversations.history"
-REPLIES_API = "conversations.replies"
-MESSAGES_SEEN = "messages_seen"
 RATE_LIMIT_WAIT = "rate_limit_wait_s"
 API_CALLS = "api_calls"
 THREADS_READ = "threads_read"
@@ -198,7 +185,13 @@ class _PullRun:
         self.messages_new = 0
         self.not_visible = 0
         self._threads_counted: set[tuple[str, str, str]] = set()
-        self._missing_users: set[str] = set()
+        self.writer = MessageWriter(
+            uow,
+            options.max_file_bytes,
+            retry_skipped=options.full,
+            on_seen=self._count_seen,
+            on_new=self._count_new,
+        )
 
     def requeue_skipped(self, items: list[TrackedItem]) -> None:
         try:
@@ -341,8 +334,8 @@ class _PullRun:
             label = item_label(item, view)
             self.progress = _ItemProgress(self.reporter, label, report_start=False)
             try:
-                self._append_unknown(connection, reads[item.key], view)
-                self._append_thread(held, item.ts or "", reads[item.key], view)
+                self.writer.append_unknown(connection, reads[item.key], view)
+                self.writer.append_thread(held, item.ts or "", reads[item.key], view)
                 self._finish(connection, held, item, view)
             except CommitConflict as error:
                 self._unfinished(label, error)
@@ -573,7 +566,7 @@ class _PullRun:
             if stored[ts].thread_ts in (None, ts)
         }
         oldest = min(held.listed, key=MessageTs, default=None)
-        self._append_deletes(held, infer_deletes(top_level, held.listed, item.since, oldest))
+        self.writer.append_deletes(held, infer_deletes(top_level, held.listed, item.since, oldest))
         return msgspec.structs.replace(item, backfill_complete=True, last_search_at=searched_at)
 
     def _append_history_page(
@@ -624,8 +617,8 @@ class _PullRun:
         if page:
             if not parents:
                 self._reach(oldest)
-            self._append_unknown(connection, page, view)
-            self._append_messages(held, page, HISTORY_API, view)
+            self.writer.append_unknown(connection, page, view)
+            self.writer.append_messages(held, page, HISTORY_API, view)
             self._report_progress()
         gateway, channel = connection.gateway, held.channel
         for ts in parents:
@@ -651,8 +644,8 @@ class _PullRun:
                 held.failed_threads.add(ts)
                 continue
             self._count_thread_read(held.team_id, channel, ts, reason)
-            self._append_unknown(connection, messages, view)
-            self._append_thread(held, ts, messages, view)
+            self.writer.append_unknown(connection, messages, view)
+            self.writer.append_thread(held, ts, messages, view)
             self._report_progress()
         if page and parents:
             self._reach(oldest)
@@ -663,87 +656,11 @@ class _PullRun:
         if self.progress is not None:
             self.progress.at = ts
 
-    def _append_unknown(
-        self, connection: Connection, messages: list[dict], view: DirectoryView
-    ) -> None:
-        """Appends the bots and users the messages name that the view does not know yet."""
-        team_id, gateway = connection.team_id, connection.gateway
-        bot_ids = {m["bot_id"] for m in messages if m.get("bot_id")} - view.bots.keys()
-        bots = unknown_bots(gateway, team_id, bot_ids, self.uow.archive)
-        append_directory(self.uow, team_id, "bot", bots, BOTS_API)
-        view.bots.update(bots)
-        user_ids = referenced_users(messages) - view.users.keys()
-        users = unknown_users(gateway, user_ids, self._missing_users)
-        append_directory(self.uow, team_id, "user", users, USERS_API)
-        view.users.update(users)
-
     def _report_progress(self) -> None:
         if self.progress is not None:
             self.progress.report()
 
-    def _append_messages(
-        self, held: HeldConversation, messages: list[dict], api: str, view: DirectoryView
-    ) -> None:
-        uow, team_id, channel = self.uow, held.team_id, held.channel
-        files = {f["id"]: f for m in messages for f in m.get("files") or [] if f.get("id")}
-        appended = append_directory(uow, team_id, "file", files, api, keep_blob=True)
-        held.files.update(appended)
-        for message in messages:
-            ts = message["ts"]
-            self._count_seen(held, ts)
-            digest = content_hash("message", message)
-            stored = held.stored.get(ts)
-            if stored is None or stored.hash != digest:
-                meta = stamped_meta(
-                    uow,
-                    "message",
-                    team=team_id,
-                    channel=channel,
-                    ts=ts,
-                    source_team=message.get("team") or team_id,
-                    api=api,
-                    hash=digest,
-                    plain=plain_text(message, view),
-                )
-                append_line(uow, Envelope(meta=meta, object=message))
-                held.record(ts, StoredMessage(digest, message.get("thread_ts"), fetched_now(uow)))
-                self._count_new()
-            queue_downloads(
-                message,
-                team_id,
-                uow,
-                self.options.max_file_bytes,
-                view=view,
-                files=held.files,
-                images=held.images,
-                known=held.downloads,
-                retry_skipped=self.options.full,
-            )
-
-    def _append_thread(
-        self, held: HeldConversation, thread_ts: str, messages: list[dict], view: DirectoryView
-    ) -> None:
-        self._append_messages(held, messages, REPLIES_API, view)
-        returned = {message["ts"] for message in messages}
-        members = {ts: held.stored[ts] for ts in held.thread(thread_ts)}
-        oldest = min(returned, key=MessageTs, default=None)
-        self._append_deletes(held, infer_deletes(members, returned, None, oldest))
-
-    def _append_deletes(self, held: HeldConversation, stamps: set[str]) -> None:
-        uow = self.uow
-        for ts in sorted(stamps, key=MessageTs):
-            meta = stamped_meta(uow, "deleted", team=held.team_id, channel=held.channel, ts=ts)
-            append_line(uow, Envelope(meta=meta))
-            held.record(ts, StoredMessage(None, held.stored[ts].thread_ts, fetched_now(uow)))
-            self._count_new()
-
-    def _count_seen(self, held: HeldConversation, ts: str) -> None:
-        """Counts a message read, for the run and the item in progress, the first time this run
-        reads it in the conversation."""
-        if ts in held.counted:
-            return
-        held.counted.add(ts)
-        count(self.uow, MESSAGES_SEEN)
+    def _count_seen(self) -> None:
         if self.progress is not None:
             self.progress.seen += 1
 
