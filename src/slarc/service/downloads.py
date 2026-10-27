@@ -187,6 +187,8 @@ def drain_downloads(
     max_bytes: int,
     connector: SlackConnector,
     reporter: Reporter,
+    *,
+    earlier: bool = True,
 ) -> DrainedDownloads:
     """Downloads this run's pending targets and the teams' earlier queue, committing each result.
 
@@ -197,9 +199,9 @@ def drain_downloads(
     counts as failed. A result whose target's download state an rm deleted meanwhile is
     dropped and counts as neither.
     Requeued downloads are committed before any job starts, so each later commit carries
-    only its own result's state.
+    only its own result's state. earlier false leaves the teams' earlier queue alone.
     """
-    if _requeue_earlier(uow, teams, max_bytes):
+    if earlier and _requeue_earlier(uow, teams, max_bytes):
         uow.commit(downloads_exist=True)
     jobs = [_job(state, max_bytes) for state in uow.run.downloads if state.status == "pending"]
     jobs = _with_credentials(jobs, connector, reporter)
