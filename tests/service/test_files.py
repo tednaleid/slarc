@@ -26,9 +26,7 @@ def index(tmp_path_factory: pytest.TempPathFactory, ext_dir: Path) -> Iterator[D
 
 def test_file_bytes_by_id_and_by_link(index: DuckDbQueryIndex, blobs: InMemoryBlobStore) -> None:
     for selector in (TEN_K, TEN_K_LINK):
-        name, data = file_bytes(index, blobs, selector)
-        assert name == "10k-snippet.txt"
-        assert data == blobs.read(TEN_K_BLOB)
+        assert file_bytes(index, blobs, selector) == blobs.read(TEN_K_BLOB)
 
 
 def test_file_not_downloaded_says_why(index: DuckDbQueryIndex, blobs: InMemoryBlobStore) -> None:

@@ -21,8 +21,8 @@ class FileNotArchived(SlarcError):
     """The archive knows the file but holds no copy of it."""
 
 
-def file_bytes(index: QueryIndex, blobs: BlobStore, selector: str) -> tuple[str, bytes]:
-    """The name and bytes of the file a file id or a file's Slack link names."""
+def file_bytes(index: QueryIndex, blobs: BlobStore, selector: str) -> bytes:
+    """The bytes of the file a file id or a file's Slack link names."""
     try:
         file_id, domain = parse_file_selector(selector)
     except ValueError:
@@ -45,4 +45,4 @@ def file_bytes(index: QueryIndex, blobs: BlobStore, selector: str) -> tuple[str,
         if record.last_error:
             reason += f" ({record.last_error})"
         raise FileNotArchived(f"{file_id} is not in the archive: {reason}.")
-    return record.name, blobs.read(record.blob)
+    return blobs.read(record.blob)

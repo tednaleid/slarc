@@ -72,11 +72,12 @@ slarc sql --format jsonl "SELECT conversation, author_real_name, text, link FROM
 ```
 
 A file a message carries, such as a PDF, an image or a snippet's full text. Each message's
-`files` gives the ids; `--out` writes into a directory under the file's name, and without it
-the bytes go to stdout:
+`files` gives the ids and names. `--out` is the exact path to write, with its directories
+created; a different file already there is never replaced (exit 2). Without `--out` the bytes go
+to stdout:
 
 ```sh
-slarc file F0123456789 --out ~/Downloads
+slarc file F0123456789 --out ~/Downloads/proposal.pdf
 slarc sql --format jsonl "SELECT f.id, f.name, f.mimetype, f.size, f.blob IS NOT NULL AS downloaded, d.status, d.last_error FROM file f LEFT JOIN download d ON d.team_id = f.team_id AND d.target = f.id WHERE f.id = 'F0123456789'"
 ```
 

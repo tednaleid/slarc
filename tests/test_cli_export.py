@@ -251,16 +251,33 @@ def test_cli_file_writes_bytes_to_stdout(archive: Path, tmp_path: Path) -> None:
     assert result.stdout_bytes == blob.read_bytes()
 
 
-def test_cli_file_out_takes_a_path_or_a_directory(archive: Path, tmp_path: Path) -> None:
-    target = tmp_path / "copy.txt"
+def test_cli_file_out_is_the_exact_path_with_parents_created(archive: Path, tmp_path: Path) -> None:
+    target = tmp_path / "new" / "dir" / "copy.txt"
     result = invoke(tmp_path, "file", TEN_K, "--out", str(target), "--root", str(archive))
     assert result.exit_code == 0, result.output
     assert result.stdout.strip() == str(target)
-    folder = tmp_path / "folder"
-    folder.mkdir()
-    result = invoke(tmp_path, "file", TEN_K, "--out", str(folder), "--root", str(archive))
-    assert result.exit_code == 0, result.output
-    assert (folder / "10k-snippet.txt").read_bytes() == target.read_bytes()
+    blob = next((archive / "blobs").rglob("72e62bcee33d30d5*"))
+    assert target.read_bytes() == blob.read_bytes()
+    again = invoke(tmp_path, "file", TEN_K, "--out", str(target), "--root", str(archive))
+    assert again.exit_code == 0, again.output
+    assert again.stdout.strip() == str(target)
+
+
+def test_cli_file_out_never_replaces_a_different_file(archive: Path, tmp_path: Path) -> None:
+    target = tmp_path / "copy.txt"
+    target.write_text("keep me", encoding="utf-8")
+    result = invoke(tmp_path, "file", TEN_K, "--out", str(target), "--root", str(archive))
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr.strip() == (f"{target} already exists; remove it or choose another path.")
+    assert target.read_text(encoding="utf-8") == "keep me"
+
+
+def test_cli_file_out_refuses_a_directory(archive: Path, tmp_path: Path) -> None:
+    result = invoke(tmp_path, "file", TEN_K, "--out", str(tmp_path), "--root", str(archive))
+    assert result.exit_code == 2
+    assert result.stderr.strip() == f"--out takes a file path; {tmp_path} is a directory."
+    assert list(tmp_path.glob("*.txt")) == []
 
 
 def test_cli_file_exit_codes(archive: Path, tmp_path: Path) -> None:
@@ -271,9 +288,3 @@ def test_cli_file_exit_codes(archive: Path, tmp_path: Path) -> None:
     unknown = invoke(tmp_path, "file", "F0NOPE00000", "--root", str(archive))
     assert unknown.exit_code == 2
     assert unknown.stderr.strip() == "No file F0NOPE00000 is in the archive."
-
-
-def test_cli_file_name_never_leaves_the_directory() -> None:
-    assert cli._safe_name("../../etc/passwd") == "passwd"
-    assert cli._safe_name("a\\b.txt") == "b.txt"
-    assert cli._safe_name("..") == "file"

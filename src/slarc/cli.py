@@ -930,8 +930,8 @@ def file_command(
         typer.Option(
             "--out",
             metavar="PATH",
-            help="Write to this file, or into this directory under the file's name. "
-            "Without it the bytes go to stdout.",
+            help="Write to this file path, creating its directories. A different file "
+            "already there is never replaced. Without it the bytes go to stdout.",
         ),
     ] = None,
     root: Annotated[
@@ -943,7 +943,7 @@ def file_command(
     try:
         archive_root = _existing_archive(root, services.env, services.home)
         with bootstrap.query_index(archive_root, services.take_ownership) as index:
-            name, data = file_bytes(index, bootstrap.blob_store(archive_root), selector)
+            data = file_bytes(index, bootstrap.blob_store(archive_root), selector)
     except FileNotArchived as error:
         err.print(str(error), markup=False)
         raise typer.Exit(NO_MATCH_EXIT) from None
@@ -953,18 +953,25 @@ def file_command(
         sys.stdout.buffer.write(data)
         sys.stdout.buffer.flush()
         return
-    target = out_path / _safe_name(name) if out_path.is_dir() else out_path
+    _write_new_file(out_path, data)
+    out.print(str(out_path), markup=False, soft_wrap=True)
+
+
+def _write_new_file(path: Path, data: bytes) -> None:
+    """Writes data at path, creating its parents. A file already there with the same bytes is
+    left as it is; anything else at path is never replaced."""
+    if path.is_dir():
+        _fail(f"--out takes a file path; {path} is a directory.")
     try:
-        target.write_bytes(data)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open("xb") as file:
+                file.write(data)
+        except FileExistsError:
+            if path.read_bytes() != data:
+                _fail(f"{path} already exists; remove it or choose another path.")
     except OSError as error:
-        _fail(f"Could not write {target}: {error.strerror}.")
-    out.print(str(target), markup=False, soft_wrap=True)
-
-
-def _safe_name(name: str) -> str:
-    """A file's Slack name as a single path part: no directories, and never . or .."""
-    part = Path(name.replace("\\", "/")).name
-    return part if part not in ("", ".", "..") else "file"
+        _fail(f"Could not write {path}: {error.strerror}.")
 
 
 def _deleted_parts(removal: Removal, line: str = "line") -> str:
