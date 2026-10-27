@@ -21,6 +21,7 @@ from tests.service.test_export import (
     MESSAGE_LINK,
     OUT,
     SYNTHETIC,
+    TED,
     append_line,
 )
 
@@ -159,3 +160,89 @@ def test_markdown_reply_on_a_later_day_gives_its_date(archive, store, blobs) -> 
     later = line_with(page, "p1792500000000100")
     assert later.startswith("> **Jim Naleid** (Jim) 2026-10-20 7:40 AM "), later
     assert "2026-10-19" not in line_with(page, f"p{parent.replace('.', '')}")
+
+
+LINKED = f"https://naleidworkspace.slack.com/archives/{ALL_NALEID}/p1792427577619569"
+
+
+def unfurl(text: str, blocks: list[dict] | None = None) -> dict:
+    """A message unfurl as Slack sends it: no title, and a fallback repeating the raw text."""
+    attachment = {
+        "is_msg_unfurl": True,
+        "from_url": LINKED,
+        "author_id": JIM,
+        "author_name": "Jim",
+        "fallback": f"[October 19th, 2026 11:32 AM] jim: {text}",
+        "text": text,
+        "footer": "Thread in #all-naleid",
+    }
+    if blocks is not None:
+        attachment["message_blocks"] = [{"message": {"blocks": blocks}}]
+    return attachment
+
+
+def test_markdown_message_unfurl_renders_once(archive, store, blobs) -> None:
+    raw = f"first line for <@{TED}>\nsecond line"
+    blocks = [
+        {
+            "type": "rich_text",
+            "elements": [
+                {
+                    "type": "rich_text_section",
+                    "elements": [
+                        {"type": "text", "text": "first line for "},
+                        {"type": "user", "user_id": TED},
+                        {"type": "text", "text": "\nsecond line"},
+                    ],
+                }
+            ],
+        }
+    ]
+    parent = {
+        "type": "message",
+        "ts": SYNTHETIC,
+        "user": TED,
+        "text": "look",
+        "attachments": [unfurl(raw, blocks)],
+    }
+    reply_ts = "1792500000.000200"
+    reply = {
+        "type": "message",
+        "ts": reply_ts,
+        "thread_ts": SYNTHETIC,
+        "user": JIM,
+        "text": "again",
+        "attachments": [unfurl(raw)],
+    }
+    append_line(store, "message", parent, channel=FIXTURES, ts=SYNTHETIC)
+    append_line(store, "message", reply, channel=FIXTURES, ts=reply_ts)
+    _, writer = exported(
+        archive, store, blobs, "#slarc-fixtures", window=Window(since="1792490000.000000")
+    )
+    page = writer.text(OUT / f"{FIXTURES}.md")
+    quoted = [
+        f"> **Jim Naleid** (Jim) [linked message]({LINKED})",
+        "> first line for @Ted Naleid",
+        "> second line",
+    ]
+    assert "\n".join(quoted) in page
+    assert "\n".join(f"> {line}" for line in quoted) in page
+    assert "[preview" not in page
+    assert "jim: first line" not in page
+
+
+def test_markdown_preview_label_stays_on_one_line(archive, store, blobs) -> None:
+    preview = {"fallback": "one\ntwo", "from_url": "https://example.com/a"}
+    message = {
+        "type": "message",
+        "ts": SYNTHETIC,
+        "user": TED,
+        "text": "x",
+        "attachments": [preview],
+    }
+    append_line(store, "message", message, channel=FIXTURES, ts=SYNTHETIC)
+    _, writer = exported(
+        archive, store, blobs, "#slarc-fixtures", window=Window(since="1792490000.000000")
+    )
+    page = writer.text(OUT / f"{FIXTURES}.md")
+    assert "[preview: one two](https://example.com/a)" in page

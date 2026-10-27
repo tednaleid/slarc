@@ -104,13 +104,19 @@ class _Renderer:
         )
 
     def attachments(self, source: dict) -> list[str]:
-        """A link preview or bot attachment: its title as a link, then its text quoted."""
+        """Each attachment's lines: a linked message quoted, or a link preview or bot
+        attachment's title as a link, then its text quoted."""
         lines = []
         for attachment in dict_list(source.get("attachments")):
+            if attachment.get("is_msg_unfurl"):
+                lines += self.linked_message(attachment)
+                continue
             title = text_field(attachment.get("title")) or text_field(attachment.get("fallback"))
             url = attachment.get("title_link") or attachment.get("from_url")
             service = text_field(attachment.get("service_name"))
-            label = f"{service}: {title}" if service and title else service or title
+            label = " ".join(
+                (f"{service}: {title}" if service and title else service or title).split()
+            )
             if label:
                 lines.append(
                     f"[preview: {label}]({url})" if is_web_url(url) else f"[preview: {label}]"
@@ -119,6 +125,29 @@ class _Renderer:
             if text:
                 lines += [f"> {line}" for line in mrkdwn_markdown(text, self.view).split("\n")]
         return lines
+
+    def linked_message(self, unfurl: dict) -> list[str]:
+        """A Slack message a link points to, quoted: its author and link, then its blocks, or
+        else its text, with mentions resolved."""
+        author_id = text_field(unfurl.get("author_id"))
+        known = self.view.users.get(author_id) is not None
+        author = self.view.author_display({"user": author_id}) if known else ""
+        name = self.view.author_real_name({"user": author_id}) if known else ""
+        name = name or text_field(unfurl.get("author_name")) or "unknown"
+        head = f"**{name}** ({author})" if author and author != name else f"**{name}**"
+        url = unfurl.get("from_url")
+        head += f" [linked message]({url})" if is_web_url(url) else " (linked message)"
+        blocks = [
+            block
+            for entry in dict_list(unfurl.get("message_blocks"))
+            for block in dict_list((entry.get("message") or {}).get("blocks"))
+        ]
+        if blocks:
+            body = render_message_markdown({"blocks": blocks}, self.view)
+        else:
+            body = mrkdwn_markdown(text_field(unfurl.get("text")), self.view)
+        lines = [head, *body.split("\n")] if body else [head]
+        return [f"> {line}" if line else ">" for line in lines]
 
 
 def _file_line(file: FileView) -> str:
