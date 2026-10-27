@@ -234,8 +234,8 @@ def test_markdown_message_unfurl_renders_once(archive, store, blobs) -> None:
     assert "jim: first line" not in page
 
 
-def test_markdown_preview_label_stays_on_one_line(archive, store, blobs) -> None:
-    preview = {"fallback": "one\ntwo", "from_url": "https://example.com/a"}
+def test_markdown_preview_label_is_one_line_with_names_resolved(archive, store, blobs) -> None:
+    preview = {"fallback": f"one <@{JIM}>\ntwo", "from_url": "https://example.com/a"}
     message = {
         "type": "message",
         "ts": SYNTHETIC,
@@ -248,7 +248,7 @@ def test_markdown_preview_label_stays_on_one_line(archive, store, blobs) -> None
         archive, store, blobs, "#slarc-fixtures", window=Window(since="1792490000.000000")
     )
     page = writer.text(OUT / f"{FIXTURES_PAGE}.md")
-    assert "[preview: one two](https://example.com/a)" in page
+    assert "[preview: one @Jim two](https://example.com/a)" in page
 
 
 def test_markdown_directory_export_writes_an_index(archive, store, blobs) -> None:

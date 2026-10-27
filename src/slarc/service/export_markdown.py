@@ -138,6 +138,7 @@ class _Renderer:
             title = text_field(attachment.get("title")) or text_field(attachment.get("fallback"))
             url = attachment.get("title_link") or attachment.get("from_url")
             service = text_field(attachment.get("service_name"))
+            title = mrkdwn_markdown(title, self.view) if title else ""
             label = " ".join(
                 (f"{service}: {title}" if service and title else service or title).split()
             )
