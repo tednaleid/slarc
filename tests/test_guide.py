@@ -71,3 +71,13 @@ def test_guide_examples_run_against_the_recorded_archive(archive: Path, tmp_path
         if "jsonl" in args:
             for line in result.stdout.splitlines():
                 json.loads(line)
+
+
+def test_the_first_40_lines_are_enough_to_search_query_and_read_a_file() -> None:
+    head = "\n".join(GUIDE.splitlines()[:40])
+    for fact in ("DuckDB", "not SQLite", "message_readable", "author_real_name", "posted_at"):
+        assert fact in head, fact
+    assert "slarc rm" in head
+    commands = [line for block in SH_BLOCK.findall(head + "\n```") for line in block.splitlines()]
+    assert [line.split()[1] for line in commands] == ["search", "sql", "file"]
+    assert "FROM message_readable" in commands[1]

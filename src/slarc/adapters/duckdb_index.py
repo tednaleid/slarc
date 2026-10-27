@@ -533,6 +533,14 @@ def _like_pattern(text: str) -> str:
     return f"%{escaped}%"
 
 
+SCHEMA_HINT = (
+    "slarc sql runs DuckDB SQL, not SQLite. List the views with: "
+    'slarc sql "SELECT view_name, comment FROM duckdb_views() WHERE NOT internal" '
+    "and a view's columns with: slarc sql \"SELECT column_name, data_type, comment FROM "
+    "duckdb_columns() WHERE table_name = 'message_readable'\""
+)
+
+
 def _error_message(error: duckdb.Error) -> str:
     """DuckDB's message up to its first blank line, which starts the query excerpt."""
     head = str(error).split("\n\n", 1)[0]
@@ -612,6 +620,8 @@ class DuckDbQueryIndex:
             cursor = self._db.execute(query)
             columns = [column[0] for column in cursor.description or []]
             return columns, cursor.fetchall()
+        except (duckdb.BinderException, duckdb.CatalogException, duckdb.ParserException) as error:
+            raise SlarcError(f"{_error_message(error)} {SCHEMA_HINT}") from None
         except duckdb.Error as error:
             raise SlarcError(_error_message(error)) from None
 

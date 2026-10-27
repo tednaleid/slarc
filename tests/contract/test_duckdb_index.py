@@ -575,6 +575,33 @@ def test_bad_sql_raises_one_line_slarc_error(index: DuckDbQueryIndex) -> None:
     assert "\n" not in str(caught.value)
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT user_name FROM message_readable",
+        "SELECT datetime('now')",
+        "SELECT * FROM messages_readable",
+        "SELEC 1",
+    ],
+)
+def test_sql_naming_or_syntax_errors_say_how_to_find_the_schema(
+    index: DuckDbQueryIndex, query: str
+) -> None:
+    with pytest.raises(SlarcError) as caught:
+        index.sql(query)
+    message = str(caught.value)
+    assert "slarc sql runs DuckDB SQL, not SQLite" in message
+    assert "duckdb_views()" in message
+    assert "duckdb_columns() WHERE table_name = 'message_readable'" in message
+    assert "\n" not in message
+
+
+def test_sql_errors_about_values_carry_no_schema_hint(index: DuckDbQueryIndex) -> None:
+    with pytest.raises(SlarcError) as caught:
+        index.sql("SELECT CAST('x' AS INTEGER)")
+    assert "duckdb_columns()" not in str(caught.value)
+
+
 QUERIES: dict[str, Callable[[DuckDbQueryIndex], object]] = {
     "search": lambda index: index.search(SearchFilter(text="wave", limit=10)),
     "conversation_counts": lambda index: index.conversation_counts(),
