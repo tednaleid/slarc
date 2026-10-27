@@ -58,7 +58,7 @@ Dependencies point inward: `cli.py` and `bootstrap.py` know everything, adapters
 
 `AssetResolver` (`domain/render/__init__.py`) is a domain-side protocol with the same pattern: `service/export.py` implements it over the archive's blobs, and tests use `FakeAssetResolver`.
 
-`SessionTokenGateway` calls only methods in `READ_METHODS`, sends every call through a per-method token bucket, and maps Slack error codes to `NotVisible`, `ThreadNotFound`, `FileDeleted` and `AuthFailed`. `HttpDownloader` follows redirects itself, sends the token and cookie only to Slack's file host, limits each other host to two downloads at a time, and holds a host that answers HTTP 429 for its `Retry-After`; a download that would wait more than 60 seconds is returned not tried, and keeps its attempts.
+`SessionTokenGateway` calls only methods in `READ_METHODS`, sends every call through a per-method minute window that allows at most the method's tier rate in any 60 seconds, and maps Slack error codes to `NotVisible`, `ThreadNotFound`, `FileDeleted` and `AuthFailed`. `HttpDownloader` follows redirects itself, sends the token and cookie only to Slack's file host, limits each other host to two downloads at a time, and holds a host that answers HTTP 429 for its `Retry-After`; a download that would wait more than 60 seconds is returned not tried, and keeps its attempts.
 
 ## Credentials and auth
 
@@ -117,7 +117,7 @@ Read and write failures inside the adapters (DuckDB, SQLite or file system error
 
 Leaving the unit of work, however the run ends (success, `SlarcError`, Ctrl-C, or SIGTERM, which the CLI turns into Ctrl-C), stamps `finished`, writes one run row and runs maintenance, recording in `maintained` whether its deletion step ran (the archive was idle). Before the run row, a run that ended normally commits what is left open and records a `CommitConflict` there in the run's `errors`. A run that raised discards what it left open, keeps what it committed, and raises its error after the run row is written. A run killed outright keeps what it committed and writes no run row. When the block raised, a failure writing the run row or maintaining is dropped in favor of the block's error. When a normally ending run's last commit fails with an error other than `CommitConflict`, maintenance is skipped and that error is raised after the run row, unless writing the run row also fails (see the backlog).
 
-The run row records the command and args, the teams touched, an `auth` entry per workspace (team id, user id, domain, team name, credential source, time of `auth.test`), `errors` for skipped workspaces, and `counts`: `messages_seen`, `lines_appended`, `rate_limit_wait_s` (token bucket waits only), `api_calls` per Web API method, `threads_read` per reason (`link`, `history`, `search`, `active`, `full`, `retry`; each thread once, under its first reason), and rm's deleted counts. `list`, `search`, `sql` and `export` read the archive and write no run row.
+The run row records the command and args, the teams touched, an `auth` entry per workspace (team id, user id, domain, team name, credential source, time of `auth.test`), `errors` for skipped workspaces, and `counts`: `messages_seen`, `lines_appended`, `rate_limit_wait_s` (minute window waits only), `api_calls` per Web API method, `threads_read` per reason (`link`, `history`, `search`, `active`, `full`, `retry`; each thread once, under its first reason), and rm's deleted counts. `list`, `search`, `sql` and `export` read the archive and write no run row.
 
 ## Locks
 

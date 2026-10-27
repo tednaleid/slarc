@@ -1,8 +1,10 @@
-# ABOUTME: Tests for the per-method token bucket and the Slack tier limiter.
-# ABOUTME: A fake monotonic timer advances only when the bucket sleeps or the test says so.
+# ABOUTME: Tests for the per-method minute window and the Slack tier limiter.
+# ABOUTME: A fake monotonic timer advances only when the window sleeps or the test says so.
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
-from slarc.adapters.rate_limit import METHOD_TIERS, TIER_RATES, TieredLimiter, TokenBucket
+from slarc.adapters.rate_limit import METHOD_TIERS, TIER_RATES, MinuteWindow, TieredLimiter
 
 
 class FakeTimer:
@@ -18,45 +20,58 @@ class FakeTimer:
         self.now += seconds
 
 
-def test_bucket_waits_when_empty():
+def test_window_allows_a_burst_of_rate_calls_then_waits_for_the_oldest():
     timer = FakeTimer()
-    bucket = TokenBucket(50, timer.clock, timer.sleep)
-    assert bucket.acquire("conversations.history") == 0
-    assert bucket.acquire("conversations.history") == pytest.approx(1.2)
-    assert timer.sleeps == [pytest.approx(1.2)]
-    timer.now += 0.5
-    assert bucket.acquire("conversations.history") == pytest.approx(0.7)
+    window = MinuteWindow(3, timer.clock, timer.sleep)
+    assert [window.acquire("conversations.replies") for _ in range(3)] == [0, 0, 0]
+    timer.now += 10
+    assert window.acquire("conversations.replies") == pytest.approx(50)
+    assert timer.sleeps == [pytest.approx(50)]
 
 
-def test_bucket_refills_with_time():
+def test_window_forgets_calls_older_than_a_minute():
     timer = FakeTimer()
-    bucket = TokenBucket(20, timer.clock, timer.sleep)
-    bucket.acquire("search.messages")
-    timer.now += 3
-    assert bucket.acquire("search.messages") == 0
+    window = MinuteWindow(2, timer.clock, timer.sleep)
+    window.acquire("search.messages")
+    window.acquire("search.messages")
+    timer.now += 60
+    assert window.acquire("search.messages") == 0
     assert timer.sleeps == []
 
 
-def test_bucket_is_per_method():
+def test_window_is_per_method():
     timer = FakeTimer()
-    bucket = TokenBucket(50, timer.clock, timer.sleep)
-    assert bucket.acquire("conversations.history") == 0
-    assert bucket.acquire("conversations.replies") == 0
+    window = MinuteWindow(1, timer.clock, timer.sleep)
+    assert window.acquire("conversations.history") == 0
+    assert window.acquire("conversations.replies") == 0
     assert timer.sleeps == []
+
+
+@given(
+    rate=st.integers(min_value=1, max_value=20),
+    gaps=st.lists(st.floats(min_value=0, max_value=30), min_size=1, max_size=80),
+)
+def test_window_never_lets_more_than_rate_calls_into_any_minute(
+    rate: int, gaps: list[float]
+) -> None:
+    timer = FakeTimer()
+    window = MinuteWindow(rate, timer.clock, timer.sleep)
+    calls = []
+    for gap in gaps:
+        timer.now += gap
+        window.acquire("users.list")
+        calls.append(timer.now)
+    for i, start in enumerate(calls):
+        assert sum(1 for t in calls[i:] if t < start + 60) <= rate
 
 
 def test_tiered_limiter_uses_each_method_tier_rate():
     timer = FakeTimer()
     limiter = TieredLimiter(timer.clock, timer.sleep)
-    waits = {}
-    for method in ("search.messages", "conversations.history", "auth.test"):
-        limiter.acquire(method)
-        waits[method] = limiter.acquire(method)
-    assert waits == {
-        "search.messages": pytest.approx(3.0),
-        "conversations.history": pytest.approx(1.2),
-        "auth.test": pytest.approx(0.6),
-    }
+    for method, rate in (("search.messages", 20), ("conversations.history", 50)):
+        assert [limiter.acquire(method) for _ in range(rate)] == [0] * rate
+        assert limiter.acquire(method) == pytest.approx(60)
+        timer.now += 60
 
 
 def test_tiers_match_slack_documentation():

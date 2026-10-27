@@ -121,7 +121,7 @@ slarc authenticates as the user with the two credentials the Slack client uses: 
 **Rate limits**
 
 - Session tokens get the web client's limits; the 2025 limits on non-Marketplace apps apply to app tokens.
-- Per-method token bucket (Tier 3 methods such as `conversations.history` and `conversations.replies` at about 50 per minute; Tier 2 methods such as `search.messages` and `users.list` at about 20 per minute) plus honoring `Retry-After` on 429, up to three retries per call. Pagination always passes through the limiter.
+- Per-method sliding window: at most a tier's rate of calls to one method in any 60 seconds (Tier 3 methods such as `conversations.history` and `conversations.replies` 50; Tier 2 methods such as `search.messages` and `users.list` 20; Tier 4 100), so a burst within that count waits nothing and no minute ever holds more. Plus honoring `Retry-After` on 429, up to three retries per call. Pagination always passes through the limiter.
 - Automated access can trigger Slack security alerts in managed workspaces. Accepted; documented in the README.
 
 **What the Slack adapter must not do**
