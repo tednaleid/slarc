@@ -18,6 +18,7 @@ from slarc.ports import (
     BlobStore,
     Clock,
     Downloader,
+    EventConnector,
     ExportWriter,
     QueryIndex,
     Session,
@@ -45,6 +46,7 @@ lazy from slarc.adapters.lake import (
 )
 lazy from slarc.adapters.lake_store import DuckLakeArchiveStore
 lazy from slarc.adapters.locks import FlockArchiveLock
+lazy from slarc.adapters.rtm import RtmConnector
 lazy from slarc.adapters.slack_gateway import USER_AGENT, SessionConnector, session_gateway
 
 DOWNLOAD_TIMEOUT_S = 60.0
@@ -57,6 +59,11 @@ type DownloaderFactory = Callable[
 def open_in_browser(uri: str) -> bool:
     """Opens the URI in the default browser; returns whether a browser took it."""
     return webbrowser.open(uri)
+
+
+def rtm_connector(connector: SessionConnector) -> EventConnector:
+    """Slack's real-time event connections for the connector's sessions."""
+    return RtmConnector(connector)
 
 
 def _no_wait_shown(seconds: int) -> None:
@@ -232,6 +239,7 @@ class Services:
     open_page: Callable[[str], bool] = open_in_browser
     run_suffix: str = ""  # ends the run id, telling apart commands started in the same second
     take_ownership: bool = False  # the global --take-ownership option
+    event_connector: Callable[[SessionConnector], EventConnector] = rtm_connector
 
     def gateway(
         self, session: Session, waiting: Callable[[int], None] = _no_wait_shown

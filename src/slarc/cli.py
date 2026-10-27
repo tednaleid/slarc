@@ -1,6 +1,7 @@
 # ABOUTME: Typer entrypoint for the slarc command line.
 # ABOUTME: Each command takes its adapters from bootstrap and calls the service layer.
 import dataclasses
+import secrets
 import shlex
 import signal
 import sys
@@ -32,10 +33,19 @@ from slarc.config import (
 from slarc.domain.links import WorkspaceSel, parse_selector
 from slarc.domain.window import Window
 from slarc.formats import ExportFormat, OutputFormat, write_rows
-from slarc.ports import SEARCH_LIMIT, ItemProgress, NoArchive, NoSession, SearchHit, SlarcError
+from slarc.ports import (
+    SEARCH_LIMIT,
+    Clock,
+    ItemProgress,
+    NoArchive,
+    NoSession,
+    SearchHit,
+    SlarcError,
+)
 lazy from slarc.service.auth import AuthStatus, auth_status, store_pasted
 lazy from slarc.service.export import STDOUT, EmptyWindow, Exported, export
 lazy from slarc.service.files import FileNotArchived, file_bytes
+lazy from slarc.service.listen import ListenOptions, listen
 lazy from slarc.service.listing import (
     ArchiveListing,
     ListedDownload,
@@ -914,6 +924,118 @@ def export_command(
         )
     if open_page and page is not None and not services.open_page(page.as_uri()):
         err.print("No browser could be opened; open the page above instead.", markup=False)
+
+
+class LineReporter:
+    """Prints each info line on stdout and each warning on stderr, each after the local time;
+    progress, downloads and archive steps are not shown."""
+
+    def __init__(self, clock: Clock, zone: tzinfo) -> None:
+        self._clock = clock
+        self._zone = zone
+
+    def info(self, msg: str) -> None:
+        out.print(f"{self._time()} {msg}", markup=False, soft_wrap=True)
+
+    def warn(self, msg: str) -> None:
+        err.print(f"{self._time()} Warning: {msg}", style="yellow", markup=False)
+
+    def progress(self, label: str, update: ItemProgress) -> None:
+        pass
+
+    def downloads(self, done: int, failed: int, skipped: int, total: int) -> None:
+        pass
+
+    def archive(self, step: str, *, finished: bool = False) -> None:
+        pass
+
+    def _time(self) -> str:
+        return self._clock.now().astimezone(self._zone).strftime("%H:%M")
+
+
+@app.command("listen")
+def listen_command(
+    ctx: typer.Context,
+    workspaces: Annotated[
+        list[str] | None,
+        typer.Argument(
+            metavar="[WORKSPACE]...",
+            help="Workspace names. Without any, every workspace with a tracked item.",
+            show_default=False,
+        ),
+    ] = None,
+    downloads: Annotated[
+        int | None, typer.Option(metavar="N", min=1, help="Parallel file downloads.")
+    ] = None,
+    max_file_size: Annotated[
+        int | None,
+        typer.Option(
+            "--max-file-size", metavar="MB", min=0, help="Largest file to download, in megabytes."
+        ),
+    ] = None,
+    root: Annotated[
+        Path | None, typer.Option(metavar="DIR", help="The archive directory to use.")
+    ] = None,
+) -> None:
+    """Keep the archive current from Slack's pushed events until Ctrl-C.
+
+    Pulls first, then stores new messages, edits, deletes and reactions on tracked items as
+    they happen, printing a line for each.
+    """
+    services: bootstrap.Services = ctx.obj
+    names = workspaces or []
+    reporter = LineReporter(services.clock, bootstrap.zone(services.env))
+    stopping: list[int] = []
+
+    def stop(signum: int, frame: FrameType | None) -> None:
+        stopping.append(signum)
+
+    previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        global_config = read_global_config(services.env, services.home)
+        archive_root = _existing_archive(root, services.env, services.home)
+        overrides = {"downloads": downloads, "max_file_size_mb": max_file_size}
+        settings = load_settings(archive_root, global_config, services.env, overrides)
+        options = ListenOptions(
+            downloads=settings.downloads,
+            max_file_bytes=settings.max_file_size_mb * MB,
+            active_thread_days=settings.active_thread_days,
+        )
+        connector = services.connector()
+        with (
+            bootstrap.archive_stores(archive_root, services.take_ownership) as (archive, blobs),
+            services.downloader(blobs, connector.authenticated) as downloader,
+        ):
+            if not archive.tracked_items():
+                _fail(NO_TRACKED_ITEMS)
+
+            def open_uow(command: str) -> UnitOfWork:
+                # A catch-up pull and the segment after it can start in the same second.
+                suffix = secrets.token_hex(2) if services.run_suffix else ""
+                return UnitOfWork(
+                    archive, blobs, services.clock, command, names, __version__, suffix
+                )
+
+            listen(
+                names,
+                options,
+                open_uow,
+                connector,
+                services.event_connector(connector),
+                downloader,
+                reporter,
+                services.clock,
+                lambda: bool(stopping),
+            )
+    except NoSession as error:
+        _warn([str(e) for e in services.credentials.errors])
+        _fail(str(error))
+    except SlarcError as error:
+        _fail(str(error))
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    reporter.info("Stopped.")
 
 
 @app.command("file")

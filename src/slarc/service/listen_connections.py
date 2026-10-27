@@ -56,6 +56,10 @@ class Connections:
                 self._drop(link, now)
         return events
 
+    @property
+    def teams(self) -> list[str]:
+        return list(self._links)
+
     def take_lost(self) -> set[str]:
         lost, self._lost = self._lost, set()
         return lost

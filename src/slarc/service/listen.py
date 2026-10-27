@@ -1,7 +1,8 @@
-# ABOUTME: slarc listen's service: applies batches of changes RTM events ask for to tracked items,
-# ABOUTME: re-reading a message once it has been quiet, and returns a line per change made.
+# ABOUTME: slarc listen: a catch-up pull, then hour-long segments applying batches of the changes
+# ABOUTME: RTM events ask of tracked items, with re-reads of quiet messages and pulls after a loss.
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from slarc.domain.directory import DirectoryView
 from slarc.domain.events import (
@@ -11,14 +12,19 @@ from slarc.domain.events import (
     Reread,
     StoreMessage,
     UserChanged,
+    classify,
 )
+from slarc.domain.links import Selector, WorkspaceSel
 from slarc.domain.tracking import TrackedItem, covers
 from slarc.ports import (
     AuthFailed,
+    Clock,
     CommitConflict,
     Downloader,
+    EventConnector,
     NotVisible,
     Reporter,
+    SlackConnector,
     SlarcError,
     ThreadNotFound,
 )
@@ -26,12 +32,18 @@ from slarc.service.appends import append_directory
 from slarc.service.downloads import drain_downloads
 from slarc.service.held_conversation import HeldConversation
 from slarc.service.ingest import MessageWriter
+from slarc.service.listen_connections import Connections
+from slarc.service.pull import PullOptions, pull
 from slarc.service.workspaces import Workspaces
 from slarc.unit_of_work import UnitOfWork
 
 RTM_API = "rtm"
 EMOJI_API = "emoji.list"
 QUIET_S = 10.0
+FLUSH_QUIET_S = 2.0
+FLUSH_MAX_S = 10.0
+SEGMENT = timedelta(hours=1)
+POLL_S = 1.0
 
 type PendingKey = tuple[str, str, str]  # team, channel, thread parent or lone message ts
 
@@ -40,6 +52,7 @@ type PendingKey = tuple[str, str, str]  # team, channel, thread parent or lone m
 class ListenOptions:
     downloads: int
     max_file_bytes: int
+    active_thread_days: int = 7
     unheard_pull_minutes: int = 15
 
 
@@ -54,6 +67,9 @@ class Pending:
     def mark(self, team_id: str, channel: str, ts: str, at: datetime) -> None:
         self._marked[(team_id, channel, ts)] = at
 
+    def waiting(self) -> bool:
+        return bool(self._marked)
+
     def due(self, now: datetime, team_id: str | None = None) -> list[PendingKey]:
         """The marked messages quiet for QUIET_S, in team_id when given; each is taken once."""
         ready = sorted(
@@ -64,6 +80,134 @@ class Pending:
         for key in ready:
             del self._marked[key]
         return ready
+
+
+def listen(
+    selected: list[str],
+    options: ListenOptions,
+    open_uow: Callable[[str], UnitOfWork],
+    connector: SlackConnector,
+    events: EventConnector,
+    downloader: Downloader,
+    reporter: Reporter,
+    clock: Clock,
+    stop: Callable[[], bool],
+) -> None:
+    """Pulls the selected workspaces, or every workspace with a tracked item, then applies
+    their events until stop returns true. A workspace whose connection was lost, or whose batch
+    conflicted with another command, is pulled again before listening goes on.
+
+    open_uow gives a fresh unit of work over the open archive for each pull and segment.
+    AuthFailed propagates after the open segment ends.
+    """
+    listener = _Listener(options, open_uow, connector, downloader, reporter)
+    teams = listener.catch_up([WorkspaceSel(name) for name in selected], announce=True)
+    connections = Connections(events, clock, teams)
+    pending = Pending()
+    try:
+        while not stop():
+            listener.segment(connections, pending, clock, stop)
+            due, pending.catch_up = sorted(pending.catch_up), set()
+            if due:
+                listener.catch_up([WorkspaceSel(team) for team in due])
+    finally:
+        connections.close()
+
+
+class _Listener:
+    def __init__(
+        self,
+        options: ListenOptions,
+        open_uow: Callable[[str], UnitOfWork],
+        connector: SlackConnector,
+        downloader: Downloader,
+        reporter: Reporter,
+    ) -> None:
+        self.options = options
+        self.open_uow = open_uow
+        self.connector = connector
+        self.downloader = downloader
+        self.reporter = reporter
+
+    def catch_up(self, selectors: list[Selector], *, announce: bool = False) -> list[str]:
+        """Pulls the selectors' workspaces, or everything tracked, and returns their team ids."""
+        pull_options = PullOptions(
+            downloads=self.options.downloads,
+            max_file_bytes=self.options.max_file_bytes,
+            active_thread_days=self.options.active_thread_days,
+        )
+        with self.open_uow("listen") as uow:
+            report = pull(
+                selectors, pull_options, uow, self.connector, self.downloader, self.reporter
+            )
+            domains = {entry["team_id"]: entry["domain"] for entry in uow.run.auth}
+            items = list(uow.archive.tracked_items().values())
+        teams = sorted(domains)
+        for team_id in teams:
+            name = domains[team_id] or team_id
+            if announce:
+                count = sum(1 for item in items if item.team_id == team_id)
+                noun = "tracked item" if count == 1 else "tracked items"
+                self.reporter.info(f"Listening to {name} ({count:,} {noun}).")
+            else:
+                self.reporter.info(
+                    f"{name}  pulled to catch up: {report.messages_new:,} new messages"
+                )
+        return teams
+
+    def segment(
+        self, connections: Connections, pending: Pending, clock: Clock, stop: Callable[[], bool]
+    ) -> None:
+        """Applies events in batches for up to SEGMENT, ending early when stop returns true or a
+        workspace needs a catch-up pull, then closes the unit of work."""
+        with self.open_uow("listen") as uow:
+            workspaces = Workspaces(self.connector, uow)
+            started = clock.now()
+            buffered: dict[str, list[Change]] = {}
+            first = last = flushed = started
+
+            def flush() -> None:
+                nonlocal flushed
+                teams = set(buffered) | (set(connections.teams) if pending.waiting() else set())
+                for team_id in sorted(teams):
+                    said = apply_batch(
+                        uow,
+                        workspaces,
+                        team_id,
+                        buffered.get(team_id, []),
+                        pending,
+                        self.downloader,
+                        self.options,
+                        self.reporter,
+                    )
+                    for line in said:
+                        self.reporter.info(line)
+                buffered.clear()
+                flushed = clock.now()
+
+            while True:
+                if stop():
+                    flush()
+                    return
+                for team_id, event in connections.poll(POLL_S):
+                    change = classify(event)
+                    if change is None:
+                        continue
+                    now = clock.now()
+                    if not buffered:
+                        first = now
+                    last = now
+                    buffered.setdefault(team_id, []).append(change)
+                pending.catch_up |= connections.take_lost()
+                now = clock.now()
+                quiet = (now - last).total_seconds() >= FLUSH_QUIET_S
+                aged = (now - first).total_seconds() >= FLUSH_MAX_S
+                rereads = pending.waiting() and (now - flushed).total_seconds() >= FLUSH_QUIET_S
+                if (buffered and (quiet or aged)) or rereads:
+                    flush()
+                if pending.catch_up or now - started >= SEGMENT:
+                    flush()
+                    return
 
 
 def apply_batch(
