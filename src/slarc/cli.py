@@ -35,6 +35,7 @@ from slarc.formats import ExportFormat, OutputFormat, write_rows
 from slarc.ports import SEARCH_LIMIT, ItemProgress, NoArchive, NoSession, SearchHit, SlarcError
 lazy from slarc.service.auth import AuthStatus, auth_status, store_pasted
 lazy from slarc.service.export import STDOUT, EmptyWindow, Exported, export
+lazy from slarc.service.files import FileNotArchived, file_bytes
 lazy from slarc.service.listing import (
     ArchiveListing,
     ListedDownload,
@@ -912,6 +913,57 @@ def export_command(
         )
     if open_page and page is not None and not services.open_page(page.as_uri()):
         err.print("No browser could be opened; open the page above instead.", markup=False)
+
+
+@app.command("file")
+def file_command(
+    ctx: typer.Context,
+    selector: Annotated[
+        str,
+        typer.Argument(
+            metavar="FILE", help="A file id such as F0123456789, or the file's Slack link."
+        ),
+    ],
+    out_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--out",
+            metavar="PATH",
+            help="Write to this file, or into this directory under the file's name. "
+            "Without it the bytes go to stdout.",
+        ),
+    ] = None,
+    root: Annotated[
+        Path | None, typer.Option(metavar="DIR", help="The archive directory to use.")
+    ] = None,
+) -> None:
+    """Write one archived file's bytes, such as a PDF or a snippet's full text."""
+    services: bootstrap.Services = ctx.obj
+    try:
+        archive_root = _existing_archive(root, services.env, services.home)
+        with bootstrap.query_index(archive_root, services.take_ownership) as index:
+            name, data = file_bytes(index, bootstrap.blob_store(archive_root), selector)
+    except FileNotArchived as error:
+        err.print(str(error), markup=False)
+        raise typer.Exit(NO_MATCH_EXIT) from None
+    except SlarcError as error:
+        _fail(str(error))
+    if out_path is None:
+        sys.stdout.buffer.write(data)
+        sys.stdout.buffer.flush()
+        return
+    target = out_path / _safe_name(name) if out_path.is_dir() else out_path
+    try:
+        target.write_bytes(data)
+    except OSError as error:
+        _fail(f"Could not write {target}: {error.strerror}.")
+    out.print(str(target), markup=False, soft_wrap=True)
+
+
+def _safe_name(name: str) -> str:
+    """A file's Slack name as a single path part: no directories, and never . or .."""
+    part = Path(name.replace("\\", "/")).name
+    return part if part not in ("", ".", "..") else "file"
 
 
 def _deleted_parts(removal: Removal, line: str = "line") -> str:

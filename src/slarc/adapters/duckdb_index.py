@@ -11,7 +11,14 @@ import duckdb
 from slarc.adapters.lake import CATALOG, connect_lake, lake_errors
 from slarc.domain.links import SLACK_HOST_SUFFIX
 from slarc.domain.plain import excerpt
-from slarc.ports import ArchiveLock, ArchiveReadFailed, SearchFilter, SearchHit, SlarcError
+from slarc.ports import (
+    ArchiveLock,
+    ArchiveReadFailed,
+    FileRecord,
+    SearchFilter,
+    SearchHit,
+    SlarcError,
+)
 
 # Slack ts strings ordered as numbers.
 TS_ORDER = "TRY_CAST({} AS DECIMAL(18, 6))"
@@ -462,6 +469,16 @@ KNOWS_DM_USER = """
 """
 KNOWS_USER = f"SELECT EXISTS ({USER_MATCH.format(param='$user')})"
 
+FILE_RECORD = """
+    SELECT f.team_id, f.id, coalesce(nullif(f.name, ''), nullif(f.title, ''), f.id),
+        f.blob, d.status, d.last_error
+    FROM file f
+    LEFT JOIN download d ON d.team_id = f.team_id AND d.target_kind = 'file' AND d.target = f.id
+    WHERE f.id = $id AND ($team IS NULL OR f.team_id = $team)
+    ORDER BY f.blob IS NULL, f.team_id
+    LIMIT 1
+"""
+
 MESSAGE_COLUMNS = """
     team_id, channel_id, ts, thread_ts, is_thread_parent, is_broadcast, reply_count,
     latest_reply, author_kind, user_id, bot_id, subtype, edited_ts, edited_by, plain,
@@ -592,6 +609,11 @@ class DuckDbQueryIndex:
 
     def knows_user(self, user: str) -> bool:
         return self._exists(KNOWS_USER, {"user": user})
+
+    def file_record(self, file_id: str, team: str | None) -> FileRecord | None:
+        with lake_errors(self._catalog, ArchiveReadFailed):
+            row = self._db.execute(FILE_RECORD, {"id": file_id, "team": team}).fetchone()
+        return FileRecord(*row) if row else None
 
     def _exists(self, query: str, params: dict[str, str | None]) -> bool:
         with lake_errors(self._catalog, ArchiveReadFailed):

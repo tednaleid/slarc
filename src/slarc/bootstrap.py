@@ -181,6 +181,10 @@ def archive_stores(
         archive.close()
 
 
+def blob_store(root: Path) -> FsBlobStore:
+    return FsBlobStore(root)
+
+
 @contextmanager
 def query_index(root: Path, take_ownership: bool = False) -> Generator[QueryIndex]:
     """Views over the archive's lake, attached read-only, with ensure_lake run first and the

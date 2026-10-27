@@ -14,6 +14,7 @@ from slarc.ports import (
     Commit,
     CommitConflict,
     Committed,
+    FileRecord,
     SearchFilter,
     SearchHit,
     SlarcError,
@@ -70,6 +71,9 @@ class WorkspaceIndex:
 
     def knows_user(self, user: str) -> bool:
         raise AssertionError("rm does not search")
+
+    def file_record(self, file_id: str, team: str | None) -> FileRecord | None:
+        raise AssertionError("rm does not read files")
 
     def conversation_counts(self) -> dict[tuple[str, str], int]:
         raise AssertionError("rm does not count conversations")

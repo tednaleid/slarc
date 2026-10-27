@@ -318,6 +318,19 @@ class SearchFilter:
 
 
 @dataclass(frozen=True)
+class FileRecord:
+    """A file the archive knows: its blob when downloaded, else its download state's status
+    and last error, if any."""
+
+    team_id: str
+    id: str
+    name: str
+    blob: str | None
+    status: str | None
+    last_error: str | None
+
+
+@dataclass(frozen=True)
 class SearchHit:
     """A stored message matching a search, with message_readable's fields and an excerpt of
     its text around the match."""
@@ -347,6 +360,8 @@ class QueryIndex(Protocol):
     # filters match them.
     def knows_conversation(self, channel: str | None, dm_user: str | None) -> bool: ...
     def knows_user(self, user: str) -> bool: ...
+    # The file with this id, in team when given, preferring a downloaded copy.
+    def file_record(self, file_id: str, team: str | None) -> FileRecord | None: ...
     def conversation_counts(self) -> dict[tuple[str, str], int]: ...
     def messages(
         self, team: str, channel: str, since: str | None, until: str | None, include_deleted: bool

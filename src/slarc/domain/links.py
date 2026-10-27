@@ -6,6 +6,7 @@ from typing import Self, TypeIs
 from urllib.parse import parse_qs, urlparse
 
 CHANNEL_ID = re.compile(r"[CGD][A-Z0-9]{8,}")
+FILE_ID = re.compile(r"F[A-Z0-9]{8,}")
 WORKSPACE_DOMAIN = re.compile(r"[a-z0-9][a-z0-9-]*")
 PERMALINK_DIGITS = re.compile(r"p(\d{16})")
 SLACK_HOST_SUFFIX = ".slack.com"
@@ -76,6 +77,26 @@ def parse_selector(text: str) -> Selector:
         f"Cannot read '{text}' as a selector. Use a Slack link, a channel id, "
         "#channel-name, @user or a workspace name."
     )
+
+
+def parse_file_selector(text: str) -> tuple[str, str | None]:
+    """The file id, and the workspace domain when given, of a file id such as F0123456789 or a
+    file's Slack link, https://<workspace>.slack.com/files/<user>/<file id>[/<name>]."""
+    if FILE_ID.fullmatch(text):
+        return text, None
+    parts = urlparse(text)
+    host = parts.hostname or ""
+    segments = [s for s in parts.path.split("/") if s]
+    if (
+        parts.scheme == "https"
+        and host.endswith(SLACK_HOST_SUFFIX)
+        and host != SLACK_HOST_SUFFIX[1:]
+        and len(segments) in (3, 4)
+        and segments[0] == "files"
+        and FILE_ID.fullmatch(segments[2])
+    ):
+        return segments[2], host.removesuffix(SLACK_HOST_SUFFIX)
+    raise ValueError(text)
 
 
 def _parse_link(url: str) -> Selector:

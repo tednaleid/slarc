@@ -239,3 +239,41 @@ def test_cli_export_html_to_stdout_inlines_its_assets(archive: Path, tmp_path: P
     assert "assets/" not in result.stdout
     assert 'href="viewer.css"' not in result.stdout
     assert "data:image/png;base64," in result.stdout
+
+
+TEN_K = "F0CA7TKM285"
+
+
+def test_cli_file_writes_bytes_to_stdout(archive: Path, tmp_path: Path) -> None:
+    result = invoke(tmp_path, "file", TEN_K, "--root", str(archive))
+    assert result.exit_code == 0, result.output
+    blob = next((archive / "blobs").rglob("72e62bcee33d30d5*"))
+    assert result.stdout_bytes == blob.read_bytes()
+
+
+def test_cli_file_out_takes_a_path_or_a_directory(archive: Path, tmp_path: Path) -> None:
+    target = tmp_path / "copy.txt"
+    result = invoke(tmp_path, "file", TEN_K, "--out", str(target), "--root", str(archive))
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == str(target)
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    result = invoke(tmp_path, "file", TEN_K, "--out", str(folder), "--root", str(archive))
+    assert result.exit_code == 0, result.output
+    assert (folder / "10k-snippet.txt").read_bytes() == target.read_bytes()
+
+
+def test_cli_file_exit_codes(archive: Path, tmp_path: Path) -> None:
+    missing = invoke(tmp_path, "file", "F0CAF2TQHQ9", "--root", str(archive))
+    assert missing.exit_code == 1
+    assert missing.stdout == ""
+    assert "F0CAF2TQHQ9 is not in the archive: it was deleted" in missing.stderr
+    unknown = invoke(tmp_path, "file", "F0NOPE00000", "--root", str(archive))
+    assert unknown.exit_code == 2
+    assert unknown.stderr.strip() == "No file F0NOPE00000 is in the archive."
+
+
+def test_cli_file_name_never_leaves_the_directory() -> None:
+    assert cli._safe_name("../../etc/passwd") == "passwd"
+    assert cli._safe_name("a\\b.txt") == "b.txt"
+    assert cli._safe_name("..") == "file"
