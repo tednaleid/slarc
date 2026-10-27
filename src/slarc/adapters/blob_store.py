@@ -58,5 +58,13 @@ class FsBlobStore:
         for path in self._dir.glob(f"{TEMP_PREFIX}*"):
             path.unlink(missing_ok=True)
 
+    def read_start(self, sha256: str, size: int) -> bytes | None:
+        """The blob's first size bytes, or None when the blob is missing."""
+        try:
+            with self._path(sha256).open("rb") as blob:
+                return blob.read(size)
+        except FileNotFoundError:
+            return None
+
     def _path(self, sha256: str) -> Path:
         return self._dir / sha256[:2] / sha256[2:4] / sha256

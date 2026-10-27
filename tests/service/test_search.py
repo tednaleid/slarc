@@ -1,11 +1,13 @@
 # ABOUTME: Tests for the search use case over DuckDB views of a lake of the recorded archive.
 # ABOUTME: Covers case-insensitive matching, the --in and --from filters, ordering and permalinks.
+import shutil
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from slarc.adapters.blob_store import FsBlobStore
 from slarc.adapters.duckdb_index import DuckDbQueryIndex
 from slarc.domain.envelope import Envelope, Kind, Meta
 from slarc.domain.links import MessageTs
@@ -22,7 +24,7 @@ from tests.contract.test_duckdb_index import (
     scalar,
 )
 from tests.fakes import FakeArchiveLock
-from tests.recorded_fixtures import recorded_lake
+from tests.recorded_fixtures import RECORDED, recorded_lake
 
 ALL_NALEID = "C0CA5396G03"
 FIXTURES = "C0CA7SNHTSP"
@@ -263,3 +265,51 @@ def test_search_names_that_match_nothing_are_errors(index: DuckDbQueryIndex) -> 
 def test_search_known_names_without_hits_are_no_match(index: DuckDbQueryIndex) -> None:
     assert search(index, "no such words", "#all-naleid", "jim", mentions="contact").hits == []
     assert search(index, "no such words", "@jim", None).hits == []
+
+
+TEN_K_TS = "1792422552.941749"
+
+
+@pytest.fixture
+def with_blobs(archive: Path) -> Path:
+    shutil.copytree(RECORDED / "blobs", archive / "blobs")
+    return archive
+
+
+def test_search_matches_text_files_and_cites_them(with_blobs: Path, ext_dir: Path) -> None:
+    with DuckDbQueryIndex(with_blobs, ext_dir, FakeArchiveLock()) as index:
+        [hit] = search(index, "test snippet line 5000", None, None).hits
+        assert hit.ts == TEN_K_TS
+        assert hit.excerpt.startswith("10k-snippet.txt: ...")
+        assert "test snippet line 5000" in hit.excerpt
+        # A match in the message's own text keeps its excerpt from that text.
+        [own] = search(index, "10k lines long", None, None).hits
+        assert own.excerpt.startswith("Ted Naleid: yet another snippet")
+
+
+def test_search_reads_only_the_start_of_a_text_file(with_blobs: Path, ext_dir: Path) -> None:
+    with DuckDbQueryIndex(with_blobs, ext_dir, FakeArchiveLock()) as index:
+        # Line 9000 starts past the first 200 KB.
+        assert search(index, "test snippet line 9000", None, None).hits == []
+
+
+def test_search_reads_text_files_with_invalid_bytes(with_blobs: Path, ext_dir: Path) -> None:
+    blob, size = FsBlobStore(with_blobs).write([b"caf\xe9 \xff marker words"])
+    file = {"id": "F0LATIN1X", "name": "latin.txt", "mode": "snippet", "size": size}
+    meta = Meta(
+        kind="file",
+        team=TEAM,
+        id="F0LATIN1X",
+        fetched_at=LATER,
+        run=LATER_RUN,
+        slarc=VERSION,
+        hash="f".ljust(64, "0"),
+        blob=blob,
+    )
+    line = message_line(FIXTURES, "1792500001.000001", "see attached")
+    files = [{"id": "F0LATIN1X", "name": "latin.txt"}]
+    message = Envelope(meta=line.meta, object={**(line.object or {}), "files": files})
+    commit(with_blobs, ext_dir, Envelope(meta=meta, object=file), message)
+    with DuckDbQueryIndex(with_blobs, ext_dir, FakeArchiveLock()) as index:
+        [hit] = search(index, "marker words", None, None).hits
+    assert hit.ts == "1792500001.000001"

@@ -8,10 +8,12 @@ from typing import Any
 
 import duckdb
 
+from slarc.adapters.blob_store import FsBlobStore
 from slarc.adapters.lake import CATALOG, connect_lake, lake_errors
 from slarc.domain.links import SLACK_HOST_SUFFIX
 from slarc.domain.plain import excerpt
 from slarc.ports import (
+    SNIPPET_LIMIT,
     ArchiveLock,
     ArchiveReadFailed,
     FileRecord,
@@ -412,7 +414,8 @@ COLUMN_COMMENTS = {
     "run": {"started": "When the run started; first_seen_at at or after it is new in it."},
 }
 
-# Matches newest first, the plain text ILIKE $pattern when one is given. A user filter names
+# Matches newest first, the plain text or the start of a text file the message carries ILIKE
+# $pattern when one is given. A user filter names
 # a user by id, name, display name or real name, or "me", each workspace's latest auth user.
 # Mentions match <@ID> and <!subteam^ID> tokens of the user's usergroups, not system messages.
 USER_MATCH = """
@@ -430,11 +433,22 @@ SEARCH = f"""
             UNION SELECT g.team_id, '<!subteam^' || g.id || suffix
                 FROM usergroup g, (VALUES ('>'), ('|')) AS ends(suffix)
                 JOIN mentioned u ON u.team_id = g.team_id AND list_contains(g.user_ids, u.id)
+        ),
+        file_hit AS (
+            SELECT mf.team_id, mf.channel_id, mf.ts, first(f.name || ': ' || t.text) AS text
+            FROM message_file mf
+            JOIN file f ON f.team_id = mf.team_id AND f.id = mf.file_id
+            JOIN file_text t ON t.blob = f.blob
+            WHERE t.text ILIKE $pattern ESCAPE '\\'
+            GROUP BY ALL
         )
-    SELECT {READABLE_COLUMNS}, m.plain
+    SELECT {READABLE_COLUMNS}, m.plain,
+        CASE WHEN m.plain ILIKE $pattern ESCAPE '\\' THEN NULL ELSE fh.text END AS file_match
     FROM message m {READABLE_JOINS}
+    LEFT JOIN file_hit fh
+        ON fh.team_id = m.team_id AND fh.channel_id = m.channel_id AND fh.ts = m.ts
     WHERE m.deleted_at IS NULL
-        AND ($pattern IS NULL OR m.plain ILIKE $pattern ESCAPE '\\')
+        AND ($pattern IS NULL OR m.plain ILIKE $pattern ESCAPE '\\' OR fh.text IS NOT NULL)
         AND ($in_channel IS NULL OR m.channel_id = $in_channel OR c.name = $in_channel)
         AND ($in_dm_user IS NULL OR c.kind = 'dm' AND (c.dm_user_id = $in_dm_user
             OR lower($in_dm_user) IN (
@@ -468,6 +482,12 @@ KNOWS_DM_USER = """
     )
 """
 KNOWS_USER = f"SELECT EXISTS ({USER_MATCH.format(param='$user')})"
+
+# The downloaded blobs whose start search reads into file_text.
+TEXT_FILE_BLOBS = """
+    SELECT DISTINCT blob FROM file
+    WHERE blob IS NOT NULL AND (mode = 'snippet' OR mimetype LIKE 'text/%')
+"""
 
 FILE_RECORD = """
     SELECT f.team_id, f.id, coalesce(nullif(f.name, ''), nullif(f.title, ''), f.id),
@@ -537,6 +557,8 @@ class DuckDbQueryIndex:
         owner: Callable[[duckdb.DuckDBPyConnection], object] = lambda con: None,
     ) -> None:
         self._catalog = root / CATALOG
+        self._blobs = FsBlobStore(root)
+        self._file_text_loaded = False
         self._lock = lock
         lock.hold_shared()
         try:
@@ -555,6 +577,7 @@ class DuckDbQueryIndex:
                             for name, query in ENTITY_VIEWS.items()
                         ),
                         *_comments(),
+                        "CREATE OR REPLACE TEMP TABLE file_text (blob VARCHAR, text VARCHAR)",
                     ]
                 )
             )
@@ -599,8 +622,30 @@ class DuckDbQueryIndex:
         }
         limit = f"LIMIT {int(query.limit)}" if query.limit else ""
         with lake_errors(self._catalog, ArchiveReadFailed):
+            if query.text:
+                self._load_file_text()
             rows = self._db.execute(SEARCH.format(limit=limit), params).fetchall()
-        return [SearchHit(*row[:-1], excerpt=excerpt(row[-1], query.text or "")) for row in rows]
+        hits = []
+        for *fields, plain, file_match in rows:
+            name, _, text = (file_match or "").partition(": ")
+            shown = f"{name}: {excerpt(text, query.text or '')}" if file_match else None
+            hits.append(SearchHit(*fields, excerpt=shown or excerpt(plain, query.text or "")))
+        return hits
+
+    def _load_file_text(self) -> None:
+        """Fills file_text with the first SNIPPET_LIMIT bytes of each downloaded text file,
+        once per index; bytes that are not UTF-8 read as replacement characters."""
+        if self._file_text_loaded:
+            return
+        blobs = [blob for (blob,) in self._db.execute(TEXT_FILE_BLOBS).fetchall()]
+        rows = []
+        for blob in blobs:
+            data = self._blobs.read_start(blob, SNIPPET_LIMIT)
+            if data is not None:
+                rows.append((blob, data.decode("utf-8", errors="replace")))
+        if rows:
+            self._db.executemany("INSERT INTO file_text VALUES (?, ?)", rows)
+        self._file_text_loaded = True
 
     def knows_conversation(self, channel: str | None, dm_user: str | None) -> bool:
         if dm_user is not None:
