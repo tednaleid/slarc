@@ -65,6 +65,12 @@ class WorkspaceIndex:
     def search(self, query: SearchFilter) -> list[SearchHit]:
         raise AssertionError("rm does not search")
 
+    def knows_conversation(self, channel: str | None, dm_user: str | None) -> bool:
+        raise AssertionError("rm does not search")
+
+    def knows_user(self, user: str) -> bool:
+        raise AssertionError("rm does not search")
+
     def conversation_counts(self) -> dict[tuple[str, str], int]:
         raise AssertionError("rm does not count conversations")
 

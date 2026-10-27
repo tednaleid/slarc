@@ -433,6 +433,22 @@ SEARCH = f"""
     {{limit}}
 """
 
+# Whether the directory knows the conversation or user a search filter names, matched as SEARCH
+# matches them.
+KNOWS_CHANNEL = """
+    SELECT EXISTS (SELECT 1 FROM conversation WHERE id = $channel OR name = $channel)
+        OR EXISTS (SELECT 1 FROM message WHERE channel_id = $channel)
+"""
+KNOWS_DM_USER = """
+    SELECT EXISTS (
+        SELECT 1 FROM conversation c
+        LEFT JOIN "user" u ON u.team_id = c.team_id AND u.id = c.dm_user_id
+        WHERE c.kind = 'dm' AND (c.dm_user_id = $user
+            OR lower($user) IN (lower(u.name), lower(u.display_name), lower(u.real_name)))
+    )
+"""
+KNOWS_USER = f"SELECT EXISTS ({USER_MATCH.format(param='$user')})"
+
 MESSAGE_COLUMNS = """
     team_id, channel_id, ts, thread_ts, is_thread_parent, is_broadcast, reply_count,
     latest_reply, author_kind, user_id, bot_id, subtype, edited_ts, edited_by, plain,
@@ -555,6 +571,19 @@ class DuckDbQueryIndex:
         with lake_errors(self._catalog, ArchiveReadFailed):
             rows = self._db.execute(SEARCH.format(limit=limit), params).fetchall()
         return [SearchHit(*row[:-1], snippet=snippet(row[-1], query.text or "")) for row in rows]
+
+    def knows_conversation(self, channel: str | None, dm_user: str | None) -> bool:
+        if dm_user is not None:
+            return self._exists(KNOWS_DM_USER, {"user": dm_user})
+        return self._exists(KNOWS_CHANNEL, {"channel": channel})
+
+    def knows_user(self, user: str) -> bool:
+        return self._exists(KNOWS_USER, {"user": user})
+
+    def _exists(self, query: str, params: dict[str, str | None]) -> bool:
+        with lake_errors(self._catalog, ArchiveReadFailed):
+            row = self._db.execute(query, params).fetchone()
+        return bool(row and row[0])
 
     def conversation_counts(self) -> dict[tuple[str, str], int]:
         with lake_errors(self._catalog, ArchiveReadFailed):

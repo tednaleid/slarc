@@ -238,3 +238,25 @@ def test_search_hit_link_is_slack_permalink(index: DuckDbQueryIndex) -> None:
 
     [dm] = search(index, "direct message to jim", None, None).hits
     assert dm.conversation == "@Jim"
+
+
+def test_search_names_that_match_nothing_are_errors(index: DuckDbQueryIndex) -> None:
+    cases = [
+        (("#nope", None, None), "No conversation named #nope in the archive. See slarc list."),
+        (
+            ("C0NOPE00000", None, None),
+            "No conversation named C0NOPE00000 in the archive. See slarc list.",
+        ),
+        (("@nobody", None, None), "No DM with @nobody in the archive. See slarc list."),
+        ((None, "nobody", None), "No user named nobody in the archive."),
+        ((None, None, "@nobody"), "No user named nobody in the archive."),
+    ]
+    for (in_conv, from_user, mentions), message in cases:
+        with pytest.raises(SlarcError) as raised:
+            search(index, "seed", in_conv, from_user, mentions=mentions)
+        assert str(raised.value) == message
+
+
+def test_search_known_names_without_hits_are_no_match(index: DuckDbQueryIndex) -> None:
+    assert search(index, "no such words", "#all-naleid", "jim", mentions="contact").hits == []
+    assert search(index, "no such words", "@jim", None).hits == []

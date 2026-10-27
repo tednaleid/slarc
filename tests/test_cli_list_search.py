@@ -112,6 +112,10 @@ def test_cli_search_filters_and_reports_no_matches(archive: Path, tmp_path: Path
     assert none.exit_code == 1, none.output
     assert none.stdout == ""
     assert none.stderr.strip() == "No messages match."
+    unknown = invoke(tmp_path, "search", "seed", "--in", "#nope")
+    assert unknown.exit_code == 2, unknown.output
+    assert unknown.stdout == ""
+    assert unknown.stderr.strip() == "No conversation named #nope in the archive. See slarc list."
 
 
 def test_cli_list_format_jsonl_emits_one_item_per_line(archive: Path, tmp_path: Path) -> None:

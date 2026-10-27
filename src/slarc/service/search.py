@@ -38,12 +38,19 @@ def search(
             "Give text to search for, or a filter such as --in, --from, --mentions or --since."
         )
     conversation = _conversation(in_conv)
+    if in_conv is not None and not index.knows_conversation(
+        conversation.channel, conversation.dm_user
+    ):
+        if conversation.dm_user:
+            raise SlarcError(f"No DM with @{conversation.dm_user} in the archive. See slarc list.")
+        raise SlarcError(f"No conversation named {in_conv} in the archive. See slarc list.")
+    users = [_known_user(index, user) for user in (from_user, mentions)]
     query = SearchFilter(
         text=text,
         in_channel=conversation.channel,
         in_dm_user=conversation.dm_user,
-        from_user=_user(from_user),
-        mentions=_user(mentions),
+        from_user=users[0],
+        mentions=users[1],
         window=window,
         limit=limit + 1 if limit else 0,
     )
@@ -53,8 +60,13 @@ def search(
     return SearchResult(hits)
 
 
-def _user(text: str | None) -> str | None:
-    return text.removeprefix("@") if text is not None else None
+def _known_user(index: QueryIndex, text: str | None) -> str | None:
+    if text is None:
+        return None
+    user = text.removeprefix("@")
+    if not index.knows_user(user):
+        raise SlarcError(f"No user named {user} in the archive.")
+    return user
 
 
 def _conversation(text: str | None) -> _Conversation:
