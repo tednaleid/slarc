@@ -115,7 +115,7 @@ slarc authenticates as the user with the two credentials the Slack client uses: 
 
 - Every command that talks to Slack starts with `auth.test` for each workspace it will touch. On `invalid_auth`, `not_authed`, `token_revoked`, `token_expired` or `account_inactive` the CLI names the source that failed and how to refresh it (sign into the desktop app again, or re-paste), then exits non-zero.
 - A workspace with no session, or whose credentials Slack rejects, is skipped with a warning while the other workspaces are pulled; the run row's `errors` names it. The pull then exits non-zero if no workspace was pulled or any credentials were rejected.
-- The archive records only `team_id`, the user id from `auth.test`, the credential source and the time of the last successful `auth.test`, in the run row.
+- The archive records only `team_id`, the user id from `auth.test`, the credential source, the time of the last successful `auth.test` and of the last directory listing, in the run row.
 - Signing out of the desktop app invalidates the pair; slarc never does that itself.
 
 **Rate limits**
@@ -186,7 +186,7 @@ Items marked (verified) were confirmed against the test workspace; the rest come
 
 1. Resolve the archive and the tracked items to pull.
 2. `auth.test` each workspace involved.
-3. Refresh the workspace directory: `users.list`, `emoji.list`, `usergroups.list`, and `conversations.info` for each conversation involved. Directory first, so `plain` can resolve names.
+3. Refresh the workspace directory: `conversations.info` for each conversation involved, and `users.list`, `emoji.list` and `usergroups.list` when the workspace was last listed a day or more ago, never, or on `--full`. Between listings, a user that a message about to be stored references and the archive does not hold (author, mention, reactor, editor, a linked message's author) is fetched with `users.info` first, so `plain` resolves every name; a user Slack does not return is asked for once per run and stays a raw id. A custom emoji or usergroup new since the last listing appears after the next one. Directory first, so `plain` can resolve names.
 4. Pull each tracked item (below), adding a message version whenever its hash is new. Each tracked item, directory refresh and history page is its own commit, so a killed pull keeps what it committed.
 5. Download pending files and images (below).
 6. Commit one run row recording the command, counts, auth and errors, then run maintenance (Storage).

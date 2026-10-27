@@ -6,7 +6,7 @@ from typing import Literal
 
 import msgspec
 
-from slarc.domain.directory import DirectoryView
+from slarc.domain.directory import DirectoryView, referenced_users
 from slarc.domain.envelope import Envelope
 from slarc.domain.hashing import content_hash
 from slarc.domain.links import (
@@ -42,7 +42,14 @@ from slarc.service.appends import (
     fetched_now,
     stamped_meta,
 )
-from slarc.service.directory_refresh import BOTS_API, refresh_directory, unknown_bots
+from slarc.service.directory_refresh import (
+    BOTS_API,
+    USERS_API,
+    listing_due,
+    refresh_directory,
+    unknown_bots,
+    unknown_users,
+)
 from slarc.service.downloads import drain_downloads, queue_downloads, requeue_skipped
 from slarc.service.held_conversation import HeldConversation
 from slarc.service.selectors import only_workspace, resolve_conversation
@@ -191,6 +198,7 @@ class _PullRun:
         self.messages_new = 0
         self.not_visible = 0
         self._threads_counted: set[tuple[str, str, str]] = set()
+        self._missing_users: set[str] = set()
 
     def requeue_skipped(self, items: list[TrackedItem]) -> None:
         try:
@@ -309,7 +317,11 @@ class _PullRun:
         bot_ids = {m["bot_id"] for messages in reads.values() for m in messages if m.get("bot_id")}
         channels = {item.channel for item in threads if item.key in reads}
         channels |= {item.channel for item in conversations}
-        view = refresh_directory(connection.gateway, team_id, channels, self.uow, bot_ids)
+        listing = self.options.full or listing_due(self.uow, team_id)
+        listed_at = fetched_now(self.uow)
+        view = refresh_directory(
+            connection.gateway, team_id, channels, self.uow, bot_ids, listing=listing
+        )
         try:
             self.uow.commit()
         except CommitConflict:
@@ -318,6 +330,10 @@ class _PullRun:
                 "items were not pulled."
             )
             return
+        if listing:
+            for entry in self.uow.run.auth:
+                if entry["team_id"] == team_id:
+                    entry["directory_listed_at"] = listed_at
         for item in threads:
             if item.key not in reads:
                 continue
@@ -325,6 +341,7 @@ class _PullRun:
             label = item_label(item, view)
             self.progress = _ItemProgress(self.reporter, label, report_start=False)
             try:
+                self._append_unknown(connection, reads[item.key], view)
                 self._append_thread(held, item.ts or "", reads[item.key], view)
                 self._finish(connection, held, item, view)
             except CommitConflict as error:
@@ -607,7 +624,7 @@ class _PullRun:
         if page:
             if not parents:
                 self._reach(oldest)
-            self._append_bots(connection, page, view)
+            self._append_unknown(connection, page, view)
             self._append_messages(held, page, HISTORY_API, view)
             self._report_progress()
         gateway, channel = connection.gateway, held.channel
@@ -634,7 +651,7 @@ class _PullRun:
                 held.failed_threads.add(ts)
                 continue
             self._count_thread_read(held.team_id, channel, ts, reason)
-            self._append_bots(connection, messages, view)
+            self._append_unknown(connection, messages, view)
             self._append_thread(held, ts, messages, view)
             self._report_progress()
         if page and parents:
@@ -646,15 +663,19 @@ class _PullRun:
         if self.progress is not None:
             self.progress.at = ts
 
-    def _append_bots(
+    def _append_unknown(
         self, connection: Connection, messages: list[dict], view: DirectoryView
     ) -> None:
-        """Appends the bots the messages name that the view does not know yet."""
-        team_id = connection.team_id
+        """Appends the bots and users the messages name that the view does not know yet."""
+        team_id, gateway = connection.team_id, connection.gateway
         bot_ids = {m["bot_id"] for m in messages if m.get("bot_id")} - view.bots.keys()
-        bots = unknown_bots(connection.gateway, team_id, bot_ids, self.uow.archive)
+        bots = unknown_bots(gateway, team_id, bot_ids, self.uow.archive)
         append_directory(self.uow, team_id, "bot", bots, BOTS_API)
         view.bots.update(bots)
+        user_ids = referenced_users(messages) - view.users.keys()
+        users = unknown_users(gateway, user_ids, self._missing_users)
+        append_directory(self.uow, team_id, "user", users, USERS_API)
+        view.users.update(users)
 
     def _report_progress(self) -> None:
         if self.progress is not None:

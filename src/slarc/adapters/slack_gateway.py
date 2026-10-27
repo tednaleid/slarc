@@ -154,6 +154,9 @@ class SessionTokenGateway:
     def bot_info(self, bot_id: str) -> dict:
         return self._call("bots.info", bot=bot_id)["bot"]
 
+    def user_info(self, user_id: str) -> dict:
+        return self._call("users.info", user=user_id)["user"]
+
     def file_info(self, file_id: str) -> dict:
         return self._call("files.info", file=file_id)["file"]
 

@@ -299,6 +299,23 @@ def test_append_run_leaves_tracked_items_to_commits(store_and_reopen):
         assert current.tracked_items() == {KEY: expected}
 
 
+def test_directory_listed_at_is_the_newest_listing_any_run_recorded(store_and_reopen):
+    store, reopen = store_and_reopen
+    listed = {"team_id": TEAM, "directory_listed_at": T1}
+    store.append_run(run_record(R1, T1, auth=[listed]), VERSION)
+    store.append_run(
+        run_record(
+            R2, T2, auth=[{"team_id": TEAM}, {"team_id": "T0OTHER", "directory_listed_at": T2}]
+        ),
+        VERSION,
+    )
+
+    for current in (store, reopen()):
+        assert current.directory_listed_at(TEAM) == T1
+        assert current.directory_listed_at("T0OTHER") == T2
+        assert current.directory_listed_at("T0NEVER") is None
+
+
 def recorded_runs(store: ArchiveStore, root: Path, ext_dir: Path) -> list[RunRecord]:
     """Every run the store recorded, read past the port, which has no run reads."""
     if isinstance(store, InMemoryArchiveStore):

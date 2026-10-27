@@ -92,4 +92,5 @@ def test_tiers_match_slack_documentation():
         "files.info",
         "bots.info",
         "auth.test",
+        "users.info",
     }

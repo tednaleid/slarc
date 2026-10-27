@@ -1,10 +1,36 @@
 # ABOUTME: DirectoryView answers name lookups, falling back to the raw id for an unknown object.
-# ABOUTME: Also names the image whose blob a user or emoji line carries, and a conversation's kind.
+# ABOUTME: Also names a line's image, a conversation's kind, and the users a message references.
+import re
 from dataclasses import dataclass
 from typing import Literal
 
 from slarc.domain.envelope import Kind
 from slarc.domain.links import is_web_url
+
+USER_ID = re.compile(r"[UW][A-Z0-9]{2,}")
+MENTION = re.compile(r"<@([UW][A-Z0-9]{2,})[|>]")
+USER_KEYS = ("user", "user_id", "author_id", "parent_user_id", "inviter")
+USER_LIST_KEYS = ("users", "reply_users")
+
+
+def referenced_users(obj: object) -> set[str]:
+    """Every user id the object names, at any depth: in a user field, a list of users, or a
+    mention in text."""
+    found: set[str] = set()
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if key in USER_KEYS and isinstance(value, str) and USER_ID.fullmatch(value):
+                found.add(value)
+            elif key in USER_LIST_KEYS and isinstance(value, list):
+                found.update(v for v in value if isinstance(v, str) and USER_ID.fullmatch(v))
+            else:
+                found |= referenced_users(value)
+    elif isinstance(obj, list):
+        for value in obj:
+            found |= referenced_users(value)
+    elif isinstance(obj, str):
+        found.update(MENTION.findall(obj))
+    return found
 
 
 def directory_image_url(kind: Kind, obj: dict) -> str | None:

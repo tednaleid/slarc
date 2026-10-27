@@ -18,6 +18,7 @@ METHOD_TIERS = {
     "files.info": 4,
     "bots.info": 4,
     "auth.test": 4,
+    "users.info": 4,
 }
 
 

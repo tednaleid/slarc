@@ -52,6 +52,7 @@ READ_ALLOWLIST = {
     "files.info",
     "search.messages",
     "usergroups.list",
+    "users.info",
     "users.list",
 }
 
@@ -63,6 +64,7 @@ DEFAULT_RESPONSES = {
     "conversations.replies": {"messages": []},
     "search.messages": {"messages": {"matches": [], "paging": {"page": 1, "pages": 1}}},
     "users.list": {"members": []},
+    "users.info": {"user": {}},
     "usergroups.list": {"usergroups": []},
     "emoji.list": {"emoji": {}},
     "bots.info": {"bot": {}},
@@ -226,6 +228,7 @@ def test_gateway_pages_directories_and_unwraps_objects():
             "emoji.list": [spike("emoji.list")],
             "bots.info": [spike("bots.info.B0CA9EBAH1C")],
             "files.info": [spike("files.info.F0C9XQFTVRD")],
+            "users.info": [{"ok": True, "user": users[1]}],
         }
     )
     gateway, _ = make_gateway(api)
@@ -239,6 +242,8 @@ def test_gateway_pages_directories_and_unwraps_objects():
     assert gateway.emoji() == spike("emoji.list")["emoji"]
     assert gateway.bot_info("B0CA9EBAH1C") == spike("bots.info.B0CA9EBAH1C")["bot"]
     assert gateway.file_info("F0C9XQFTVRD") == spike("files.info.F0C9XQFTVRD")["file"]
+    assert gateway.user_info(users[1]["id"]) == users[1]
+    assert ("users.info", {"user": users[1]["id"]}) in api.calls
 
 
 ERROR_CASES = [
@@ -326,6 +331,7 @@ def test_gateway_never_calls_mutating_methods():
     gateway.emoji()
     gateway.bot_info("B0CA9EBAH1C")
     gateway.file_info("F0C9XQFTVRD")
+    gateway.user_info("U0CA61XJF2R")
 
     assert set(api.methods()) == READ_ALLOWLIST
     assert limiter.acquired == api.methods()

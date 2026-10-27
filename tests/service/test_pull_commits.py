@@ -249,6 +249,7 @@ def test_thread_item_removed_during_the_pull_is_skipped(
         return listed()
 
     monkeypatch.setattr(h.gateway, "users", rm_of_the_thread_commits_first)
+    h.clock.advance(86400)
     report = h.pull()
 
     assert report.skipped == [

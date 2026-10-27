@@ -245,6 +245,15 @@ class DuckLakeArchiveStore:
                 self._con, "run", RUN_COLUMNS, [run_row(run_envelope(recorded, slarc_version))]
             )
 
+    def directory_listed_at(self, team: str) -> str | None:
+        rows = self._read(
+            "SELECT max(entry ->> 'directory_listed_at') FROM "
+            "(SELECT unnest(CAST(object -> 'auth' AS JSON[])) AS entry FROM run) "
+            "WHERE entry ->> 'team_id' = ?",
+            [team],
+        )
+        return rows[0][0]
+
     def maintain(self, blobs: BlobStore, deleting: Callable[[], None] = lambda: None) -> bool:
         """Compacts the lake under the write lock. Then, if no other store or index of this
         process holds the read lock and it can be taken exclusively, calls deleting, deletes

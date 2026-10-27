@@ -178,6 +178,7 @@ def test_rename_appends_one_user_line(h: Harness):
     h.pull(THREAD_LINK)
     before = len(h.lines("user"))
     h.gateway.users_list = list(recorded_directory("users.jsonl").values())
+    h.clock.advance(86400)
 
     h.pull()
 
@@ -300,6 +301,7 @@ def test_run_records_auth_per_workspace(h: Harness):
             "name": "naleid",
             "credential_source": "desktop",
             "auth_test_at": "2026-10-19T13:40:11Z",
+            "directory_listed_at": "2026-10-19T13:40:11Z",
         }
     ]
     run_line = json.dumps(h.lines("run")[-1].object)

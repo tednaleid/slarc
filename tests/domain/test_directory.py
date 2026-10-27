@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from slarc.domain.directory import DirectoryView, conversation_kind
+from slarc.domain.directory import DirectoryView, conversation_kind, referenced_users
 
 SPIKE = Path(__file__).parent.parent / "fixtures" / "spike"
 
@@ -74,3 +74,40 @@ def test_author_display_prefers_user_then_bot_profile_then_username():
     )
     assert view.author_display({"bot_profile": {"name": "giphy"}, "username": "x"}) == "giphy"
     assert view.author_display({"username": "webhook"}) == "webhook"
+
+
+def test_referenced_users_finds_every_user_id_a_message_names():
+    message = {
+        "user": "U0AUTHOR1",
+        "parent_user_id": "U0PARENT1",
+        "text": "hi <@U0MRKDWN1> and <@W0GRID001|someone>",
+        "reply_users": ["U0REPLY01"],
+        "reactions": [{"name": "eyes", "users": ["U0REACT01"], "count": 1}],
+        "blocks": [
+            {
+                "type": "rich_text",
+                "elements": [{"elements": [{"type": "user", "user_id": "U0RICH001"}]}],
+            }
+        ],
+        "attachments": [{"is_msg_unfurl": True, "author_id": "U0UNFURL1", "text": "<@U0NESTED1>"}],
+        "edited": {"user": "U0EDITOR1", "ts": "1.0"},
+        "bot_id": "B0BOT0001",
+        "channel": "C0CHANNEL",
+    }
+
+    assert referenced_users(message) == {
+        "U0AUTHOR1",
+        "U0PARENT1",
+        "U0MRKDWN1",
+        "W0GRID001",
+        "U0REPLY01",
+        "U0REACT01",
+        "U0RICH001",
+        "U0UNFURL1",
+        "U0NESTED1",
+        "U0EDITOR1",
+    }
+
+
+def test_referenced_users_ignores_values_that_are_not_user_ids():
+    assert referenced_users({"user": "", "text": "<@here> <#C0CHANNEL>", "users": [3]}) == set()

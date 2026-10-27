@@ -43,3 +43,7 @@ Checked on 2026-10-27 with a connection that sent only pings, while `scripts/see
 - With the user set to manual away, `users.getPresence` stayed `away` and `manual_away: true` throughout. `connection_count` went from 1 (the desktop app) to 2 while connected and back to 1 after. `last_activity`, which `users.getPresence` reports only to the user, moved to the connection time while connected and went back after.
 - Every action arrived without any subscribe step, including the reply in a thread created a moment before: `message`, `message` with `thread_ts`, `message_replied`, `message_changed`, `reaction_added`, `reaction_removed` and `message_deleted`. The reply's author was the connected user, so a thread started by someone else is unverified.
 - A new message event is the message as `conversations.replies` returns it, plus `channel`, `event_ts`, `suppress_notification`, `source_team` and `user_team`. `message_changed` carries the whole new message in `message`, and its thread fields follow the parent's state at that moment. `message_deleted` carries only `deleted_ts` and the `previous_message`. `reaction_added` and `reaction_removed` carry only the user, the emoji and the item, not the message's reaction list.
+
+## Users
+
+- `users.info` returns the same user object as a `users.list` member, except `profile.fields`: `users.list` omits it for people (and gives `{}` for Slackbot), while `users.info` gives `{}` or the custom profile fields. A user first stored from `users.info` therefore gets one more directory line at the next listing.

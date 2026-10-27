@@ -113,6 +113,16 @@ class InMemoryArchiveStore:
         recorded = msgspec.structs.replace(run, tracked=[], downloads=[])
         self.lines.append(run_envelope(recorded, slarc_version))
 
+    def directory_listed_at(self, team: str) -> str | None:
+        listed = [
+            entry["directory_listed_at"]
+            for env in self.lines
+            if env.meta.kind == "run"
+            for entry in (env.object or {}).get("auth") or []
+            if entry.get("team_id") == team and entry.get("directory_listed_at")
+        ]
+        return max(listed, default=None)
+
     def channels(self, team: str) -> list[str]:
         return sorted({env.meta.channel or "" for env in self._team_message_lines(team)})
 
@@ -447,6 +457,13 @@ class FakeSlackGateway:
         if bot_id not in self.bots:
             raise SlarcError("Slack returned bot_not_found for bots.info.")
         return self.bots[bot_id]
+
+    def user_info(self, user_id: str) -> dict:
+        self.calls.append(("users.info", user_id))
+        user = next((u for u in self.users_list if u.get("id") == user_id), None)
+        if user is None:
+            raise SlarcError("Slack returned user_not_found for users.info.")
+        return user
 
     def file_info(self, file_id: str) -> dict:
         self.calls.append(("files.info", file_id))
