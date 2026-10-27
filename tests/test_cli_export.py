@@ -49,7 +49,7 @@ def test_cli_export_writes_default_directory(archive: Path, tmp_path: Path) -> N
         str(out / "index.html"),
     ]
     assert (out / "index.html").is_file()
-    assert "Hello!" in (out / "C0CA5396G03.html").read_text(encoding="utf-8")
+    assert "Hello!" in (out / "all-naleid.html").read_text(encoding="utf-8")
     copied = out / "assets" / f"{SCREENSHOT}.png"
     assert copied.read_bytes() == (archive / "blobs/sha256/ca/3f" / SCREENSHOT).read_bytes()
 
@@ -69,7 +69,7 @@ def test_cli_export_workspace_writes_default_directory(archive: Path, tmp_path: 
     assert result.exit_code == 0, result.output
     out = tmp_path / "work" / "slarc-export-naleidworkspace"
     assert (out / "index.html").is_file()
-    assert (out / "C0CA5396G03.html").is_file()
+    assert (out / "all-naleid.html").is_file()
 
 
 def test_cli_export_single_file_with_tz(archive: Path, tmp_path: Path) -> None:
@@ -202,7 +202,7 @@ def test_cli_export_markdown_directory_has_one_md_per_page(archive: Path, tmp_pa
     assert result.exit_code == 0, result.output
     out = tmp_path / "work" / "slarc-export-naleidworkspace"
     names = {path.name for path in out.iterdir()}
-    assert "C0CA5396G03.md" in names
+    assert "all-naleid.md" in names
     assert all(name.endswith(".md") for name in names)
     assert result.stdout.splitlines()[-1] == str(out)
 

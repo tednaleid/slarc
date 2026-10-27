@@ -142,8 +142,8 @@ def test_rm_then_export_workspace_skips_removed(archive: Path, tmp_path: Path) -
     result = invoke(tmp_path, "export", "naleidworkspace", "--root", str(archive))
     assert result.exit_code == 0, result.output
     out = tmp_path / "work" / "slarc-export-naleidworkspace"
-    assert not (out / "C0CA5396G03.html").exists()
-    assert (out / "C0CA7SNHTSP.html").is_file()
+    assert not (out / "all-naleid.html").exists()
+    assert (out / "slarc-fixtures.html").is_file()
 
 
 def test_rm_unknown_selector_exits_2(archive: Path, tmp_path: Path, ext_dir: Path) -> None:

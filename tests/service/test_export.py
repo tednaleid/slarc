@@ -14,16 +14,24 @@ from slarc.domain.envelope import Envelope, Kind, Meta
 from slarc.domain.links import parse_selector
 from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem
 from slarc.ports import Commit, SlarcError
-from slarc.service.export import Exported, export
+from slarc.service.export import Exported, export, page_stems
 from tests.fakes import FakeArchiveLock, InMemoryBlobStore, InMemoryExportWriter
 from tests.recorded_fixtures import RECORDED_TEAM
 
 OUT = Path("exported")
+# The file stem each conversation's page takes.
+ALL_NALEID_PAGE = "all-naleid"
+FIXTURES_PAGE = "slarc-fixtures"
+DM_PAGE = "@Jim"
+GROUP_DM_PAGE = "mpdm-tim--jim--contact-1"
+ARCHIVED_PAGE = "slarc-fixtures-archived"
+THREAD_PAGE = "all-naleid-thread-1792427542.806979"
 ALL_NALEID = "C0CA5396G03"
 FIXTURES = "C0CA7SNHTSP"
 DM = "D0CAD7JE1QR"
 GROUP_DM = "C0CAG251117"
 ARCHIVED = "C0CAF9YVDMY"
+PAGES = {ALL_NALEID: ALL_NALEID_PAGE, FIXTURES: FIXTURES_PAGE}
 THREAD_LINK = (
     "https://naleidworkspace.slack.com/archives/C0CA5396G03/p1792427577619569"
     "?thread_ts=1792427542.806979"
@@ -165,11 +173,11 @@ def test_export_conversation_writes_index_and_page(archive, store, blobs) -> Non
     written, writer = run_export(archive, store, blobs, "#all-naleid")
     assert written == OUT
     pages = {path for path in writer.files if path.suffix == ".html"}
-    assert pages == {OUT / "index.html", OUT / f"{ALL_NALEID}.html"}
+    assert pages == {OUT / "index.html", OUT / f"{ALL_NALEID_PAGE}.html"}
     index = writer.text(OUT / "index.html")
-    assert f'href="{ALL_NALEID}.html"' in index
+    assert f'href="{ALL_NALEID_PAGE}.html"' in index
     assert "#all-naleid" in index
-    page = writer.text(OUT / f"{ALL_NALEID}.html")
+    page = writer.text(OUT / f"{ALL_NALEID_PAGE}.html")
     assert "<title>#all-naleid</title>" in page
     assert 'class="day-divider"' in page
     assert '<time datetime="2026-10-19T' in page
@@ -221,7 +229,7 @@ def test_export_counts_each_workspace_page(archive, store, blobs) -> None:
 def test_export_thread_link_writes_only_thread(archive, store, blobs) -> None:
     written, writer = run_export(archive, store, blobs, THREAD_LINK)
     pages = [path for path in writer.files if path.suffix == ".html"]
-    thread_page = OUT / f"{ALL_NALEID}-1792427542.806979.html"
+    thread_page = OUT / f"{THREAD_PAGE}.html"
     assert sorted(pages) == sorted([OUT / "index.html", thread_page])
     page = writer.text(thread_page)
     assert "starting a" in page
@@ -235,7 +243,7 @@ def test_export_thread_link_writes_only_thread(archive, store, blobs) -> None:
 @pytest.mark.parametrize("channel", [ALL_NALEID, FIXTURES])
 def test_thread_summary_links_to_its_panel(archive, store, blobs, channel) -> None:
     _, writer = run_export(archive, store, blobs, "#all-naleid", "#slarc-fixtures")
-    page = writer.text(OUT / f"{channel}.html")
+    page = writer.text(OUT / f"{PAGES[channel]}.html")
     assert '<details class="thread"' not in page
     assert page.count('<aside class="thread-panel"') == len(THREADS[channel])
     for parent in THREADS[channel]:
@@ -247,7 +255,7 @@ def test_thread_summary_links_to_its_panel(archive, store, blobs, channel) -> No
 @pytest.mark.parametrize("channel", [ALL_NALEID, FIXTURES])
 def test_thread_panel_holds_parent_and_each_reply_once(archive, store, blobs, channel) -> None:
     _, writer = run_export(archive, store, blobs, "#all-naleid", "#slarc-fixtures")
-    page = writer.text(OUT / f"{channel}.html")
+    page = writer.text(OUT / f"{PAGES[channel]}.html")
     for parent, replies in THREADS[channel].items():
         html = panel(page, channel, parent)
         assert html.count('<article class="message') == 1 + len(replies)
@@ -265,7 +273,7 @@ def test_thread_panel_holds_parent_and_each_reply_once(archive, store, blobs, ch
 
 def test_broadcast_reply_links_to_its_thread_panel(archive, store, blobs) -> None:
     _, writer = run_export(archive, store, blobs, "#slarc-fixtures")
-    page = writer.text(OUT / f"{FIXTURES}.html")
+    page = writer.text(OUT / f"{FIXTURES_PAGE}.html")
     flow = article(page, FIXTURES, BROADCAST)
     assert f'<a href="#thread-{FIXTURES}-1792437050.459469">view the thread</a>' in flow
 
@@ -273,7 +281,7 @@ def test_broadcast_reply_links_to_its_thread_panel(archive, store, blobs) -> Non
 @pytest.mark.parametrize("link", [THREAD_LINK, MESSAGE_LINK])
 def test_thread_export_shows_replies_without_a_panel(archive, store, blobs, link) -> None:
     _, writer = run_export(archive, store, blobs, link)
-    page = writer.text(OUT / f"{ALL_NALEID}-1792427542.806979.html")
+    page = writer.text(OUT / f"{THREAD_PAGE}.html")
     assert "thread-panel" not in page.split("<body", 1)[1]
     assert "<details" not in page
     assert '<a class="thread-summary"' not in page
@@ -292,7 +300,7 @@ def test_single_file_holds_the_panel_css(archive, store, blobs) -> None:
 
 def test_assets_copied_by_hash(archive, store, blobs) -> None:
     _, writer = run_export(archive, store, blobs, "#all-naleid")
-    page = writer.text(OUT / f"{ALL_NALEID}.html")
+    page = writer.text(OUT / f"{ALL_NALEID_PAGE}.html")
     for sha, ext in (
         (SCREENSHOT, "png"),
         (GIPHY, "gif"),
@@ -347,11 +355,11 @@ def test_deleted_hidden_unless_flag(archive, store, blobs) -> None:
     )
     commit(store)
     _, hidden = run_export(archive, store, blobs, "#slarc-fixtures")
-    page = hidden.text(OUT / f"{FIXTURES}.html")
+    page = hidden.text(OUT / f"{FIXTURES_PAGE}.html")
     assert "seed: pinned message" not in page
     assert "seed: reactions" in page
     _, shown = run_export(archive, store, blobs, "#slarc-fixtures", include_deleted=True)
-    message = article(shown.text(OUT / f"{FIXTURES}.html"), FIXTURES, PINNED)
+    message = article(shown.text(OUT / f"{FIXTURES_PAGE}.html"), FIXTURES, PINNED)
     assert "seed: pinned message" in message
     assert 'class="deleted-marker"' in message
 
@@ -373,7 +381,7 @@ def test_no_email_in_output(archive, store, blobs) -> None:
 
 def test_snippet_rendered_in_full_and_highlighted(archive, store, blobs) -> None:
     _, writer = run_export(archive, store, blobs, "#all-naleid", "#slarc-fixtures")
-    page = writer.text(OUT / f"{ALL_NALEID}.html")
+    page = writer.text(OUT / f"{ALL_NALEID_PAGE}.html")
     snippet = article(page, ALL_NALEID, "1792422552.941749")
     assert "10k-snippet.txt" in snippet
     assert 'class="highlight"' in snippet
@@ -381,7 +389,9 @@ def test_snippet_rendered_in_full_and_highlighted(archive, store, blobs) -> None
     assert len(lines) == 10000
     assert lines[-1] in snippet
     assert lines[0] in snippet
-    html_snippet = article(writer.text(OUT / f"{FIXTURES}.html"), FIXTURES, "1792437058.938609")
+    html_snippet = article(
+        writer.text(OUT / f"{FIXTURES_PAGE}.html"), FIXTURES, "1792437058.938609"
+    )
     assert "seed.html" in html_snippet
     assert '<span class="nt">title</span>' in html_snippet
     assert "<title>slarc seed" not in html_snippet
@@ -389,7 +399,7 @@ def test_snippet_rendered_in_full_and_highlighted(archive, store, blobs) -> None
 
 def test_tombstone_file_placeholder(archive, store, blobs) -> None:
     _, writer = run_export(archive, store, blobs, "#all-naleid")
-    message = article(writer.text(OUT / f"{ALL_NALEID}.html"), ALL_NALEID, "1792422363.271059")
+    message = article(writer.text(OUT / f"{ALL_NALEID_PAGE}.html"), ALL_NALEID, "1792422363.271059")
     assert "This file was deleted." in message
     assert "(edited)" in message
 
@@ -402,7 +412,7 @@ def reactions_html(message: str) -> str:
 
 def test_reactions_grouped_by_base_name(archive, store, blobs) -> None:
     _, writer = run_export(archive, store, blobs, "#all-naleid")
-    message = article(writer.text(OUT / f"{ALL_NALEID}.html"), ALL_NALEID, "1792410693.663869")
+    message = article(writer.text(OUT / f"{ALL_NALEID_PAGE}.html"), ALL_NALEID, "1792410693.663869")
     reactions = reactions_html(message)
     assert reactions.count('<span class="reaction"') == 1
     assert "\U0001f44b\U0001f3fc" in reactions
@@ -412,7 +422,7 @@ def test_reactions_grouped_by_base_name(archive, store, blobs) -> None:
 
 def test_reaction_popup_names_each_variant(archive, store, blobs) -> None:
     _, writer = run_export(archive, store, blobs, "#all-naleid")
-    message = article(writer.text(OUT / f"{ALL_NALEID}.html"), ALL_NALEID, "1792410693.663869")
+    message = article(writer.text(OUT / f"{ALL_NALEID_PAGE}.html"), ALL_NALEID, "1792410693.663869")
     reactions = reactions_html(message)
     toned = "Ted Naleid reacted with :wave::skin-tone-3:"
     plain = "Jim reacted with :wave:"
@@ -428,7 +438,7 @@ def test_reaction_popup_names_each_variant(archive, store, blobs) -> None:
 
 def test_reaction_popup_joins_names_and_shows_custom_emoji(archive, store, blobs) -> None:
     _, writer = run_export(archive, store, blobs, "#all-naleid")
-    message = article(writer.text(OUT / f"{ALL_NALEID}.html"), ALL_NALEID, "1792410743.787639")
+    message = article(writer.text(OUT / f"{ALL_NALEID_PAGE}.html"), ALL_NALEID, "1792410743.787639")
     reactions = reactions_html(message)
     assert reactions.count('<span class="reaction"') == 2
     assert "Jim reacted with :100:" in reactions
@@ -455,7 +465,7 @@ def test_reaction_popup_counts_others_and_escapes_names(archive, store, blobs) -
         },
     )
     _, writer = run_export(archive, store, blobs, "#slarc-fixtures")
-    message = article(writer.text(OUT / f"{FIXTURES}.html"), FIXTURES, SYNTHETIC)
+    message = article(writer.text(OUT / f"{FIXTURES_PAGE}.html"), FIXTURES, SYNTHETIC)
     reactions = reactions_html(message)
     eyes = "Ted Naleid, Jim, &lt;script&gt;x&lt;/script&gt; and 2 others reacted with :eyes:"
     assert f'<span class="reaction-popup-line">{eyes}</span>' in reactions
@@ -468,17 +478,17 @@ def test_reaction_popup_counts_others_and_escapes_names(archive, store, blobs) -
 def test_named_dm_included(archive, store, blobs) -> None:
     written, writer = run_export(archive, store, blobs, "@jim", GROUP_DM)
     pages = {path for path in writer.files if path.suffix == ".html"}
-    assert pages == {OUT / "index.html", OUT / f"{DM}.html", OUT / f"{GROUP_DM}.html"}
-    dm = writer.text(OUT / f"{DM}.html")
+    assert pages == {OUT / "index.html", OUT / f"{DM_PAGE}.html", OUT / f"{GROUP_DM_PAGE}.html"}
+    dm = writer.text(OUT / f"{DM_PAGE}.html")
     assert "<title>@Jim</title>" in dm
     assert "Direct message to Jim from Ted" in dm
-    assert "Reply from Jim" in writer.text(OUT / f"{GROUP_DM}.html")
+    assert "Reply from Jim" in writer.text(OUT / f"{GROUP_DM_PAGE}.html")
     assert written == OUT
 
 
 def test_broadcast_reply_in_both_places_with_one_anchor(archive, store, blobs) -> None:
     _, writer = run_export(archive, store, blobs, "#slarc-fixtures")
-    page = writer.text(OUT / f"{FIXTURES}.html")
+    page = writer.text(OUT / f"{FIXTURES_PAGE}.html")
     assert page.count("seed: broadcast reply, also sent to the channel") == 2
     assert page.count(f'id="{FIXTURES}-{BROADCAST}"') == 1
     assert "Also sent to the channel" in page
@@ -527,7 +537,7 @@ def test_bot_avatar_falls_back_to_a_downloaded_icon(archive, store, blobs) -> No
         },
     )
     _, writer = run_export(archive, store, blobs, "#slarc-fixtures")
-    message = article(writer.text(OUT / f"{FIXTURES}.html"), FIXTURES, SYNTHETIC)
+    message = article(writer.text(OUT / f"{FIXTURES_PAGE}.html"), FIXTURES, SYNTHETIC)
     assert f'src="assets/{GIPHY_ICON_72}.png"' in message
 
 
@@ -592,7 +602,7 @@ def test_file_placeholders_and_unsafe_chrome(archive, store, blobs) -> None:
     )
     exported, writer = counted_export(archive, store, blobs, "#slarc-fixtures")
     assert exported.files_missing == 3
-    message = article(writer.text(OUT / f"{FIXTURES}.html"), FIXTURES, SYNTHETIC)
+    message = article(writer.text(OUT / f"{FIXTURES_PAGE}.html"), FIXTURES, SYNTHETIC)
     assert "This file is hidden by the workspace's message history limit." in message
     assert (
         "big.mov (953.7 MB) was not downloaded because it is larger than the download limit. "
@@ -621,7 +631,8 @@ def html_pages(writer: InMemoryExportWriter) -> set[str]:
 def test_workspace_exports_one_page_per_tracked_conversation(archive, store, blobs) -> None:
     _, writer = run_export(archive, store, blobs, "naleidworkspace")
     assert html_pages(writer) == {
-        f"{channel}.html" for channel in (ALL_NALEID, FIXTURES, DM, GROUP_DM, ARCHIVED)
+        f"{stem}.html"
+        for stem in (ALL_NALEID_PAGE, FIXTURES_PAGE, DM_PAGE, GROUP_DM_PAGE, ARCHIVED_PAGE)
     }
 
 
@@ -635,7 +646,7 @@ def test_workspace_export_adds_no_page_for_a_thread_in_a_tracked_conversation(
         ),
     )
     _, writer = run_export(archive, store, blobs, "naleidworkspace")
-    assert not any("-" in name for name in html_pages(writer))
+    assert not any("-thread-" in name for name in html_pages(writer))
 
 
 def test_workspace_export_adds_a_page_for_a_thread_in_an_untracked_conversation(
@@ -654,7 +665,7 @@ def test_workspace_export_adds_a_page_for_a_thread_in_an_untracked_conversation(
         TrackedItem(team_id=RECORDED_TEAM, kind="thread", channel="C0THREADONLY", ts=thread_ts),
     )
     _, writer = run_export(archive, store, blobs, "naleidworkspace")
-    assert f"C0THREADONLY-{thread_ts}.html" in html_pages(writer)
+    assert f"C0THREADONLY-thread-{thread_ts}.html" in html_pages(writer)
 
 
 def test_workspace_export_skips_an_item_without_messages(archive, store, blobs) -> None:
@@ -689,3 +700,16 @@ def test_workspace_holding_nothing_exportable_says_to_pull(archive, store, blobs
     assert str(caught.value) == (
         "The archive holds no messages for workspace naleidworkspace. Pull it first."
     )
+
+
+def test_page_stems_name_conversations_and_threads() -> None:
+    assert page_stems([("#general", "C1", None), ("@Jim Naleid", "D1", None)]) == [
+        "general",
+        "@Jim-Naleid",
+    ]
+    assert page_stems([("#general", "C1", "1.2")]) == ["general-thread-1.2"]
+
+
+def test_page_stems_add_the_channel_when_names_collide() -> None:
+    stems = page_stems([("#general", "C1", None), ("#General", "C2", None), ("#ops", "C3", None)])
+    assert stems == ["general-C1", "General-C2", "ops"]

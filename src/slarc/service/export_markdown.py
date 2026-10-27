@@ -19,18 +19,38 @@ def page_markdown(
 ) -> str:
     """The page as markdown. Times are in zone, which tz names, or else the zone's own name."""
     renderer = _Renderer(page, domain, view)
-    zone_name = tz or str(zone)
-    start = _bound(page.window.since, zone) or "the start"
-    end = _bound(page.window.until, zone) or "now"
-    threads = _thread_count(page)
     lines = [
         f"# {page.title} ({domain})",
-        f"Window: {start} to {end}, {zone_name}. "
-        f"{_plural(page.count, 'message')}, {_plural(threads, 'thread')}.",
+        f"Window: {_window_text(page, zone, tz)}. {_counts(page)}.",
     ]
     for entry in page.entries:
         lines += ["", *renderer.entry(entry)]
     return "\n".join(lines) + "\n"
+
+
+def index_markdown(pages: list[Page], domains: dict[str, str], zone: tzinfo, tz: str | None) -> str:
+    """A directory export's index.md: the window, then a line per page with its file,
+    conversation and counts. Every page of an export shares one window."""
+    lines = [
+        "# slarc export",
+        f"Window: {_window_text(pages[0], zone, tz)}. {_plural(len(pages), 'page')}.",
+        "",
+    ]
+    for page in pages:
+        name = f"{page.stem}.md"
+        domain = domains.get(page.team, page.team)
+        lines.append(f"- [{name}]({name}): {page.title} ({domain}), {_counts(page)}.")
+    return "\n".join(lines) + "\n"
+
+
+def _window_text(page: Page, zone: tzinfo, tz: str | None) -> str:
+    start = _bound(page.window.since, zone) or "the start"
+    end = _bound(page.window.until, zone) or "now"
+    return f"{start} to {end}, {tz or str(zone)}"
+
+
+def _counts(page: Page) -> str:
+    return f"{_plural(page.count, 'message')}, {_plural(_thread_count(page), 'thread')}"
 
 
 class _Renderer:

@@ -2,6 +2,7 @@
 # ABOUTME: Writes index.html, one page each and assets/<sha256>.<ext>, or one file with data URIs.
 import base64
 import re
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, tzinfo
@@ -45,7 +46,7 @@ from slarc.ports import (
     SlarcError,
 )
 from slarc.service.downloads import size_text
-from slarc.service.export_markdown import page_markdown
+from slarc.service.export_markdown import index_markdown, page_markdown
 from slarc.service.listing import workspace_domains
 from slarc.service.selectors import archived_conversation, only_workspace
 
@@ -77,6 +78,7 @@ COLOR = re.compile(r"#?([0-9a-fA-F]{6})")
 NAMED_COLORS = {"good": "#2eb886", "warning": "#daa038", "danger": "#a30200"}
 MEDIA_TYPE = re.compile(r"[a-z]+/[a-z0-9.+-]+")
 UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
+FILE_STEM_UNSAFE = re.compile(r"[^\w.@-]+")
 ICON_KEYS = ("image_72", "image_48", "image_36")
 # System messages whose text leaves out who acted, so the author is shown before it.
 ACTOR_SUBTYPES = frozenset(
@@ -225,10 +227,13 @@ class Entry:
 @dataclass(frozen=True)
 class Page:
     """A conversation's page, or with thread_ts a thread's; rows are its archived messages in
-    the window, plus parents older than the window, marked context. count leaves those out."""
+    the window, plus parents older than the window, marked context. count leaves those out.
+    key tells pages apart; stem, the file name without its suffix, is set once every page of
+    an export is known."""
 
-    filename: str
+    key: str
     name: str
+    label: str
     thread_ts: str | None
     title: str
     count: int
@@ -237,10 +242,15 @@ class Page:
     channel: str
     rows: list[dict]
     window: Window = OPEN_WINDOW
+    stem: str = ""
 
     @property
     def section_id(self) -> str:
-        return "page-" + self.filename.removesuffix(".html")
+        return "page-" + self.key
+
+    @property
+    def filename(self) -> str:
+        return self.stem + ".html"
 
 
 @dataclass(frozen=True)
@@ -305,7 +315,12 @@ def export(
         else:
             found = [_page(selector, workspace, index, include_deleted, window, whole_conversation)]
         for page in found:
-            pages.setdefault(page.filename, page)
+            pages.setdefault(page.key, page)
+    stems = page_stems([(page.label, page.channel, page.thread_ts) for page in pages.values()])
+    pages = {
+        key: replace(page, stem=stem)
+        for (key, page), stem in zip(pages.items(), stems, strict=True)
+    }
     first = next(iter(pages.values()))
     if isinstance(selectors[0], WorkspaceSel):
         stem = selectors[0].domain
@@ -315,7 +330,7 @@ def export(
     if markdown:
         team_domains = {team: domain for domain, team in domains.items()}
         texts = {
-            page.filename: page_markdown(
+            page.stem: page_markdown(
                 page, team_domains.get(page.team, page.team), workspaces[page.team].view, zone, tz
             )
             for page in pages.values()
@@ -325,8 +340,10 @@ def export(
             writer.write(target, "\n\n".join(texts.values()).encode())
         else:
             target = out or default
-            for filename, text in texts.items():
-                writer.write(target / _markdown_name(filename), text.encode())
+            index_text = index_markdown(list(pages.values()), team_domains, zone, tz)
+            writer.write(target / "index.md", index_text.encode())
+            for stem, text in texts.items():
+                writer.write(target / f"{stem}.md", text.encode())
         return _exported(target, pages.values(), workspaces.values())
     css = _static("viewer.css") + HtmlFormatter().get_style_defs(".highlight")
     if single_file:
@@ -430,8 +447,19 @@ def _suffixed(path: Path, suffix: str, *also: str) -> Path:
     return path.with_name(path.name + suffix)
 
 
-def _markdown_name(filename: str) -> str:
-    return filename.removesuffix(".html") + ".md"
+def page_stems(pages: list[tuple[str, str, str | None]]) -> list[str]:
+    """The file stem for each (conversation label, channel, thread_ts): the label without its
+    #, made safe for a file name, with -thread-<ts> for a thread. Stems that would be equal,
+    ignoring case, each gain their channel id."""
+    stems = []
+    for label, channel, thread_ts in pages:
+        base = FILE_STEM_UNSAFE.sub("-", label.removeprefix("#")).strip("-.") or channel
+        stems.append(f"{base}-thread-{thread_ts}" if thread_ts else base)
+    counts = Counter(stem.lower() for stem in stems)
+    return [
+        f"{stem}-{channel}" if counts[stem.lower()] > 1 else stem
+        for stem, (_, channel, _) in zip(stems, pages, strict=True)
+    ]
 
 
 def _team(selector: Selector, domains: dict[str, str], archive: ArchiveStore) -> str:
@@ -514,7 +542,7 @@ def _page(
         rows = index.messages(team, channel, window.since, window.until, include_deleted)
         if window != OPEN_WINDOW:
             rows = _with_parents(rows, index, team, channel, include_deleted)
-        filename, title, thread_ts = f"{channel}.html", label, None
+        key, title, thread_ts = channel, label, None
         named = label
     else:
         thread_ts = selector.thread_ts or _thread_of(index, team, channel, selector.ts)
@@ -523,7 +551,7 @@ def _page(
             for row in index.thread(team, channel, thread_ts, include_deleted)
             if row["ts"] == thread_ts or window.contains(row["ts"])
         ]
-        filename, title = f"{channel}-{thread_ts}.html", f"Thread in {label}"
+        key, title = f"{channel}-{thread_ts}", f"Thread in {label}"
         named = f"the thread in {label}"
     rows = [row for row in rows if row["object"] is not None]
     for row in rows:
@@ -536,8 +564,9 @@ def _page(
         raise _NoMessages(f"The archive holds no messages for {title}. Pull it first.")
     messages = _top_level(rows, channel, workspace, thread_ts is not None)
     return Page(
-        filename=filename,
+        key=key,
         name=workspace.view.conversation_name(channel),
+        label=label,
         thread_ts=thread_ts,
         title=title,
         count=len(shown),

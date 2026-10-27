@@ -16,12 +16,15 @@ from slarc.service.export import Exported, export
 from tests.fakes import FakeArchiveLock, InMemoryBlobStore, InMemoryExportWriter
 from tests.service.test_export import (
     ALL_NALEID,
+    ALL_NALEID_PAGE,
     FIXTURES,
+    FIXTURES_PAGE,
     JIM,
     MESSAGE_LINK,
     OUT,
     SYNTHETIC,
     TED,
+    THREAD_PAGE,
     append_line,
 )
 
@@ -76,8 +79,8 @@ def line_with(page: str, text: str) -> str:
 def test_markdown_page_has_header_threads_files_and_reactions(archive, store, blobs) -> None:
     result, writer = exported(archive, store, blobs, "#all-naleid")
     assert result.path == OUT
-    assert set(writer.files) == {OUT / f"{ALL_NALEID}.md"}
-    page = writer.text(OUT / f"{ALL_NALEID}.md")
+    assert set(writer.files) == {OUT / f"{ALL_NALEID_PAGE}.md", OUT / "index.md"}
+    page = writer.text(OUT / f"{ALL_NALEID_PAGE}.md")
     assert page.splitlines()[:2] == [
         "# #all-naleid (naleidworkspace)",
         "Window: the start to now, America/Chicago. 14 messages, 2 threads.",
@@ -96,7 +99,7 @@ def test_markdown_page_has_header_threads_files_and_reactions(archive, store, bl
 
 def test_markdown_window_marks_an_older_parent_as_context(archive, store, blobs) -> None:
     result, writer = exported(archive, store, blobs, "#all-naleid", window=AFTER_EARLY_REPLY)
-    page = writer.text(OUT / f"{ALL_NALEID}.md")
+    page = writer.text(OUT / f"{ALL_NALEID_PAGE}.md")
     assert "(context)" in line_with(page, link(THREAD_PARENT))
     assert link(EARLY_REPLY, THREAD_PARENT) not in page
     for ts in LATE_REPLIES:
@@ -111,15 +114,15 @@ def test_markdown_window_marks_an_older_parent_as_context(archive, store, blobs)
 def test_window_drops_workspace_conversations_without_messages_in_it(archive, store, blobs) -> None:
     _, writer = exported(archive, store, blobs, "naleidworkspace", window=AFTER_ALL_NALEID)
     names = {path.name for path in writer.files}
-    assert f"{FIXTURES}.md" in names
-    assert f"{ALL_NALEID}.md" not in names
+    assert f"{FIXTURES_PAGE}.md" in names
+    assert f"{ALL_NALEID_PAGE}.md" not in names
     with pytest.raises(SlarcError, match=r"No messages of #all-naleid fall in the window\."):
         exported(archive, store, blobs, "#all-naleid", window=AFTER_ALL_NALEID)
 
 
 def test_channel_flag_exports_the_conversation_and_marks_the_link(archive, store, blobs) -> None:
     _, writer = exported(archive, store, blobs, MESSAGE_LINK, whole_conversation=True)
-    page = writer.text(OUT / f"{ALL_NALEID}.md")
+    page = writer.text(OUT / f"{ALL_NALEID_PAGE}.md")
     assert page.startswith("# #all-naleid (naleidworkspace)\n")
     assert "(linked)" in line_with(page, link(EARLY_REPLY, THREAD_PARENT))
     assert page.count("(linked)") == 1
@@ -127,15 +130,14 @@ def test_channel_flag_exports_the_conversation_and_marks_the_link(archive, store
 
 def test_thread_link_marks_the_linked_reply(archive, store, blobs) -> None:
     _, writer = exported(archive, store, blobs, MESSAGE_LINK)
-    [path] = writer.files
-    page = writer.text(path)
+    page = writer.text(OUT / f"{THREAD_PAGE}.md")
     assert page.startswith("# Thread in #all-naleid (naleidworkspace)\n")
     assert page.count("(linked)") == 1
 
 
 def test_html_export_honors_the_window(archive, store, blobs) -> None:
     _, writer = exported(archive, store, blobs, "#all-naleid", fmt="html", window=AFTER_EARLY_REPLY)
-    page = writer.text(OUT / f"{ALL_NALEID}.html")
+    page = writer.text(OUT / f"{ALL_NALEID_PAGE}.html")
     assert f'id="{ALL_NALEID}-1792410693.663869"' not in page
     assert f'id="{ALL_NALEID}-{LATE_REPLIES[0]}"' in page
     assert "(context)" in page
@@ -155,7 +157,7 @@ def test_markdown_reply_on_a_later_day_gives_its_date(archive, store, blobs) -> 
     append_line(store, "message", reply, channel=FIXTURES, ts=SYNTHETIC)
     window = Window(since="1792490000.000000")
     _, writer = exported(archive, store, blobs, "#slarc-fixtures", window=window)
-    page = writer.text(OUT / f"{FIXTURES}.md")
+    page = writer.text(OUT / f"{FIXTURES_PAGE}.md")
     assert "## Monday, October 19, 2026" in page
     later = line_with(page, "p1792500000000100")
     assert later.startswith("> **Jim Naleid** (Jim) 2026-10-20 7:40 AM "), later
@@ -219,7 +221,7 @@ def test_markdown_message_unfurl_renders_once(archive, store, blobs) -> None:
     _, writer = exported(
         archive, store, blobs, "#slarc-fixtures", window=Window(since="1792490000.000000")
     )
-    page = writer.text(OUT / f"{FIXTURES}.md")
+    page = writer.text(OUT / f"{FIXTURES_PAGE}.md")
     quoted = [
         f"> **Jim Naleid** (Jim) [linked message]({LINKED})",
         "> first line for @Ted Naleid",
@@ -244,5 +246,27 @@ def test_markdown_preview_label_stays_on_one_line(archive, store, blobs) -> None
     _, writer = exported(
         archive, store, blobs, "#slarc-fixtures", window=Window(since="1792490000.000000")
     )
-    page = writer.text(OUT / f"{FIXTURES}.md")
+    page = writer.text(OUT / f"{FIXTURES_PAGE}.md")
     assert "[preview: one two](https://example.com/a)" in page
+
+
+def test_markdown_directory_export_writes_an_index(archive, store, blobs) -> None:
+    _, writer = exported(archive, store, blobs, "#all-naleid", "#slarc-fixtures")
+    assert {path.name for path in writer.files} == {
+        "index.md",
+        f"{ALL_NALEID_PAGE}.md",
+        f"{FIXTURES_PAGE}.md",
+    }
+    index = writer.text(OUT / "index.md").splitlines()
+    assert index[:2] == [
+        "# slarc export",
+        "Window: the start to now, America/Chicago. 2 pages.",
+    ]
+    assert index[3] == (
+        f"- [{ALL_NALEID_PAGE}.md]({ALL_NALEID_PAGE}.md): #all-naleid (naleidworkspace), "
+        "14 messages, 2 threads."
+    )
+    assert index[4].startswith(
+        f"- [{FIXTURES_PAGE}.md]({FIXTURES_PAGE}.md): #slarc-fixtures (naleidworkspace), "
+    )
+    assert len(index) == 5
