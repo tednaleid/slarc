@@ -1,0 +1,33 @@
+{
+  "ok": true,
+  "messages": [
+    {
+      "user": "U0CA538UEN7",
+      "type": "message",
+      "ts": "1793134571.213779",
+      "edited": {
+        "user": "U0CA538UEN7",
+        "ts": "1793134571.000000"
+      },
+      "text": "slarc events: parent 2026-10-27T20:56:10+00:00 (edited)",
+      "team": "T0CB5LYPVFA",
+      "blocks": [
+        {
+          "type": "rich_text",
+          "block_id": "tMiY",
+          "elements": [
+            {
+              "type": "rich_text_section",
+              "elements": [
+                {
+                  "type": "text",
+                  "text": "slarc events: parent 2026-10-27T20:56:10+00:00 (edited)"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
