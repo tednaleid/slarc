@@ -193,6 +193,7 @@ class MessageView:
     anchor: str
     ts: str
     author: str
+    author_real_name: str
     avatar: Picture | None
     app: str | None
     time: Moment
@@ -785,6 +786,7 @@ class _Workspace:
             anchor=f"{channel}-{row['ts']}{anchor_suffix}",
             ts=row["ts"],
             author=self.view.author_display(message) if named else "",
+            author_real_name=self.view.author_real_name(message) if named else "",
             avatar=None if system else self.author_avatar(message),
             app=self.app_name(message),
             time=self.moment(_seconds(row["ts"])),

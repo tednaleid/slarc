@@ -82,6 +82,8 @@ def test_markdown_page_has_header_threads_files_and_reactions(archive, store, bl
         "Window: the start to now, America/Chicago. 14 messages, 2 threads.",
     ]
     assert "\n## " in page
+    # A real name that matches the display name shows once.
+    assert line_with(page, link("1792422363.271059")).startswith("**Ted Naleid** 10:06 AM")
     parent = line_with(page, link(THREAD_PARENT))
     assert (parent.startswith("**") and " AM " in parent) or " PM " in parent
     reply = line_with(page, link(EARLY_REPLY, THREAD_PARENT))
@@ -155,5 +157,5 @@ def test_markdown_reply_on_a_later_day_gives_its_date(archive, store, blobs) -> 
     page = writer.text(OUT / f"{FIXTURES}.md")
     assert "## Monday, October 19, 2026" in page
     later = line_with(page, "p1792500000000100")
-    assert later.startswith("> **Jim** 2026-10-20 7:40 AM "), later
+    assert later.startswith("> **Jim Naleid** (Jim) 2026-10-20 7:40 AM "), later
     assert "2026-10-19" not in line_with(page, f"p{parent.replace('.', '')}")

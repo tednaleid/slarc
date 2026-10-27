@@ -56,10 +56,16 @@ class _Renderer:
 
     def system_text(self, message: MessageView) -> str:
         body = render_message_markdown(message.source, self.view).replace("\n", " ")
-        return f"{message.author} {body}" if message.author else body
+        name = message.author_real_name
+        return f"{name} {body}" if name else body
 
     def message(self, message: MessageView) -> list[str]:
-        head = [f"**{message.author or 'unknown'}**"]
+        """The message's lines. The head names the author by real name, with the display name
+        after it when the two differ."""
+        name = message.author_real_name or "unknown"
+        head = [f"**{name}**"]
+        if message.author and message.author != name:
+            head.append(f"({message.author})")
         if message.app:
             head.append(f"via {message.app}")
         # A reply posted on a later day than its heading's gives its date.

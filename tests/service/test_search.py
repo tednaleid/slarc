@@ -170,6 +170,9 @@ def test_search_hit_carries_readable_fields(index: DuckDbQueryIndex) -> None:
     [top] = search(index, "slarc seed v1", None, None).hits
     assert (top.team_id, top.workspace, top.channel_id) == (TEAM, DOMAIN, FIXTURES)
     assert top.text == "slarc seed v1"
+    assert (top.author, top.author_real_name) == ("Ted Naleid", "Ted Naleid")
+    [jim] = search(index, "reply from jim", "#all-naleid", None).hits
+    assert (jim.author, jim.author_real_name) == ("Jim", "Jim Naleid")
     assert top.posted_at == datetime.fromtimestamp(1792437061.952039, UTC)
     assert top.thread_ts is None
 

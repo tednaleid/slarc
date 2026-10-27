@@ -167,6 +167,10 @@ def test_readable_names_author_and_conversation(index: DuckDbQueryIndex) -> None
         f"SELECT workspace, conversation, author FROM message_readable WHERE ts = '{FIXTURES_TOP}'"
     )
     assert index.sql(query)[1] == [("naleidworkspace", "#slarc-fixtures", "Ted Naleid")]
+    names = index.sql(
+        "SELECT DISTINCT author, author_real_name FROM message_readable WHERE author = 'Jim'"
+    )[1]
+    assert names == [("Jim", "Jim Naleid")]
     columns = index.sql("SELECT * FROM message_readable LIMIT 0")[0]
     assert columns == [
         "team_id",
@@ -177,6 +181,7 @@ def test_readable_names_author_and_conversation(index: DuckDbQueryIndex) -> None
         "thread_ts",
         "posted_at",
         "author",
+        "author_real_name",
         "text",
         "link",
         "deleted_at",

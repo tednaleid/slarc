@@ -328,6 +328,7 @@ class SearchHit:
     thread_ts: str | None
     posted_at: datetime
     author: str
+    author_real_name: str
     text: str
     link: str
     deleted_at: str | None

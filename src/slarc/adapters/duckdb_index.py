@@ -28,6 +28,9 @@ LATEST_DIRECTORY_ROW = """
 """
 
 # message_readable's columns over `message m` and the joins they need; SEARCH selects the same.
+AUTHOR = """CASE WHEN m.user_id IS NOT NULL THEN coalesce(author.display, m.user_id)
+        ELSE coalesce(m.object -> 'bot_profile' ->> 'name', m.object ->> 'username', 'unknown')
+    END"""
 READABLE_COLUMNS = f"""
     m.team_id, coalesce(w.domain, m.team_id) AS workspace, m.channel_id,
     coalesce(
@@ -39,9 +42,8 @@ READABLE_COLUMNS = f"""
         m.channel_id
     ) AS conversation,
     m.ts, m.thread_ts, m.posted_at,
-    CASE WHEN m.user_id IS NOT NULL THEN coalesce(author.display, m.user_id)
-        ELSE coalesce(m.object -> 'bot_profile' ->> 'name', m.object ->> 'username', 'unknown')
-    END AS author,
+    {AUTHOR} AS author,
+    coalesce(nullif(author.real_name, ''), {AUTHOR}) AS author_real_name,
     regexp_replace(m.plain, '^.*?:( |$)', '') AS text,
     'https://' || coalesce(w.domain, m.team_id) || '{SLACK_HOST_SUFFIX}/archives/'
         || m.channel_id || '/p' || replace(m.ts, '.', '')
@@ -383,6 +385,7 @@ COLUMN_COMMENTS = {
         "thread_ts": "The thread parent's ts for a reply or a parent; null outside threads.",
         "posted_at": "When the message was posted.",
         "author": "The author's display name, else the bot or app name.",
+        "author_real_name": "The author's real name, else the author column.",
         "text": "The message as plain text with names resolved.",
         "link": "The message's Slack link.",
         "deleted_at": "When slarc noticed Slack no longer returns the message; else null.",

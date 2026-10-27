@@ -75,6 +75,7 @@ def test_cli_search_format_jsonl_keys(archive: Path, tmp_path: Path) -> None:
         "thread_ts",
         "posted_at",
         "author",
+        "author_real_name",
         "text",
         "link",
         "deleted_at",

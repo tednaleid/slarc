@@ -75,6 +75,12 @@ class DirectoryView:
     def usergroup_handle(self, usergroup_id: str) -> str:
         return (self.usergroups.get(usergroup_id) or {}).get("handle") or usergroup_id
 
+    def author_real_name(self, message: dict) -> str:
+        """The author's real name, else author_display."""
+        user = self.users.get(message.get("user") or "") or {}
+        profile = user.get("profile") or {}
+        return profile.get("real_name") or user.get("real_name") or self.author_display(message)
+
     def author_display(self, message: dict) -> str:
         if message.get("user"):
             return self.user_display(message["user"])
