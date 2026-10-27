@@ -500,9 +500,11 @@ def _existing_archive(root: Path | None, env: Mapping[str, str], home: Path) -> 
     return found
 
 
-def _write_dataclasses(fmt: OutputFormat, kind: Any, items: Sequence[object]) -> None:
-    """Writes dataclass instances of kind as rows keyed by its field names."""
-    columns = [f.name for f in dataclasses.fields(kind)]
+def _write_dataclasses(
+    fmt: OutputFormat, kind: Any, items: Sequence[object], omit: frozenset[str] = frozenset()
+) -> None:
+    """Writes dataclass instances of kind as rows keyed by its field names, but those in omit."""
+    columns = [f.name for f in dataclasses.fields(kind) if f.name not in omit]
     rows = [[getattr(item, column) for column in columns] for item in items]
     write_rows(sys.stdout, fmt, columns, rows)
 
@@ -787,13 +789,14 @@ def search_command(
         err.print(NO_MATCHES, markup=False)
         raise typer.Exit(NO_MATCH_EXIT)
     if fmt != "table":
-        _write_dataclasses(fmt, SearchHit, found.hits)
+        # text already holds the whole message, so the excerpt only serves the table.
+        _write_dataclasses(fmt, SearchHit, found.hits, omit=frozenset({"excerpt"}))
     else:
         for number, hit in enumerate(found.hits):
             if number:
                 out.print()
             out.print(f"{hit.author} in {hit.conversation}, {_ts_time(hit.ts)}", markup=False)
-            out.print(f"  {hit.snippet}", markup=False)
+            out.print(f"  {hit.excerpt}", markup=False)
             out.print(f"  {hit.link}", markup=False)
     if found.more:
         err.print(f"Showing {limit:,}; --limit for more.", markup=False)

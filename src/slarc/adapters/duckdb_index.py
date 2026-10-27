@@ -10,7 +10,7 @@ import duckdb
 
 from slarc.adapters.lake import CATALOG, connect_lake, lake_errors
 from slarc.domain.links import SLACK_HOST_SUFFIX
-from slarc.domain.plain import snippet
+from slarc.domain.plain import excerpt
 from slarc.ports import ArchiveLock, ArchiveReadFailed, SearchFilter, SearchHit, SlarcError
 
 # Slack ts strings ordered as numbers.
@@ -573,7 +573,7 @@ class DuckDbQueryIndex:
         limit = f"LIMIT {int(query.limit)}" if query.limit else ""
         with lake_errors(self._catalog, ArchiveReadFailed):
             rows = self._db.execute(SEARCH.format(limit=limit), params).fetchall()
-        return [SearchHit(*row[:-1], snippet=snippet(row[-1], query.text or "")) for row in rows]
+        return [SearchHit(*row[:-1], excerpt=excerpt(row[-1], query.text or "")) for row in rows]
 
     def knows_conversation(self, channel: str | None, dm_user: str | None) -> bool:
         if dm_user is not None:

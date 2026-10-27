@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from slarc.domain.directory import DirectoryView
-from slarc.domain.plain import plain_text, snippet
+from slarc.domain.plain import excerpt, plain_text
 
 SPIKE = Path(__file__).parent.parent / "fixtures" / "spike"
 
@@ -128,12 +128,12 @@ def test_plain_layout_blocks_and_skin_tone_emoji():
 
 
 def test_snippet_collapses_whitespace_of_short_text():
-    assert snippet("Ted Naleid: one\n\ntwo  three", "two") == "Ted Naleid: one two three"
+    assert excerpt("Ted Naleid: one\n\ntwo  three", "two") == "Ted Naleid: one two three"
 
 
 def test_snippet_of_long_text_centers_on_the_match():
     plain = " ".join(["before"] * 40) + " the NEEDLE here " + " ".join(["after"] * 40)
-    shown = snippet(plain, "needle", width=60)
+    shown = excerpt(plain, "needle", width=60)
     assert "the NEEDLE here" in shown
     assert shown.startswith("...") and shown.endswith("...")
     assert len(shown) <= 66
@@ -141,4 +141,4 @@ def test_snippet_of_long_text_centers_on_the_match():
 
 def test_snippet_without_a_match_shows_the_start():
     plain = "start " + "x" * 200
-    assert snippet(plain, "absent", width=20) == "start xxxxxxxxxxxxxx..."
+    assert excerpt(plain, "absent", width=20) == "start xxxxxxxxxxxxxx..."

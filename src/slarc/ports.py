@@ -317,7 +317,7 @@ class SearchFilter:
 
 @dataclass(frozen=True)
 class SearchHit:
-    """A stored message matching a search, with message_readable's fields and a snippet of
+    """A stored message matching a search, with message_readable's fields and an excerpt of
     its text around the match."""
 
     team_id: str
@@ -333,7 +333,7 @@ class SearchHit:
     link: str
     deleted_at: str | None
     first_seen_at: str | None
-    snippet: str
+    excerpt: str
 
 
 class QueryIndex(Protocol):

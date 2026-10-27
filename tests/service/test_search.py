@@ -89,7 +89,7 @@ def test_search_finds_plain_text_case_insensitive(index: DuckDbQueryIndex) -> No
     first = hits[0]
     assert first.author == "Ted Naleid"
     assert first.conversation == "#slarc-fixtures-archived"
-    assert "seed: archived channel message 3" in first.snippet
+    assert "seed: archived channel message 3" in first.excerpt
     limited = search(index, "seed: archived channel", None, None, limit=2)
     assert [hit.ts for hit in limited.hits] == ["1792437061.341469", "1792437061.072929"]
 

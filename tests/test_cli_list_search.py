@@ -80,8 +80,9 @@ def test_cli_search_format_jsonl_keys(archive: Path, tmp_path: Path) -> None:
         "link",
         "deleted_at",
         "first_seen_at",
-        "snippet",
     ]
+    csv_header = invoke(tmp_path, "search", "SLARC SEED V1", "--format", "csv").stdout
+    assert "excerpt" not in csv_header.splitlines()[0]
     assert hit["link"] == SEED_LINK
     assert datetime.fromisoformat(hit["posted_at"]).timestamp() == 1792437061.952039
 
