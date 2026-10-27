@@ -24,6 +24,7 @@ _CONVERSATION_KEYS = (
     "is_archived",
     "is_private",
     "is_shared",
+    "is_member",
     "members",
 )
 _EMOJI_KEYS = ("url",)

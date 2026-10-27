@@ -191,3 +191,11 @@ def test_bot_and_usergroup_hash_whole_object():
 def test_kinds_without_a_hash_are_rejected(kind):
     with pytest.raises(ValueError):
         content_hash(kind, {})
+
+
+def test_joining_or_leaving_a_conversation_changes_its_hash():
+    joined = {"id": "C0CHANNEL1", "name": "general", "is_member": True}
+
+    assert content_hash("conversation", joined) != content_hash(
+        "conversation", {**joined, "is_member": False}
+    )

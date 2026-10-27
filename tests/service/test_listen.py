@@ -5,8 +5,9 @@ from collections.abc import Callable
 import pytest
 
 from slarc import __version__
+from slarc.domain.tracking import TrackedItem
 from slarc.ports import AuthFailed, ConnectionLost
-from slarc.service.listen import ListenOptions, listen
+from slarc.service.listen import ListenOptions, listen, unheard_items
 from slarc.unit_of_work import UnitOfWork
 from tests.fakes import FakeEventConnection, FakeEventConnector
 from tests.service.pull_harness import BASE, CHANNEL, PARENT_TS, TEAM, Harness, message
@@ -103,3 +104,33 @@ def test_rejected_credentials_stop_listen(h: Harness):
         run_listen(h, events, ticks(h, 15))
 
     assert runs(h)[-1] == "listen"
+
+
+def test_unheard_items_are_channels_not_joined_and_their_threads():
+    joined = TrackedItem(team_id=TEAM, kind="conversation", channel="C0JOINED01")
+    not_joined = TrackedItem(team_id=TEAM, kind="conversation", channel="C0NOTJOIN1")
+    thread = TrackedItem(team_id=TEAM, kind="thread", channel="C0NOTJOIN1", ts=PARENT_TS)
+    dm = TrackedItem(team_id=TEAM, kind="conversation", channel="D0DIRECT01")
+    unknown = TrackedItem(team_id=TEAM, kind="conversation", channel="C0UNKNOWN1")
+    conversations = {
+        "C0JOINED01": {"id": "C0JOINED01", "is_member": True},
+        "C0NOTJOIN1": {"id": "C0NOTJOIN1", "is_member": False},
+        "D0DIRECT01": {"id": "D0DIRECT01", "is_im": True},
+    }
+
+    found = unheard_items([joined, not_joined, thread, dm, unknown], conversations)
+
+    assert found == [not_joined, thread]
+
+
+def test_unheard_items_are_pulled_every_fifteen_minutes(h: Harness):
+    h.set_member(False)
+    h.pull()
+    h.gateway.calls.clear()
+
+    run_listen(h, FakeEventConnector(), ticks(h, 20 * 60))
+
+    assert history_reads(h) == 2
+    assert h.reporter.infos[0] == (
+        "Listening to naleidworkspace (1 tracked item; 1 not heard, pulled every 15 minutes)."
+    )

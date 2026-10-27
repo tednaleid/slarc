@@ -311,7 +311,7 @@ The current state of a message is its newest version for `(team, channel, ts)`, 
 - message: `text`, `blocks`, `attachments`, the `id` and `mode` of each entry in `files`, `edited`, `reactions`, `subtype`, `user`, `bot_id`. `blocks` and `attachments` are hashed with every `block_id` removed, because Slack regenerates block ids on each read for API-posted messages. Excluded: `reply_count`, `reply_users`, `reply_users_count`, `latest_reply`, `is_locked`, `last_read`, `subscribed`, and anything else per-user or per-request.
 - user: the whole `profile` object plus `name`, `real_name`, `deleted`, `tz`, `is_bot`, `is_app_user`.
 - emoji: the URL or alias target.
-- conversation: `name`, `topic`, `purpose`, `is_archived`, `is_private`, `is_shared`, membership. `last_read` is per-user and lives on the tracked item instead.
+- conversation: `name`, `topic`, `purpose`, `is_archived`, `is_private`, `is_shared`, `is_member` (whether the user has joined, which `slarc listen` reads), `members`. `last_read` is per-user and lives on the tracked item instead.
 - file: everything except `shares` and fields that change on every read.
 - image: the URL plus `Content-Type` and size from the download.
 

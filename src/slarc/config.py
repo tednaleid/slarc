@@ -14,6 +14,7 @@ GLOBAL_PATH_KEY = "_path"
 DEFAULT_DOWNLOADS = 4
 DEFAULT_MAX_FILE_SIZE_MB = 100
 DEFAULT_ACTIVE_THREAD_DAYS = 7
+DEFAULT_UNHEARD_PULL_MINUTES = 15
 
 NEW_ARCHIVE_HEADER = """\
 # slarc archive settings. All keys are optional; see `slarc list` for the files read.
@@ -24,6 +25,9 @@ NEW_ARCHIVE_HEADER = """\
 #
 # [export]
 # tz = "America/Chicago"
+#
+# [listen]
+# unheard_pull_minutes = 15
 """
 
 
@@ -33,6 +37,7 @@ class Settings:
     downloads: int = DEFAULT_DOWNLOADS
     max_file_size_mb: int = DEFAULT_MAX_FILE_SIZE_MB
     active_thread_days: int = DEFAULT_ACTIVE_THREAD_DAYS
+    unheard_pull_minutes: int = DEFAULT_UNHEARD_PULL_MINUTES
     tz: str | None = None
     sources: list[Path] = field(default_factory=list)
 
@@ -141,6 +146,9 @@ def load_settings(
         ),
         active_thread_days=_pick(
             "active_thread_days", "pull", flags, None, env, layers, DEFAULT_ACTIVE_THREAD_DAYS
+        ),
+        unheard_pull_minutes=_pick(
+            "unheard_pull_minutes", "listen", flags, None, env, layers, DEFAULT_UNHEARD_PULL_MINUTES
         ),
         tz=_pick("tz", "export", flags, None, env, layers, None, str),
         sources=sources,

@@ -149,8 +149,8 @@ def test_cli_list_prints_archive_config_and_items(archive: Path, tmp_path: Path)
     assert f"Archive: {archive}" in result.output
     assert f"Config: {archive / 'slarc.toml'}" in result.output
     assert (
-        "Settings: downloads = 4, max_file_size_mb = 100, active_thread_days = 7, tz = local"
-        in result.output
+        "Settings: downloads = 4, max_file_size_mb = 100, active_thread_days = 7, "
+        "unheard_pull_minutes = 15, tz = local" in result.output
     )
     for text in ("#all-naleid", "@Jim", "14", "naleidworkspace", "Downloads: 0 pending, 0 skipped"):
         assert text in result.output
@@ -164,7 +164,7 @@ def test_cli_list_prints_the_settings_slarc_toml_gives(archive: Path, tmp_path: 
     assert result.exit_code == 0, result.output
     assert (
         "Settings: downloads = 4, max_file_size_mb = 200, active_thread_days = 7, "
-        "tz = America/Chicago" in result.output
+        "unheard_pull_minutes = 15, tz = America/Chicago" in result.output
     )
 
 

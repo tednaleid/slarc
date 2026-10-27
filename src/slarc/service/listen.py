@@ -14,7 +14,13 @@ from slarc.domain.events import (
     UserChanged,
     classify,
 )
-from slarc.domain.links import Selector, WorkspaceSel
+from slarc.domain.links import (
+    ConversationSel,
+    Selector,
+    WorkspaceSel,
+    message_link,
+    parse_selector,
+)
 from slarc.domain.tracking import TrackedItem, covers
 from slarc.ports import (
     AuthFailed,
@@ -33,7 +39,7 @@ from slarc.service.downloads import drain_downloads
 from slarc.service.held_conversation import HeldConversation
 from slarc.service.ingest import MessageWriter
 from slarc.service.listen_connections import Connections
-from slarc.service.pull import PullOptions, pull
+from slarc.service.pull import PullOptions, PullReport, pull
 from slarc.service.workspaces import Workspaces
 from slarc.unit_of_work import UnitOfWork
 
@@ -100,7 +106,7 @@ def listen(
     open_uow gives a fresh unit of work over the open archive for each pull and segment.
     AuthFailed propagates after the open segment ends.
     """
-    listener = _Listener(options, open_uow, connector, downloader, reporter)
+    listener = _Listener(options, open_uow, connector, downloader, reporter, clock)
     teams = listener.catch_up([WorkspaceSel(name) for name in selected], announce=True)
     connections = Connections(events, clock, teams)
     pending = Pending()
@@ -110,6 +116,8 @@ def listen(
             due, pending.catch_up = sorted(pending.catch_up), set()
             if due:
                 listener.catch_up([WorkspaceSel(team) for team in due])
+            if listener.unheard_due():
+                listener.pull_unheard()
     finally:
         connections.close()
 
@@ -122,15 +130,63 @@ class _Listener:
         connector: SlackConnector,
         downloader: Downloader,
         reporter: Reporter,
+        clock: Clock,
     ) -> None:
         self.options = options
         self.open_uow = open_uow
         self.connector = connector
         self.downloader = downloader
         self.reporter = reporter
+        self.clock = clock
+        self.domains: dict[str, str] = {}
+        self.unheard: list[TrackedItem] = []
+        self.unheard_at = clock.now()
+        self._tracked: list[TrackedItem] = []
 
     def catch_up(self, selectors: list[Selector], *, announce: bool = False) -> list[str]:
-        """Pulls the selectors' workspaces, or everything tracked, and returns their team ids."""
+        """Pulls the selectors' workspaces, or everything tracked, and returns their team ids.
+        Also finds again the tracked items listen cannot hear."""
+        report, domains, unheard = self._pull(selectors)
+        self.domains |= domains
+        self.unheard = [item for item in unheard if item.team_id in self.domains]
+        teams = sorted(domains)
+        for team_id in teams:
+            name = domains[team_id] or team_id
+            if not announce:
+                self.reporter.info(
+                    f"{name}  pulled to catch up: {report.messages_new:,} new messages"
+                )
+                continue
+            count = sum(1 for item in self._tracked if item.team_id == team_id)
+            noun = "tracked item" if count == 1 else "tracked items"
+            not_heard = ""
+            missed = sum(1 for item in self.unheard if item.team_id == team_id)
+            if missed:
+                minutes = self.options.unheard_pull_minutes
+                not_heard = f"; {missed:,} not heard, pulled every {minutes} minutes"
+            self.reporter.info(f"Listening to {name} ({count:,} {noun}{not_heard}).")
+        return teams
+
+    def unheard_due(self) -> bool:
+        elapsed = (self.clock.now() - self.unheard_at).total_seconds()
+        return bool(self.unheard) and elapsed >= self.options.unheard_pull_minutes * 60
+
+    def pull_unheard(self) -> None:
+        """Pulls the tracked items listen cannot hear."""
+        self.unheard_at = self.clock.now()
+        count = len(self.unheard)
+        selectors = [_selector(self.domains[item.team_id], item) for item in self.unheard]
+        report, _, self.unheard = self._pull(selectors)
+        noun = "item" if count == 1 else "items"
+        self.reporter.info(
+            f"pulled {count:,} {noun} not heard: {report.messages_new:,} new messages"
+        )
+
+    def _pull(
+        self, selectors: list[Selector]
+    ) -> tuple[PullReport, dict[str, str], list[TrackedItem]]:
+        """Pulls in its own unit of work; returns the report, the domain of each workspace it
+        connected to, and the tracked items listen cannot hear."""
         pull_options = PullOptions(
             downloads=self.options.downloads,
             max_file_bytes=self.options.max_file_bytes,
@@ -141,19 +197,11 @@ class _Listener:
                 selectors, pull_options, uow, self.connector, self.downloader, self.reporter
             )
             domains = {entry["team_id"]: entry["domain"] for entry in uow.run.auth}
-            items = list(uow.archive.tracked_items().values())
-        teams = sorted(domains)
-        for team_id in teams:
-            name = domains[team_id] or team_id
-            if announce:
-                count = sum(1 for item in items if item.team_id == team_id)
-                noun = "tracked item" if count == 1 else "tracked items"
-                self.reporter.info(f"Listening to {name} ({count:,} {noun}).")
-            else:
-                self.reporter.info(
-                    f"{name}  pulled to catch up: {report.messages_new:,} new messages"
-                )
-        return teams
+            self._tracked = list(uow.archive.tracked_items().values())
+            conversations: dict[str, dict] = {}
+            for team_id in domains:
+                conversations |= uow.archive.directory_objects(team_id, "conversation")
+        return report, domains, unheard_items(self._tracked, conversations)
 
     def segment(
         self, connections: Connections, pending: Pending, clock: Clock, stop: Callable[[], bool]
@@ -205,9 +253,23 @@ class _Listener:
                 rereads = pending.waiting() and (now - flushed).total_seconds() >= FLUSH_QUIET_S
                 if (buffered and (quiet or aged)) or rereads:
                     flush()
-                if pending.catch_up or now - started >= SEGMENT:
+                if pending.catch_up or now - started >= SEGMENT or self.unheard_due():
                     flush()
                     return
+
+
+def unheard_items(items: list[TrackedItem], conversations: dict[str, dict]) -> list[TrackedItem]:
+    """The items in a channel whose stored conversations.info says the user is not a member;
+    RTM sends no events for them. A DM, a group DM or an unknown channel counts as heard."""
+    return [
+        item for item in items if (conversations.get(item.channel) or {}).get("is_member") is False
+    ]
+
+
+def _selector(domain: str, item: TrackedItem) -> Selector:
+    if item.kind == "conversation" or item.ts is None:
+        return ConversationSel(domain=domain, channel=item.channel, name=None, dm_user=None)
+    return parse_selector(message_link(domain, item.channel, item.ts))
 
 
 def apply_batch(

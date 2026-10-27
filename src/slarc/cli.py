@@ -605,7 +605,8 @@ def _print_listing(listing: ArchiveListing, settings: Settings) -> None:
     out.print(
         f"Settings: downloads = {settings.downloads}, "
         f"max_file_size_mb = {settings.max_file_size_mb}, "
-        f"active_thread_days = {settings.active_thread_days}, tz = {settings.tz or 'local'}",
+        f"active_thread_days = {settings.active_thread_days}, "
+        f"unheard_pull_minutes = {settings.unheard_pull_minutes}, tz = {settings.tz or 'local'}",
         markup=False,
     )
     if listing.rows:
@@ -1000,6 +1001,7 @@ def listen_command(
             downloads=settings.downloads,
             max_file_bytes=settings.max_file_size_mb * MB,
             active_thread_days=settings.active_thread_days,
+            unheard_pull_minutes=settings.unheard_pull_minutes,
         )
         connector = services.connector()
         with (

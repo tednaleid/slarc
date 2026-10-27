@@ -198,3 +198,10 @@ def test_create_archive_where_a_file_is_in_the_way_names_the_path(tmp_path: Path
     target = tmp_path / "taken" / "archive"
     with pytest.raises(SlarcError, match=f"Could not create an archive at {target}"):
         create_archive(target)
+
+
+def test_unheard_pull_minutes_reads_from_slarc_toml(tmp_path: Path) -> None:
+    archive = make_archive(tmp_path / "a", "[listen]\nunheard_pull_minutes = 5\n")
+
+    assert load_settings(archive, {}, {}, {}).unheard_pull_minutes == 5
+    assert load_settings(make_archive(tmp_path / "b"), {}, {}, {}).unheard_pull_minutes == 15
