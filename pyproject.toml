@@ -1,6 +1,6 @@
 [project]
 name = "slarc"
-version = "0.1.3"
+version = "0.1.4"
 description = "Archive the Slack conversations you can see into searchable, re-renderable files"
 readme = "README.md"
 license = "MIT"
