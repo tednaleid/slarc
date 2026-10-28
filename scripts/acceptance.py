@@ -74,11 +74,15 @@ class Timed:
 
     def run(self, label: str, args: list[str]) -> subprocess.CompletedProcess[str]:
         started = time.monotonic()
-        done = subprocess.run(args, cwd=REPO, capture_output=True, text=True)
+        done = subprocess.run(args, cwd=REPO, env=PROJECT_ENV, capture_output=True, text=True)
         self.criterion.timings.append(f"{label} {time.monotonic() - started:.1f}s")
         if done.returncode != 0:
             raise RuntimeError(f"{label} exited {done.returncode}: {done.stderr.strip()}")
         return done
+
+
+# This script's own uv environment sets VIRTUAL_ENV; `uv run slarc` should use the project's.
+PROJECT_ENV = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
 
 
 def slarc(timed: Timed, label: str, root: Path, command: str, *args: str) -> None:
@@ -295,6 +299,7 @@ def check_listen(root: Path) -> Criterion:
     listening = subprocess.Popen(
         ["uv", "run", "slarc", "listen", WORKSPACE, "--root", str(root)],
         cwd=REPO,
+        env=PROJECT_ENV,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
