@@ -6,10 +6,10 @@ section alone is enough to search, query with SQL and read a file.
 ## Start here
 
 - slarc keeps a local archive of the Slack conversations a person can see. `search`, `sql`,
-  `list`, `export`, `file` and `guide` only read it (`export` and `file` also write the files
+  `list` (without `--remote`), `export`, `file` and `guide` only read it (`export` and `file` also write the files
   you ask for), so run them freely.
-- `slarc pull` and `slarc listen` contact Slack and write the archive; `listen` runs until
-  stopped. Run them only when the user asks for fresh data.
+- `slarc pull`, `slarc listen` and `slarc list --remote` contact Slack, and `pull` and
+  `listen` write the archive; `listen` runs until stopped. Run them only when the user asks.
 - **Never run `slarc rm` unless the user explicitly asked to remove that exact item. Show them
   the command and ask first, and never pass `--yes`.**
 - `slarc sql` runs DuckDB SQL, not SQLite: there is no `datetime()`; write
@@ -18,8 +18,8 @@ section alone is enough to search, query with SQL and read a file.
   `conversation` (`#name`, `@user` for a DM, or a group DM's name), `author` (display name),
   `author_real_name`, `posted_at` (TIMESTAMPTZ), `text`, `link` (the Slack link to give the
   user), `ts` (the message's id), `thread_ts` (its thread parent's `ts`, null outside threads),
-  `reactions`, `files` (a list of `{id, name}`), `deleted_at`, `first_seen_at` (when a pull
-  stored it), `team_id` and `channel_id`.
+  `reactions`, `files` (a list of `{id, name}`), `deleted_at`, `first_seen_at` (when slarc
+  first stored it), `team_id` and `channel_id`.
 - `first_seen_at` and `deleted_at` are UTC text such as `2026-10-20T14:00:00Z`; compare them as
   text. `posted_at` compares with a date string (`posted_at >= '2026-10-20'`) or an interval.
 - Add `--format jsonl` to `search`, `sql` and `list`: one JSON object per line, never cut.
@@ -59,9 +59,9 @@ slarc sql --format jsonl "SELECT strftime(posted_at, '%Y-%m-%d') AS day, count(*
 slarc sql --format jsonl "SELECT link, f.id, f.name FROM message_readable, unnest(files) AS t(f) WHERE conversation = '#general'"
 ```
 
-What is new since the user last caught up: ask them when that was. `first_seen_at` is when a
-pull stored the message, so this also finds older messages that a later pull brought in, which
-a `posted_at` filter would miss:
+What is new since the user last caught up: ask them when that was. `first_seen_at` is when slarc
+first stored the message, by a pull or by listen, so this also finds older messages that a later
+pull brought in, which a `posted_at` filter would miss:
 
 ```sh
 slarc sql --format jsonl "SELECT conversation, author_real_name, text, link FROM message_readable WHERE first_seen_at >= '2026-10-20T14:00:00Z' ORDER BY posted_at"

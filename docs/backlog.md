@@ -11,7 +11,7 @@ Known problems and future work, grouped by theme. Each line says what is wrong o
 - The "Slack returns no message" warning link leaves out `thread_ts` for a reply (`service/pull.py` `_missing_message`).
 - Bots are fetched only when not yet stored, so a bot rename is never recorded, and `bots.info` errors other than `AuthFailed` are dropped without a warning (`service/directory_refresh.py` `unknown_bots`).
 - A tracked `message` item keeps kind `message` after it gains replies, so `slarc list` shows "message" for a thread (`service/pull.py`).
-- `_append_bots` mutates the frozen `DirectoryView`'s `bots` dict (`service/pull.py`).
+- `MessageWriter` mutates the frozen `DirectoryView`'s `bots` dict, and listen's batch its `users` dict (`service/ingest.py`, `service/listen.py`).
 - `--max-file-size 0` is left out of the run row's args because `0 == False` (`cli.py` `_run_args`).
 - A skipped `not_visible` item shows a finished 0-message progress bar (`cli.py` `RichReporter`).
 - Images over the size limit stay `too_large` after the limit is raised until a pull with `--retry-skipped`; files are retried on their own (`service/downloads.py` `_image_state`).
@@ -38,7 +38,7 @@ Known problems and future work, grouped by theme. Each line says what is wrong o
 - A non-JSON Slack response gives a long error and a slack_sdk ERROR log on stderr (`adapters/slack_gateway.py`).
 
 ### Storage and query
-- `int(ts.split(".")[0])` is repeated in `cli._ts_time`, `export._seconds` and `threads.active_threads`; give `MessageTs` a `seconds` property and a `from_datetime` constructor.
+- `int(ts.split(".")[0])` is repeated in `cli._ts_time` and `export._seconds`; give `MessageTs` a `seconds` property and a `from_datetime` constructor.
 - A message with `files: []` hashes differently from one with no `files` key (`domain/hashing.py`).
 - Blobs are written with mode 0600 and not fsynced before the rename (`adapters/blob_store.py`).
 - `slarc list` loads every message of each tracked item to count them, through raw SQL on `QueryIndex.sql` instead of a narrow method (`service/listing.py`).
@@ -80,7 +80,7 @@ Known problems and future work, grouped by theme. Each line says what is wrong o
 - Piping output into a reader that exits early, such as `slarc file F... | head -c 10`, likely prints a `BrokenPipeError` traceback; no command handles it (`cli.py`).
 
 ### Tests and tooling
-- Only link parsing has Hypothesis tests; the spec also asks for `ts` ordering and idempotency properties.
+- Only link parsing and the rate limiter have Hypothesis tests; the spec also asks for `ts` ordering and idempotency properties.
 - Nothing checks that the `user.display` column and `SEARCH`'s labels agree with `DirectoryView` (`tests/contract/test_duckdb_index.py`).
 - LevelDB and cookie tests: the highest-sequence test also passes under first-seen-wins; no cross-file delete, `v11`, journal copy, "no d cookie" or known-answer decryption test (`tests/adapters/`).
 - Credential source tests miss the no-d-cookie mapping, a missing `Cookies` file, the `Network/Cookies` fallback, the Snap directory and a malformed keyring entry (`tests/adapters/test_desktop_session.py`, `test_credentials.py`).

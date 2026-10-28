@@ -42,6 +42,8 @@ slarc guide                                                                   # 
 slarc --take-ownership list                                                   # take the archive over from the machine that last used it, once it has synced
 ```
 
+`slarc listen` pulls first, then prints a line for each change it stores. It can run while you `pull` new links in another terminal: within a few seconds it names each item added and starts listening to it.
+
 The first `pull` offers to create an archive (a directory with `slarc.toml`) in the current directory. Every command finds the archive from `--root`, then `SLARC_ARCHIVE`, then the current directory or its parents, then `default_archive` in the global config.
 
 ## The archive
@@ -58,7 +60,7 @@ An archive is a DuckLake: Parquet data files plus a SQLite catalog, read and wri
 
 A command that only reads, such as `search` or `sql`, cannot checkpoint the catalog through its read-only connection, so it may leave an empty `-wal` file and a small `-shm` file beside the catalog; they are harmless and expected.
 
-The archive is read through slarc (`search`, `sql`, `export`) or through DuckDB, not with `rg` or `jq`, and it is not meant to be kept in git. Every pull commits in small steps, so a crash leaves exactly what was last committed. `slarc rm` deletes what only the removed items kept; the bytes are physically deleted when it exits, or by the next pull or rm that finds no other slarc command running.
+The archive is read through slarc (`search`, `sql`, `export`) or through DuckDB, not with `rg` or `jq`, and it is not meant to be kept in git. Every pull commits in small steps, so a crash leaves exactly what was last committed. `slarc rm` deletes what only the removed items kept; the bytes are physically deleted when it exits, or by the next pull, rm or hour of listen that finds no other slarc command running.
 
 The first run downloads two DuckDB extensions (`ducklake` and `sqlite_scanner`, about 27 MB each) into `~/.cache/slarc/duckdb`. `just install` fetches them too, so a machine set up while online works offline afterwards.
 

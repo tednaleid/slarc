@@ -17,7 +17,7 @@ Keeping an archive current from the events Slack pushes to a signed-in client, f
 _Avoid_: subscribe, watch, stream, sync
 
 **Catch-up pull**:
-The pull listen runs when it starts, and again after a lost connection, to fetch what changed while it was not listening.
+The pull listen runs when it starts, and again after a lost connection or a batch of changes it could not store, to fetch what changed that it did not store.
 _Avoid_: resync, backfill (which means reading older history)
 
 **Version**:
@@ -45,7 +45,7 @@ What an archive knows about a workspace besides its messages: users, custom emoj
 _Avoid_: metadata, catalog (the archive's catalog is a storage detail)
 
 **Maintenance**:
-The step at the end of a pull or removal that tidies the archive's files and, when no other command has the archive open, frees the space of what nothing needs any more.
+The step at the end of a pull, a removal or each hour of listen that tidies the archive's files and, when no other command has the archive open, frees the space of what nothing needs any more.
 _Avoid_: cleanup, garbage collection, vacuum (except for the database step of that name)
 
 **Window**:

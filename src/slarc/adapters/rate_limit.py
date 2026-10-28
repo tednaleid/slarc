@@ -25,7 +25,7 @@ METHOD_TIERS = {
 
 
 class MinuteWindow:
-    """Lets each method make at most rate calls in any 60 seconds, with no wait for a burst
+    """Lets each method make at most rate calls in any WINDOW_S seconds, with no wait for a burst
     that stays within that count."""
 
     def __init__(
