@@ -43,6 +43,19 @@ def test_store_holds_the_read_lock_and_writes_under_the_write_lock(
     assert lock.events[3:] == ["write", "end write", "write", "end write", "release_shared"]
 
 
+def test_a_store_sees_another_stores_commit(tmp_path: Path, ext_dir: Path) -> None:
+    watching = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
+    writing = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
+    before = watching.snapshot()
+
+    writing.commit(Commit(items=[tracked("100.000000")]))
+
+    assert watching.snapshot() != before
+    assert list(watching.tracked_items()) == [(TEAM, "conversation", CHANNEL, "")]
+    watching.close()
+    writing.close()
+
+
 def test_lines_without_a_run_line_are_not_kept(tmp_path: Path, ext_dir: Path) -> None:
     store = DuckLakeArchiveStore(tmp_path, ext_dir, FakeArchiveLock())
     store.append(message(TS, "uncommitted", T1, R1))

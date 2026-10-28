@@ -12,7 +12,18 @@ from slarc.service import listen as listen_module
 from slarc.service.listen import ListenOptions, listen, unheard_items
 from slarc.unit_of_work import UnitOfWork
 from tests.fakes import FakeEventConnection, FakeEventConnector
-from tests.service.pull_harness import BASE, CHANNEL, PARENT_TS, TEAM, Harness, message
+from tests.service.pull_harness import (
+    BASE,
+    CHANNEL,
+    OTHER,
+    OTHER_CHANNEL,
+    OTHER_TEAM,
+    PARENT_TS,
+    TEAM,
+    Harness,
+    message,
+    other_gateway,
+)
 
 NEW_TS = "1792500000.000100"
 OPTIONS = ListenOptions(downloads=4, max_file_bytes=100 * 1024 * 1024)
@@ -273,3 +284,65 @@ def test_a_segment_reads_the_directory_once_for_many_batches(
 
     assert len([line for line in h.reporter.infos if "message from" in line]) == 3
     assert reads == [TEAM]
+
+
+THREAD = TrackedItem(team_id=TEAM, kind="thread", channel=CHANNEL, ts=PARENT_TS)
+
+
+def track_elsewhere(h: Harness, item: TrackedItem) -> None:
+    """Commits a tracked item, as a pull in another process would."""
+    with h.archive.elsewhere() as archive:
+        archive.commit(Commit(items=[item]))
+
+
+def test_an_item_tracked_while_listening_is_named_within_seconds(h: Harness):
+    run_listen(h, FakeEventConnector(), at_call(h, 12, 3, lambda: track_elsewhere(h, THREAD)))
+
+    assert f"Now also listening to thread {PARENT_TS} in #all-naleid." in h.reporter.infos
+
+
+def test_a_workspace_tracked_while_listening_is_connected_then_pulled(h: Harness):
+    other = other_gateway()
+    h.connector.gateways[OTHER] = other
+    item = TrackedItem(team_id=OTHER_TEAM, kind="conversation", channel=OTHER_CHANNEL)
+    events = FakeEventConnector()
+
+    run_listen(h, events, at_call(h, 30, 3, lambda: track_elsewhere(h, item)))
+
+    assert events.opened == [TEAM, OTHER_TEAM]
+    assert any(call[0] == "conversations.history" for call in other.calls)
+    assert f"Now also listening to {OTHER_CHANNEL}." in h.reporter.infos
+
+
+def test_an_unheard_item_tracked_while_listening_is_pulled_with_the_others(h: Harness):
+    h.set_member(False)
+    h.pull()
+
+    run_listen(h, FakeEventConnector(), at_call(h, 12, 3, lambda: track_elsewhere(h, THREAD)))
+
+    assert (
+        f"Now also pulling thread {PARENT_TS} in #all-naleid every 15 minutes; "
+        "listen cannot hear it."
+    ) in h.reporter.infos
+
+
+def test_an_item_removed_while_listening_is_named(h: Harness):
+    track_elsewhere(h, THREAD)
+
+    def remove_thread() -> None:
+        with h.archive.elsewhere() as archive:
+            item = archive.tracked_items()[THREAD.key]
+            archive.commit(Commit(items=[msgspec.structs.replace(item, status="removed")]))
+
+    run_listen(h, FakeEventConnector(), at_call(h, 12, 3, remove_thread))
+
+    assert f"No longer listening to thread {PARENT_TS} in #all-naleid." in h.reporter.infos
+
+
+def test_a_workspace_with_nothing_tracked_any_more_is_dropped_within_seconds(h: Harness):
+    events = FakeEventConnector()
+
+    run_listen(h, events, at_call(h, 12, 3, lambda: remove_tracked(h)))
+
+    assert "naleidworkspace  nothing tracked any more; stopped listening" in h.reporter.infos
+    assert history_reads(h) == 1

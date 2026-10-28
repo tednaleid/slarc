@@ -67,6 +67,11 @@ class Connections:
     def teams(self) -> list[str]:
         return list(self._links)
 
+    def add(self, workspace: str) -> None:
+        """Opens the workspace's connection on the next poll. Nothing before that was heard, so
+        once open it counts as lost."""
+        self._links.setdefault(workspace, _Link(lost=True))
+
     def forget(self, workspace: str) -> None:
         """Closes the workspace's connection and stops opening it."""
         link = self._links.pop(workspace, None)

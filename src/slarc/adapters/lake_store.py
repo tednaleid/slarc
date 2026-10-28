@@ -254,6 +254,9 @@ class DuckLakeArchiveStore:
         )
         return rows[0][0]
 
+    def snapshot(self) -> int:
+        return self._read("SELECT max(snapshot_id) FROM ducklake_snapshots('lake')")[0][0]
+
     def maintain(self, blobs: BlobStore, deleting: Callable[[], None] = lambda: None) -> bool:
         """Compacts the lake under the write lock. Then, if no other store or index of this
         process holds the read lock and it can be taken exclusively, calls deleting, deletes

@@ -199,3 +199,17 @@ def test_poll_with_no_workspaces_waits_its_timeout():
     Connections(FakeEventConnector(), clock, []).poll(1.0)
 
     assert (clock.now() - start).total_seconds() == pytest.approx(1.0)
+
+
+def test_an_added_workspace_opens_on_the_next_poll_and_counts_as_lost():
+    clock = FakeClock()
+    connector = FakeEventConnector()
+    connections = Connections(connector, clock, [ACME])
+    connections.poll(1.0)
+
+    connections.add("other")
+    connections.poll(1.0)
+
+    assert connector.opened == [ACME, "other"]
+    assert connections.teams == [ACME, "other"]
+    assert connections.take_lost() == {"other"}

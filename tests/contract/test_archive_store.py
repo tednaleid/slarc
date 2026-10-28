@@ -165,6 +165,15 @@ def track(store: ArchiveStore, *teams: str) -> None:
     store.commit(Commit(items=items))
 
 
+def test_a_commit_changes_the_snapshot(store_and_reopen):
+    store, _ = store_and_reopen
+    before = store.snapshot()
+
+    store.commit(Commit(items=[tracked("100.000000")]))
+
+    assert store.snapshot() != before
+
+
 def test_stored_messages_reflects_latest_line(store_and_reopen):
     store, reopen = store_and_reopen
     first = message(TS, "Hello", T1, R1)

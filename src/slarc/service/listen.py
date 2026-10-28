@@ -53,6 +53,7 @@ FLUSH_QUIET_S = 2.0
 FLUSH_MAX_S = 10.0
 SEGMENT = timedelta(hours=1)
 POLL_S = 1.0
+SNAPSHOT_S = 5.0
 OPEN_POLL_S = 0.1
 CATCH_UP_RETRY = timedelta(minutes=1)
 
@@ -177,6 +178,9 @@ class _Listener:
         self.reporter = reporter
         self.clock = clock
         self.domains: dict[str, str] = {}
+        self.every_workspace = True
+        self.tracked: dict[ItemKey, TrackedItem] = {}
+        self.snapshot: int | None = None
         self.unheard: list[TrackedItem] = []
         self.unheard_at = clock.now()
         self.retry_at = clock.now()
@@ -193,7 +197,9 @@ class _Listener:
                 teams = [self.connector.connect(name).auth_test()["team_id"] for name in selected]
             else:
                 teams = sorted({item.team_id for item in tracked.values()})
-            count = sum(1 for item in tracked.values() if item.team_id in teams)
+            self.every_workspace = not selected
+            self.tracked = {k: item for k, item in tracked.items() if item.team_id in teams}
+            count = len(self.tracked)
             self.reporter.info(f"Pulling {_count(count, 'tracked item')} before listening.")
             early.extend(connect(teams))
             return [WorkspaceSel(team) for team in teams]
@@ -216,6 +222,58 @@ class _Listener:
                 not_heard = f"; {missed:,} not heard, pulled every {minutes} minutes"
             self.reporter.info(f"Listening to {name} ({_count(count, 'tracked item')}{not_heard}).")
         return early
+
+    def notice(
+        self,
+        uow: UnitOfWork,
+        connections: Connections,
+        pending: Pending,
+        states: dict[str, TeamState],
+    ) -> None:
+        """Once another commit has changed the archive, finds the tracked items added or removed
+        since listen last looked. It names each one, connects to a workspace newly tracked, which
+        is pulled once its connection opens, and stops listening to one with nothing tracked."""
+        snapshot = uow.archive.snapshot()
+        if snapshot == self.snapshot:
+            return
+        self.snapshot = snapshot
+        tracked = {
+            key: item
+            for key, item in uow.archive.tracked_items().items()
+            if self.every_workspace or item.team_id in connections.teams
+        }
+        added = [tracked[key] for key in sorted(tracked.keys() - self.tracked.keys())]
+        removed = [self.tracked[key] for key in sorted(self.tracked.keys() - tracked.keys())]
+        if not added and not removed:
+            return
+        self.tracked = tracked
+        self.unheard = self._unheard(uow, list(tracked.values()))
+        live = {item.team_id for item in tracked.values()}
+        changed = {item.team_id for item in added + removed}
+        views = {team_id: _stored_view(uow, team_id) for team_id in changed}
+        minutes = self.options.unheard_pull_minutes
+        for item in added:
+            label = _item_label(views[item.team_id], item)
+            if item in self.unheard:
+                self.reporter.info(
+                    f"Now also pulling {label} every {minutes} minutes; listen cannot hear it."
+                )
+            else:
+                self.reporter.info(f"Now also listening to {label}.")
+            if item.team_id not in connections.teams:
+                connections.add(item.team_id)
+        for item in removed:
+            if item.team_id in live:
+                self.reporter.info(
+                    f"No longer listening to {_item_label(views[item.team_id], item)}."
+                )
+        for team_id in sorted(changed):
+            states.pop(team_id, None)
+            if team_id not in live and team_id in connections.teams:
+                connections.forget(team_id)
+                pending.catch_up.discard(team_id)
+                name = self.domains.get(team_id) or team_id
+                self.reporter.info(f"{name}  nothing tracked any more; stopped listening")
 
     def catch_up_ready(self, pending: Pending) -> bool:
         return bool(pending.catch_up) and self.clock.now() >= self.retry_at
@@ -289,7 +347,7 @@ class _Listener:
         with self.open_uow("listen") as uow:
             workspaces = Workspaces(self.connector, uow)
             states: dict[str, TeamState] = {}
-            started = clock.now()
+            started = checked = clock.now()
             buffered: dict[str, list[Change]] = {}
             first = last = started
 
@@ -331,8 +389,11 @@ class _Listener:
                     flush(set(buffered) | pending.due_teams(clock.now()))
                     return
                 take(connections.poll(POLL_S))
-                pending.catch_up |= connections.take_lost()
                 now = clock.now()
+                if (now - checked).total_seconds() >= SNAPSHOT_S:
+                    checked = now
+                    self.notice(uow, connections, pending, states)
+                pending.catch_up |= connections.take_lost()
                 quiet = (now - last).total_seconds() >= FLUSH_QUIET_S
                 aged = (now - first).total_seconds() >= FLUSH_MAX_S
                 teams = set(buffered) if buffered and (quiet or aged) else set()
@@ -375,15 +436,26 @@ class _Listener:
             if report.unreachable:
                 raise report.unreachable[0]
             domains = {entry["team_id"]: entry["domain"] for entry in uow.run.auth}
+            self.domains |= domains
             tracked = list(uow.archive.tracked_items().values())
-            conversations: dict[str, dict] = {}
-            for team_id in domains:
-                conversations |= uow.archive.directory_objects(team_id, "conversation")
-        self.domains |= domains
-        self.unheard = [
+            self.unheard = self._unheard(uow, tracked)
+        return report, set(domains), tracked
+
+    def _unheard(self, uow: UnitOfWork, tracked: list[TrackedItem]) -> list[TrackedItem]:
+        """The tracked items listen cannot hear, in the workspaces a pull has named."""
+        conversations: dict[str, dict] = {}
+        for team_id in self.domains:
+            conversations |= uow.archive.directory_objects(team_id, "conversation")
+        return [
             item for item in unheard_items(tracked, conversations) if item.team_id in self.domains
         ]
-        return report, set(domains), tracked
+
+
+def _item_label(view: DirectoryView, item: TrackedItem) -> str:
+    conversation = view.conversation_label(item.channel)
+    if item.kind == "conversation":
+        return conversation
+    return f"{item.kind} {item.ts} in {conversation}"
 
 
 def _count(count: int, noun: str) -> str:

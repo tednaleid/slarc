@@ -43,7 +43,11 @@ SAME_PULL = "(a) pulling the same channels twice adds no message or directory ro
 EXPORT = "(d) the export shows seeded messages, giphy, a link preview, snippets, a deleted file"
 REPLY = "(b) a new reply under an older parent lands as exactly one new line"
 EDIT = "(c) an edit lands as exactly one new line by pull --full"
-LISTEN = "(e) listen stores pushed posts, edits and deletes, and leaves presence as it was"
+LISTEN = (
+    "(e) listen stores pushed posts, edits and deletes, notices a channel pulled meanwhile, "
+    "and leaves presence as it was"
+)
+NOTICED = "Now also listening to #all-naleid."
 LISTEN_START_S = 180
 LISTEN_SETTLE_S = 20
 LISTEN_STOP_S = 60
@@ -314,6 +318,7 @@ def check_listen(root: Path) -> Criterion:
             time.sleep(1)
         criterion.timings.append(f"listen start {time.monotonic() - started:.1f}s")
         posted = seed(timed, "seed events", "events")
+        slarc(timed, "pull while listening", root, "pull", "--yes", link(ALL_NALEID))
         time.sleep(LISTEN_SETTLE_S)
         during = presence()
     finally:
@@ -334,6 +339,9 @@ def check_listen(root: Path) -> Criterion:
     )
     reply_kinds = [kind for kind, _, _ in version_rows(root, channel, reply)]
     criterion.check(reply_kinds[-1:] == ["deleted"], f"the reply's versions: {reply_kinds}")
+    criterion.check(
+        any(line.rstrip().endswith(NOTICED) for line in lines), f"listen printed {NOTICED!r}"
+    )
     after = presence()
     criterion.check(
         before == during == after,

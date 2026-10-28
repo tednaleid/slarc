@@ -52,6 +52,7 @@ class InMemoryArchiveStore:
         self.lines: list[Envelope] = []
         self.tracked: dict[ItemKey, TrackedItem] = {}
         self.download_states: dict[DownloadKey, DownloadState] = {}
+        self._snapshot = 0
         self._batch: list[Envelope] = []
         self._line_drops: list[Callable[[Envelope], bool]] = []
         self._download_drops: set[DownloadKey] = set()
@@ -66,6 +67,7 @@ class InMemoryArchiveStore:
             self.discard()
             raise
         self.discard()
+        self._snapshot += 1
         return committed
 
     def discard(self) -> None:
@@ -113,6 +115,10 @@ class InMemoryArchiveStore:
             raise ValueError("Commit or discard the open batch before appending the run")
         recorded = msgspec.structs.replace(run, tracked=[], downloads=[])
         self.lines.append(run_envelope(recorded, slarc_version))
+        self._snapshot += 1
+
+    def snapshot(self) -> int:
+        return self._snapshot
 
     def directory_listed_at(self, team: str) -> str | None:
         listed = [
