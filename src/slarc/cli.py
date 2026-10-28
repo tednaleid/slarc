@@ -218,12 +218,13 @@ class RichReporter:
     only its error. Rich shares columns across rows, so each row carries its own detail text.
     """
 
-    def __init__(self, console: Console) -> None:
+    def __init__(self, console: Console, *, transient: bool = False) -> None:
         self._progress = Progress(
             TextColumn("{task.description}", markup=False),
             BarColumn(),
             TextColumn("{task.fields[detail]}", markup=False),
             console=console,
+            transient=transient,
         )
         self._tasks: dict[str, TaskID] = {}
         self._started = False
@@ -237,6 +238,9 @@ class RichReporter:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
+        self.close()
+
+    def close(self) -> None:
         if self._started:
             self._progress.stop()
 
@@ -929,12 +933,16 @@ def export_command(
 
 
 class LineReporter:
-    """Prints each info line on stdout and each warning on stderr, each after the local time;
-    progress, downloads and archive steps are not shown."""
+    """Prints each info line on stdout and each warning on stderr, each after the local time.
+
+    Between pull_started and pull_ended, the pull's rows show on a terminal's stderr as
+    `slarc pull` shows them, and clear when it ends; outside a pull, progress, downloads, saving
+    and rate limit waits are not shown."""
 
     def __init__(self, clock: Clock, zone: tzinfo) -> None:
         self._clock = clock
         self._zone = zone
+        self._rows: RichReporter | None = None
 
     def info(self, msg: str) -> None:
         out.print(f"{self._time()} {msg}", markup=False, soft_wrap=True)
@@ -943,13 +951,30 @@ class LineReporter:
         err.print(f"{self._time()} Warning: {msg}", style="yellow", markup=False)
 
     def progress(self, label: str, update: ItemProgress) -> None:
-        pass
+        if self._rows is not None:
+            self._rows.progress(label, update)
 
     def downloads(self, done: int, failed: int, skipped: int, total: int) -> None:
-        pass
+        if self._rows is not None:
+            self._rows.downloads(done, failed, skipped, total)
 
     def archive(self, step: str, *, finished: bool = False) -> None:
-        pass
+        if self._rows is not None:
+            self._rows.archive(step, finished=finished)
+
+    def waiting(self, seconds: int) -> None:
+        if self._rows is not None:
+            self._rows.waiting(seconds)
+
+    def pull_started(self) -> None:
+        # Rows cleared from a file or pipe would leave a blank line behind.
+        if err.is_terminal:
+            self._rows = RichReporter(err, transient=True)
+
+    def pull_ended(self) -> None:
+        if self._rows is not None:
+            self._rows.close()
+            self._rows = None
 
     def _time(self) -> str:
         return self._clock.now().astimezone(self._zone).strftime("%H:%M")
@@ -981,8 +1006,8 @@ def listen_command(
 ) -> None:
     """Keep the archive current from Slack's pushed events until Ctrl-C.
 
-    Pulls first, then stores new messages, edits, deletes and reactions on tracked items as
-    they happen, printing a line for each.
+    Pulls first, showing its progress as `slarc pull` does, then stores new messages, edits,
+    deletes and reactions on tracked items as they happen, printing a line for each.
     """
     services: bootstrap.Services = ctx.obj
     names = workspaces or []
@@ -1007,7 +1032,7 @@ def listen_command(
             active_thread_days=settings.active_thread_days,
             unheard_pull_minutes=settings.unheard_pull_minutes,
         )
-        connector = services.connector()
+        connector = services.connector(reporter.waiting)
         with (
             bootstrap.archive_stores(archive_root, services.take_ownership) as (archive, blobs),
             services.downloader(blobs, connector.authenticated) as downloader,
@@ -1019,7 +1044,7 @@ def listen_command(
                 # A catch-up pull and the segment after it can start in the same second.
                 suffix = secrets.token_hex(2) if services.run_suffix else ""
                 return UnitOfWork(
-                    archive, blobs, services.clock, command, names, __version__, suffix
+                    archive, blobs, services.clock, command, names, __version__, suffix, reporter
                 )
 
             listen(

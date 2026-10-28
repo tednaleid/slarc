@@ -577,6 +577,7 @@ class RecordingReporter:
         self.progress_updates: list[tuple[str, ItemProgress]] = []
         self.download_updates: list[tuple[int, int, int, int]] = []
         self.archive_steps: list[tuple[str, bool]] = []
+        self.pulls: list[str] = []
 
     def info(self, msg: str) -> None:
         self.infos.append(msg)
@@ -592,6 +593,12 @@ class RecordingReporter:
 
     def archive(self, step: str, *, finished: bool = False) -> None:
         self.archive_steps.append((step, finished))
+
+    def pull_started(self) -> None:
+        self.pulls.append("started")
+
+    def pull_ended(self) -> None:
+        self.pulls.append("ended")
 
 
 class FakeAssetResolver:

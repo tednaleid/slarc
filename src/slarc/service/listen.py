@@ -29,6 +29,7 @@ from slarc.ports import (
     CommitConflict,
     Downloader,
     EventConnector,
+    ListenReporter,
     NoSession,
     NotVisible,
     Reporter,
@@ -119,7 +120,7 @@ def listen(
     connector: SlackConnector,
     events: EventConnector,
     downloader: Downloader,
-    reporter: Reporter,
+    reporter: ListenReporter,
     clock: Clock,
     stop: Callable[[], bool],
 ) -> None:
@@ -166,7 +167,7 @@ class _Listener:
         open_uow: Callable[[str], UnitOfWork],
         connector: SlackConnector,
         downloader: Downloader,
-        reporter: Reporter,
+        reporter: ListenReporter,
         clock: Clock,
     ) -> None:
         self.options = options
@@ -192,23 +193,28 @@ class _Listener:
                 teams = [self.connector.connect(name).auth_test()["team_id"] for name in selected]
             else:
                 teams = sorted({item.team_id for item in tracked.values()})
+            count = sum(1 for item in tracked.values() if item.team_id in teams)
+            self.reporter.info(f"Pulling {_count(count, 'tracked item')} before listening.")
             early.extend(connect(teams))
             return [WorkspaceSel(team) for team in teams]
 
-        pulled = self._pull(choose)
+        pulled = self._pull(choose, shown=True)
         if pulled is None:
             return early
-        _, teams, tracked = pulled
+        report, teams, tracked = pulled
+        self.reporter.info(
+            f"Pulled {_count(report.items_pulled, 'tracked item')}: "
+            f"{_count(report.messages_new, 'new message')}."
+        )
         for team_id in sorted(teams):
             name = self.domains.get(team_id) or team_id
             count = sum(1 for item in tracked if item.team_id == team_id)
-            noun = "tracked item" if count == 1 else "tracked items"
             not_heard = ""
             missed = sum(1 for item in self.unheard if item.team_id == team_id)
             if missed:
                 minutes = self.options.unheard_pull_minutes
                 not_heard = f"; {missed:,} not heard, pulled every {minutes} minutes"
-            self.reporter.info(f"Listening to {name} ({count:,} {noun}{not_heard}).")
+            self.reporter.info(f"Listening to {name} ({_count(count, 'tracked item')}{not_heard}).")
         return early
 
     def catch_up_ready(self, pending: Pending) -> bool:
@@ -231,7 +237,7 @@ class _Listener:
             return [WorkspaceSel(team) for team in due if team in live]
 
         try:
-            pulled = self._pull(choose)
+            pulled = self._pull(choose, shown=True)
         except AuthFailed, NoSession, ArchiveFailed:
             raise
         except SlarcError as error:
@@ -239,7 +245,7 @@ class _Listener:
             self.retry_at = self.clock.now() + CATCH_UP_RETRY
             self.reporter.warn(f"{error} Pulling again in a minute.")
             return
-        if pulled is not None:
+        if pulled is not None and pulled[0].messages_new:
             report, teams, _ = pulled
             for team_id in sorted(teams):
                 name = self.domains.get(team_id) or team_id
@@ -266,10 +272,9 @@ class _Listener:
         except SlarcError as error:
             self.reporter.warn(f"{error} Pulling the items not heard again later.")
             return
-        if pulled is not None:
-            noun = "item" if count == 1 else "items"
-            news = pulled[0].messages_new
-            self.reporter.info(f"pulled {count:,} {noun} not heard: {news:,} new messages")
+        if pulled is not None and pulled[0].messages_new:
+            news = _count(pulled[0].messages_new, "new message")
+            self.reporter.info(f"pulled {_count(count, 'item')} not heard: {news}")
 
     def segment(
         self,
@@ -339,10 +344,13 @@ class _Listener:
                     flush(set(buffered) | pending.due_teams(now))
                     return
 
-    def _pull(self, choose: Choose) -> tuple[PullReport, set[str], list[TrackedItem]] | None:
+    def _pull(
+        self, choose: Choose, *, shown: bool = False
+    ) -> tuple[PullReport, set[str], list[TrackedItem]] | None:
         """Pulls what choose picks from the tracked items, in its own unit of work, and finds
         again the tracked items listen cannot hear. Returns the report, the workspaces pulled
-        and the tracked items, or None when choose picked nothing.
+        and the tracked items, or None when choose picked nothing. A shown pull's progress is
+        reported between pull_started and pull_ended.
 
         A workspace whose session is missing or rejected raises its error.
         """
@@ -355,9 +363,15 @@ class _Listener:
             selectors = choose(uow.archive.tracked_items())
             if not selectors:
                 return None
-            report = pull(
-                selectors, pull_options, uow, self.connector, self.downloader, self.reporter
-            )
+            if shown:
+                self.reporter.pull_started()
+            try:
+                report = pull(
+                    selectors, pull_options, uow, self.connector, self.downloader, self.reporter
+                )
+            finally:
+                if shown:
+                    self.reporter.pull_ended()
             if report.unreachable:
                 raise report.unreachable[0]
             domains = {entry["team_id"]: entry["domain"] for entry in uow.run.auth}
@@ -370,6 +384,10 @@ class _Listener:
             item for item in unheard_items(tracked, conversations) if item.team_id in self.domains
         ]
         return report, set(domains), tracked
+
+
+def _count(count: int, noun: str) -> str:
+    return f"{count:,} {noun}" if count == 1 else f"{count:,} {noun}s"
 
 
 def unheard_items(items: list[TrackedItem], conversations: dict[str, dict]) -> list[TrackedItem]:

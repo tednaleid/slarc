@@ -66,7 +66,18 @@ def test_listen_pulls_first_then_stores_events(h: Harness):
     [line] = [env for env in h.archive.lines if env.meta.ts == NEW_TS]
     assert line.meta.api == "rtm"
     assert "#all-naleid  new message from Ted Naleid" in h.reporter.infos
-    assert h.reporter.infos[0] == "Listening to naleidworkspace (1 tracked item)."
+    assert h.reporter.infos[2] == "Listening to naleidworkspace (1 tracked item)."
+
+
+def test_listen_says_what_it_pulls_before_it_listens(h: Harness):
+    run_listen(h, FakeEventConnector(), ticks(h, 5))
+
+    assert h.reporter.infos[:3] == [
+        "Pulling 1 tracked item before listening.",
+        "Pulled 1 tracked item: 0 new messages.",
+        "Listening to naleidworkspace (1 tracked item).",
+    ]
+    assert h.reporter.pulls == ["started", "ended"]
 
 
 def test_events_already_stored_by_a_pull_add_nothing(h: Harness):
@@ -133,9 +144,21 @@ def test_unheard_items_are_pulled_every_fifteen_minutes(h: Harness):
     run_listen(h, FakeEventConnector(), ticks(h, 20 * 60))
 
     assert history_reads(h) == 2
-    assert h.reporter.infos[0] == (
+    assert h.reporter.infos[2] == (
         "Listening to naleidworkspace (1 tracked item; 1 not heard, pulled every 15 minutes)."
     )
+
+
+def test_an_unheard_pull_shows_no_rows_and_prints_only_new_messages(h: Harness):
+    h.set_member(False)
+    h.pull()
+    h.gateway.calls.clear()
+
+    run_listen(h, FakeEventConnector(), ticks(h, 20 * 60))
+
+    assert history_reads(h) == 2
+    assert h.reporter.pulls == ["started", "ended"]
+    assert not [line for line in h.reporter.infos if "not heard:" in line]
 
 
 def remove_tracked(h: Harness) -> None:
@@ -248,5 +271,5 @@ def test_a_segment_reads_the_directory_once_for_many_batches(
 
     run_listen(h, events, ticks(h, 30))
 
-    assert len([line for line in h.reporter.infos if "new message" in line]) == 3
+    assert len([line for line in h.reporter.infos if "message from" in line]) == 3
     assert reads == [TEAM]
