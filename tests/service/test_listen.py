@@ -6,7 +6,7 @@ import msgspec
 import pytest
 
 from slarc import __version__
-from slarc.domain.tracking import TrackedItem
+from slarc.domain.tracking import RunRecord, TrackedItem, run_from_envelope
 from slarc.ports import AuthFailed, Commit, ConnectionLost, SlarcError
 from slarc.service import listen as listen_module
 from slarc.service.listen import ListenOptions, listen, unheard_items
@@ -346,3 +346,28 @@ def test_a_workspace_with_nothing_tracked_any_more_is_dropped_within_seconds(h: 
 
     assert "naleidworkspace  nothing tracked any more; stopped listening" in h.reporter.infos
     assert history_reads(h) == 1
+
+
+def test_each_hour_of_listening_expires_what_is_past_retention(h: Harness):
+    h.clock.advance(3 * 86400)
+    base = ticks(h, 70, seconds=60)
+    calls = [0]
+
+    def stop() -> bool:
+        calls[0] += 1
+        if calls[0] == 3:
+            with h.archive.elsewhere():
+                h.set_workspace_retention(1)
+        return base()
+
+    run_listen(h, FakeEventConnector(), stop)
+
+    assert history_reads(h) == 1
+    assert h.archive.stored_messages(TEAM, CHANNEL) == {}
+    assert "Expired 9 messages and 4 files from naleidworkspace." in h.reporter.infos
+    listen_runs = [run for run in listen_records(h) if run.command == "listen"]
+    assert any(run.counts.get("messages_expired") for run in listen_runs)
+
+
+def listen_records(h: Harness) -> list[RunRecord]:
+    return [run_from_envelope(env) for env in h.lines("run")]

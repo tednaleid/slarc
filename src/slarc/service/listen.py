@@ -16,12 +16,13 @@ from slarc.domain.events import (
 )
 from slarc.domain.links import (
     ConversationSel,
+    MessageTs,
     Selector,
     WorkspaceSel,
     message_link,
     parse_selector,
 )
-from slarc.domain.tracking import ItemKey, TrackedItem, covers
+from slarc.domain.tracking import ItemKey, TrackedItem, covers, retention_cutoff
 from slarc.ports import (
     ArchiveFailed,
     AuthFailed,
@@ -39,6 +40,7 @@ from slarc.ports import (
 )
 from slarc.service.appends import append_directory
 from slarc.service.downloads import drain_downloads
+from slarc.service.expiry import expire, expiry_line
 from slarc.service.held_conversation import HeldConversation
 from slarc.service.ingest import MessageWriter
 from slarc.service.listen_connections import Connections
@@ -342,7 +344,8 @@ class _Listener:
         early: list[tuple[str, dict]],
     ) -> None:
         """Applies events in batches for up to SEGMENT, ending early when stop returns true or a
-        catch-up or unheard pull is due, then closes the unit of work."""
+        catch-up or unheard pull is due. A segment that was not stopped then expires what is
+        past retention in the workspaces it listens to. Then it closes the unit of work."""
         clock = self.clock
         with self.open_uow("listen") as uow:
             workspaces = Workspaces(self.connector, uow)
@@ -403,7 +406,14 @@ class _Listener:
                 ending = self.catch_up_ready(pending) or self.unheard_due()
                 if ending or now - started >= SEGMENT:
                     flush(set(buffered) | pending.due_teams(now))
+                    self._expire(uow, connections.teams)
                     return
+
+    def _expire(self, uow: UnitOfWork, teams: list[str]) -> None:
+        for team_id in sorted(teams):
+            expired = expire(uow, [team_id], uow.blobs, self.reporter)
+            if expired.anything:
+                self.reporter.info(expiry_line(expired, self.domains.get(team_id) or team_id))
 
     def _pull(
         self, choose: Choose, *, shown: bool = False
@@ -536,6 +546,7 @@ class _Batch:
         self.workspaces = workspaces
         archive = uow.archive
         self.items = [i for i in archive.tracked_items().values() if i.team_id == team_id]
+        self.settings = archive.workspace_settings()
         self.state = state
         self.view = state.view
         self.writer = state.writer
@@ -560,7 +571,7 @@ class _Batch:
     def apply(self, change: Change, pending: Pending) -> None:
         match change:
             case StoreMessage(channel, message):
-                self._store(channel, message)
+                self._store(channel, message, pending)
             case DeleteMessage(channel, ts):
                 self._delete(channel, ts)
             case Reread(channel, ts):
@@ -595,12 +606,24 @@ class _Batch:
     def label(self, channel: str) -> str:
         return self.view.conversation_label(channel)
 
-    def _store(self, channel: str, message: dict) -> None:
+    def _store(self, channel: str, message: dict, pending: Pending) -> None:
+        """Stores the message when an item keeps it; a reply whose parent expiry removed marks
+        the thread for a re-read, which brings back what Slack still serves."""
         ts = message["ts"]
-        if self._cover(channel, ts, message.get("thread_ts")) is None:
+        thread_ts = message.get("thread_ts")
+        item = self._cover(channel, ts, thread_ts)
+        if item is None:
             return
         held = self._conversation(channel)
         stored = held.stored.get(ts)
+        limit = retention_cutoff(item, self.settings, self.uow.clock.now())
+        if (
+            limit is not None
+            and thread_ts not in (None, ts)
+            and thread_ts not in held.stored
+            and MessageTs(thread_ts) <= limit
+        ):
+            pending.mark(self.team_id, channel, thread_ts, self.uow.clock.now())
         before = self.state.appended
         self.writer.append_unknown(self.connection(), [message], self.view)
         self.writer.append_messages(held, [message], RTM_API, self.view)
@@ -642,10 +665,30 @@ class _Batch:
     def _cover(
         self, channel: str, ts: str, thread_ts: str | None, *, keep: bool = True
     ) -> TrackedItem | None:
-        item = next((i for i in self.items if covers(i, channel, ts, thread_ts)), None)
-        if item is not None and keep:
-            self.covering[item.key] = item
-        return item
+        """The first item that covers the message and keeps it under its retention: its thread
+        has a message, stored or this one, newer than the item's cutoff."""
+        now = self.uow.clock.now()
+        active: MessageTs | None = None
+        for item in self.items:
+            if not covers(item, channel, ts, thread_ts):
+                continue
+            limit = retention_cutoff(item, self.settings, now)
+            if limit is not None:
+                if active is None:
+                    active = self._thread_activity(channel, ts, thread_ts)
+                if active <= limit:
+                    continue
+            if keep:
+                self.covering[item.key] = item
+            return item
+        return None
+
+    def _thread_activity(self, channel: str, ts: str, thread_ts: str | None) -> MessageTs:
+        """The newest of ts and the stored messages of its thread."""
+        root = thread_ts or ts
+        stored = self._conversation(channel).stored
+        thread = [s for s, m in stored.items() if s == root or m.thread_ts == root]
+        return max(MessageTs(s) for s in [ts, *thread])
 
     def _conversation(self, channel: str) -> HeldConversation:
         held = self.state.held

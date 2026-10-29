@@ -8,6 +8,7 @@ import pytest
 from slarc import __version__
 from slarc.domain.events import Change, DeleteMessage, Reread, StoreMessage, UserChanged
 from slarc.ports import Commit, SlarcError, StoredMessage
+from slarc.service.expiry import expire
 from slarc.service.listen import ListenOptions, Pending, apply_batch
 from slarc.service.workspaces import Workspaces
 from slarc.unit_of_work import UnitOfWork
@@ -152,3 +153,67 @@ def test_a_batch_that_cannot_reach_slack_queues_a_catch_up(h: Harness):
     assert pending.catch_up == {TEAM}
     assert lines_at(h, NEW_TS) == []
     assert said == [f"{TEAM}  Could not reach Slack to call auth.test. Pulling it next."]
+
+
+def past_retention(h: Harness) -> None:
+    """Gives the workspace a one-day retention and moves the clock three days on, so every
+    stored message is past it."""
+    h.set_workspace_retention(1)
+    h.clock.advance(3 * 86400)
+
+
+def now_ts(h: Harness) -> str:
+    return f"{h.clock.now().timestamp():.6f}"
+
+
+def test_a_reaction_to_an_expired_message_reads_nothing(h: Harness):
+    past_retention(h)
+    pending = Pending()
+
+    apply(h, [Reread(CHANNEL, PARENT_TS)], pending)
+
+    assert pending.due(h.clock.now() + timedelta(seconds=60)) == []
+
+
+def test_an_edit_of_an_expired_message_is_dropped(h: Harness):
+    past_retention(h)
+    before = lines_at(h, PARENT_TS)
+
+    said = apply(h, [StoreMessage(CHANNEL, message(PARENT_TS, text="changed", edited={"ts": "1"}))])
+
+    assert said == []
+    assert lines_at(h, PARENT_TS) == before
+
+
+def test_a_delete_of_an_expired_message_is_dropped(h: Harness):
+    past_retention(h)
+
+    assert apply(h, [DeleteMessage(CHANNEL, PARENT_TS)]) == []
+    assert "deleted" not in lines_at(h, PARENT_TS)
+
+
+def test_a_new_message_is_kept_under_a_retention(h: Harness):
+    past_retention(h)
+    fresh = now_ts(h)
+
+    said = apply(h, [StoreMessage(CHANNEL, message(fresh, text="hello"))])
+
+    assert said == ["#all-naleid  new message from Ted Naleid"]
+
+
+def test_a_reply_to_an_expired_thread_brings_the_thread_back(h: Harness):
+    past_retention(h)
+    uow = UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__)
+    with uow:
+        expire(uow, [TEAM], h.blobs, h.reporter)
+    assert PARENT_TS not in h.archive.stored_messages(TEAM, CHANNEL)
+    reply = message(now_ts(h), thread_ts=PARENT_TS, text="necro")
+    h.gateway.conversations[CHANNEL].append(reply)
+    pending = Pending()
+
+    apply(h, [StoreMessage(CHANNEL, reply)], pending)
+    h.clock.advance(11)
+    said = apply(h, [], pending)
+
+    assert {PARENT_TS, reply["ts"]} <= set(h.archive.stored_messages(TEAM, CHANNEL))
+    assert said == [f"#all-naleid  re-read thread {PARENT_TS}"]
