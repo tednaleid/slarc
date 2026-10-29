@@ -1,7 +1,7 @@
 # ABOUTME: The pull use case: refreshes the workspace directory and the tracked items it is given.
 # ABOUTME: Appends a line only for a new version, records deletes and downloads files and images.
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import msgspec
@@ -15,7 +15,13 @@ from slarc.domain.links import (
     WorkspaceSel,
     message_link,
 )
-from slarc.domain.tracking import ItemKey, TrackedItem, item_label
+from slarc.domain.tracking import (
+    ItemKey,
+    TrackedItem,
+    WorkspaceSetting,
+    item_label,
+    retention_cutoff,
+)
 from slarc.ports import (
     ArchiveFailed,
     AuthFailed,
@@ -181,6 +187,7 @@ class _PullRun:
         self.skipped: list[str] = []
         self.progress: _ItemProgress | None = None
         self.threads_read: dict[str, int] = {}
+        self.settings: dict[str, WorkspaceSetting] = {}
         self.pulled = 0
         self.messages_new = 0
         self.not_visible = 0
@@ -296,6 +303,7 @@ class _PullRun:
         items are skipped with a warning. A thread item whose commit conflicts is skipped.
         """
         connection = self.workspaces.connection_to(team_id)
+        self.settings = self.uow.archive.workspace_settings()
         conversations = [item for item in items if item.kind == "conversation"]
         threads = [item for item in items if item.kind != "conversation"]
         reads: dict[ItemKey, list[dict]] = {}
@@ -426,7 +434,15 @@ class _PullRun:
         An item recorded as archived whose conversation is still archived and whose backfill is
         complete has had its final refresh, so it is recorded as pulled without reading
         anything, unless --full is set.
+
+        Under a retention, every read starts at the later of since and the cutoff, a retention
+        longer than the finished backfill's reopens it, and a first pull or --full also searches
+        for replies from two days before the cutoff, to find active threads with older parents.
         """
+        limit = retention_cutoff(item, self.settings, self.uow.clock.now())
+        start = _later(item.since, limit)
+        if item.backfill_complete:
+            item = _backfill_for(item, start)
         if (
             item.archived
             and item.backfill_complete
@@ -442,11 +458,13 @@ class _PullRun:
             retries = _within(item, set(item.retry_threads))
             self._reread_threads(connection, held, retries, view, "retry")
             if self.options.full and not started_at_top:
-                item = self._reread_range(connection, held, item, view)
+                item = self._reread_range(connection, held, item, view, start)
             else:
-                item = self._pull_history(connection, held, item, view, started_at_top)
+                item = self._pull_history(connection, held, item, view, started_at_top, start)
                 if not started_at_top:
-                    item = self._search_replies(connection, held, item, view)
+                    item = self._search_replies(connection, held, item, view, limit)
+            if limit is not None and (started_at_top or self.options.full):
+                self._discover_replies(connection, held, item, view, _days_before(limit, 2))
             now, days = self.uow.clock.now(), self.options.active_thread_days
             active = active_threads(held.stored, now, days)
             self._reread_threads(connection, held, _within(item, active), view, "active")
@@ -462,15 +480,17 @@ class _PullRun:
         item: TrackedItem,
         view: DirectoryView,
         started_at_top: bool,
+        start: str | None,
     ) -> TrackedItem:
-        """Pages older history while the backfill is incomplete, then newer than newest_ts."""
+        """Pages older history from start while the backfill is incomplete, then newer than
+        newest_ts, or than start when that is later."""
         if not item.backfill_complete:
             latest = item.oldest_ts or item.until
             item = self._page_history(
-                connection, held, item, view, item.since, latest, "history", newest_each_page=True
+                connection, held, item, view, start, latest, "history", newest_each_page=True
             )
         if not started_at_top:
-            oldest = item.newest_ts or item.since
+            oldest = _later(item.newest_ts or item.since, start)
             item = self._page_history(
                 connection, held, item, view, oldest, item.until, "history", newest_each_page=False
             )
@@ -492,9 +512,9 @@ class _PullRun:
 
         The item is committed after every page with oldest_ts moved. With newest_each_page, the
         backfill, newest_ts moves with each page, so an interrupted pull resumes below it, and
-        the backfill is marked complete at the end. Otherwise pages come newest first, so
-        newest_ts moves only once paging ends; an interrupted pull then pages the same range
-        again.
+        the backfill is marked complete, from oldest, at the end. Otherwise pages come newest
+        first, so newest_ts moves only once paging ends; an interrupted pull then pages the same
+        range again.
         """
         newest = item.newest_ts
         if self.progress is not None:
@@ -510,7 +530,7 @@ class _PullRun:
             self._record(item, held)
         if not newest_each_page:
             return msgspec.structs.replace(item, newest_ts=newest)
-        item = msgspec.structs.replace(item, backfill_complete=True)
+        item = msgspec.structs.replace(item, backfill_complete=True, backfilled_from=oldest)
         self._record(item, held)
         return item
 
@@ -520,26 +540,44 @@ class _PullRun:
         held: HeldConversation,
         item: TrackedItem,
         view: DirectoryView,
+        limit: str | None,
     ) -> TrackedItem:
-        """Re-reads each thread search finds a message in since two days before the last search.
+        """Re-reads each thread search finds a message in since two days before the last search,
+        or before the cutoff when that is later.
 
         last_search_at moves only when the search succeeds, so a failed one is retried.
         """
         searched_at = fetched_now(self.uow)
         if item.last_search_at is not None:
             since_date = _two_days_before(item.last_search_at)
-            try:
-                threads = discover_reply_threads(connection.gateway, item.channel, since_date)
-            except AuthFailed:
-                raise
-            except SlarcError as error:
-                self.reporter.warn(
-                    f"Could not search conversation {item.channel} for new replies, so only its "
-                    f"active threads were re-read: {error}"
-                )
+            if limit is not None:
+                since_date = max(since_date, _days_before(limit, 2))
+            if not self._discover_replies(connection, held, item, view, since_date):
                 return item
-            self._reread_threads(connection, held, _within(item, threads), view, "search")
         return msgspec.structs.replace(item, last_search_at=searched_at)
+
+    def _discover_replies(
+        self,
+        connection: Connection,
+        held: HeldConversation,
+        item: TrackedItem,
+        view: DirectoryView,
+        since_date: str,
+    ) -> bool:
+        """Re-reads each thread inside the item's window that search finds a message in after
+        since_date; returns whether the search succeeded."""
+        try:
+            threads = discover_reply_threads(connection.gateway, item.channel, since_date)
+        except AuthFailed:
+            raise
+        except SlarcError as error:
+            self.reporter.warn(
+                f"Could not search conversation {item.channel} for new replies, so only its "
+                f"active threads were re-read: {error}"
+            )
+            return False
+        self._reread_threads(connection, held, _within(item, threads), view, "search")
+        return True
 
     def _reread_range(
         self,
@@ -547,15 +585,17 @@ class _PullRun:
         held: HeldConversation,
         item: TrackedItem,
         view: DirectoryView,
+        start: str | None,
     ) -> TrackedItem:
-        """Re-reads the whole range and every thread in it, then records deleted messages.
+        """Re-reads the whole range from start and every thread in it, then records deleted
+        messages.
 
         Each thread re-read records its own deleted replies, so the range covers top-level
         messages only.
         """
         searched_at = fetched_now(self.uow)
         item = self._page_history(
-            connection, held, item, view, item.since, item.until, "full", newest_each_page=False
+            connection, held, item, view, start, item.until, "full", newest_each_page=False
         )
         parents = {ts for ts in held.listed if held.has_replies(ts)}
         self._reread_threads(connection, held, parents, view, "full")
@@ -566,8 +606,10 @@ class _PullRun:
             if stored[ts].thread_ts in (None, ts)
         }
         oldest = min(held.listed, key=MessageTs, default=None)
-        self.writer.append_deletes(held, infer_deletes(top_level, held.listed, item.since, oldest))
-        return msgspec.structs.replace(item, backfill_complete=True, last_search_at=searched_at)
+        self.writer.append_deletes(held, infer_deletes(top_level, held.listed, start, oldest))
+        return msgspec.structs.replace(
+            item, backfill_complete=True, backfilled_from=start, last_search_at=searched_at
+        )
 
     def _append_history_page(
         self,
@@ -772,6 +814,34 @@ def _within(item: TrackedItem, stamps: set[str]) -> set[str]:
         if (item.since is None or MessageTs(ts) > item.since)
         and (item.until is None or MessageTs(ts) < item.until)
     }
+
+
+def _later(ts: str | None, other: str | None) -> str | None:
+    """The later of two exclusive starts, where None is the beginning of the conversation."""
+    if ts is None or other is None:
+        return other if ts is None else ts
+    return ts if MessageTs(ts) >= other else other
+
+
+def _backfill_for(item: TrackedItem, start: str | None) -> TrackedItem:
+    """A finished backfill's item as a read from start sees it.
+
+    A start later than where the backfill reached moves backfilled_from up to it, since expiry
+    removes what is older. An earlier one reopens the backfill to page the gap below
+    backfilled_from. A backfill with no recorded start reached as far back as its since.
+    """
+    reached = item.backfilled_from
+    if start is not None and (reached is None or MessageTs(start) > reached):
+        return msgspec.structs.replace(item, backfilled_from=start)
+    if reached is not None and (start is None or MessageTs(start) < reached):
+        return msgspec.structs.replace(item, backfill_complete=False, oldest_ts=reached)
+    return item
+
+
+def _days_before(ts: str, days: int) -> str:
+    """The YYYY-MM-DD date in UTC days before a ts, for search's after:."""
+    moment = datetime.fromtimestamp(int(ts.split(".")[0]), UTC)
+    return (moment - timedelta(days=days)).strftime("%Y-%m-%d")
 
 
 def _two_days_before(timestamp: str) -> str:

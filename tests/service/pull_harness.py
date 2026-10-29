@@ -3,12 +3,21 @@
 import json
 from pathlib import Path
 
+import msgspec
+
 from slarc import __version__
 from slarc.adapters.slack_gateway import MESSAGE_PAGE_LIMIT
 from slarc.domain.envelope import Envelope, Kind
 from slarc.domain.links import parse_selector
-from slarc.domain.tracking import DownloadState, RunRecord, TrackedItem, run_from_envelope
-from slarc.ports import Session
+from slarc.domain.retention import Retention
+from slarc.domain.tracking import (
+    DownloadState,
+    RunRecord,
+    TrackedItem,
+    WorkspaceSetting,
+    run_from_envelope,
+)
+from slarc.ports import Commit, Session
 from slarc.service.pull import PullOptions, PullReport, pull
 from slarc.unit_of_work import UnitOfWork
 from tests.fakes import (
@@ -120,6 +129,10 @@ class Harness:
                 )
         finally:
             self.clock.advance(3600)
+
+    def set_workspace_retention(self, retention: Retention | None, team: str = TEAM) -> None:
+        held = self.archive.workspace_settings().get(team, WorkspaceSetting(team_id=team))
+        self.archive.commit(Commit(settings=[msgspec.structs.replace(held, retention=retention)]))
 
     def lines(self, kind: Kind) -> list[Envelope]:
         return [env for env in self.archive.lines if env.meta.kind == kind]

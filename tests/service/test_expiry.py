@@ -5,7 +5,7 @@ import pytest
 
 from slarc import __version__
 from slarc.domain.envelope import Envelope, Meta, fetched_at
-from slarc.domain.tracking import DownloadState, WorkspaceSetting
+from slarc.domain.tracking import DownloadState
 from slarc.ports import Commit
 from slarc.service import expiry
 from slarc.service.expiry import Expiry, expire
@@ -56,11 +56,6 @@ def run_expiry(h: Harness) -> tuple[Expiry, UnitOfWork]:
     return result, uow
 
 
-def set_workspace_retention(h: Harness, days: int) -> None:
-    held = h.archive.workspace_settings().get(TEAM, WorkspaceSetting(team_id=TEAM))
-    h.archive.commit(Commit(settings=[msgspec.structs.replace(held, retention=days)]))
-
-
 def set_item_retention(h: Harness, key: tuple[str, str, str, str], retention: object) -> None:
     item = h.archive.tracked_items()[key]
     h.archive.commit(Commit(items=[msgspec.structs.replace(item, retention=retention)]))
@@ -87,7 +82,7 @@ def test_a_thread_expires_whole_once_its_newest_reply_passes_the_cutoff(h: Harne
     h.archive.append(Envelope(meta=deleted))
     h.archive.commit(Commit())
     assert len(lines_of(h, LONE)) == 2
-    set_workspace_retention(h, 1)
+    h.set_workspace_retention(1)
     h.clock.current = h.clock.current.replace(day=20, hour=12)
 
     first, uow = run_expiry(h)
@@ -123,7 +118,7 @@ def test_expired_messages_take_the_files_and_images_only_they_used(h: Harness):
     pull_and_download(h, BASE, SECOND_LINK)
     files_before = file_ids(h)
     assert files_before >= {*SPIKE_FILES, THREAD_FILE}
-    set_workspace_retention(h, 1)
+    h.set_workspace_retention(1)
     set_item_retention(h, SECOND_KEY, "forever")
     h.clock.advance(5 * DAY)
 
@@ -140,7 +135,7 @@ def test_expired_messages_take_the_files_and_images_only_they_used(h: Harness):
 
 def test_expiry_drops_queued_downloads_of_what_it_expired(h: Harness):
     h.pull(BASE)
-    set_workspace_retention(h, 1)
+    h.set_workspace_retention(1)
     h.clock.advance(5 * DAY)
     queued = DownloadState(
         team_id=TEAM, target_kind="file", target=SPIKE_FILES[0], status="pending"
@@ -158,7 +153,7 @@ def test_a_slack_archived_conversation_still_expires(h: Harness):
     h.pull(SECOND_LINK)
     h.pull()
     assert h.archive.tracked_items()[SECOND_KEY].archived
-    set_workspace_retention(h, 1)
+    h.set_workspace_retention(1)
     h.clock.advance(5 * DAY)
 
     run_expiry(h)
@@ -170,7 +165,7 @@ def test_expiry_retries_with_fresh_reads_when_a_retention_changes_meanwhile(
     h: Harness, monkeypatch: pytest.MonkeyPatch
 ):
     h.pull(SECOND_LINK)
-    set_workspace_retention(h, 1)
+    h.set_workspace_retention(1)
     h.clock.advance(5 * DAY)
     plan_deletion = expiry.plan_deletion
     calls = []
@@ -180,7 +175,7 @@ def test_expiry_retries_with_fresh_reads_when_a_retention_changes_meanwhile(
         planned = plan_deletion(*args, **kwargs)
         if len(calls) == 1:
             with h.archive.elsewhere():
-                set_workspace_retention(h, 30)
+                h.set_workspace_retention(30)
         return planned
 
     monkeypatch.setattr(expiry, "plan_deletion", lengthen_first)
@@ -194,7 +189,7 @@ def test_expiry_retries_with_fresh_reads_when_a_retention_changes_meanwhile(
 
 def test_expiry_retries_when_an_item_changes_meanwhile(h: Harness, monkeypatch: pytest.MonkeyPatch):
     h.pull(SECOND_LINK)
-    set_workspace_retention(h, 1)
+    h.set_workspace_retention(1)
     h.clock.advance(5 * DAY)
     plan_deletion = expiry.plan_deletion
     calls = []
@@ -219,7 +214,7 @@ def test_expiry_gives_up_with_a_warning_when_other_commands_keep_changing_the_ar
     h: Harness, monkeypatch: pytest.MonkeyPatch
 ):
     h.pull(SECOND_LINK)
-    set_workspace_retention(h, 1)
+    h.set_workspace_retention(1)
     h.clock.advance(5 * DAY)
     plan_deletion = expiry.plan_deletion
 
