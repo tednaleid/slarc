@@ -5,10 +5,20 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from slarc import __version__
+from slarc.ports import SlarcError
 from slarc.service.expiry import expire
 from slarc.service.pull import PullOptions
 from slarc.unit_of_work import UnitOfWork
-from tests.service.pull_harness import BASE, CHANNEL, TEAM, Harness, message, ts_on
+from tests.service.pull_harness import (
+    BASE,
+    CHANNEL,
+    TEAM,
+    Harness,
+    channel_messages,
+    message,
+    ts_on,
+)
+from tests.service.test_remove import SECOND_CHANNEL, SECOND_LINK
 from tests.service.test_threads import search_match, thread
 
 START = datetime(2026, 10, 19, 13, 40, 11, tzinfo=UTC)
@@ -175,3 +185,88 @@ def test_lengthening_after_expiry_rereads_what_expiry_removed(h: Harness):
     h.pull()
 
     assert stored(h) == {OCT_1, OCT_10, OCT_15, OCT_18}
+
+
+def item_retention(h: Harness, channel: str = CHANNEL) -> object:
+    return h.archive.tracked_items()[(TEAM, "conversation", channel, "")].retention
+
+
+def test_a_link_pulled_with_a_retention_keeps_it_for_later_pulls(h: Harness):
+    h.pull(BASE, options=PullOptions(retention=90))
+    h.pull()
+
+    assert item_retention(h) == 90
+
+
+def test_a_retention_equal_to_the_workspaces_clears_the_items_own(h: Harness):
+    h.set_workspace_retention(30)
+    h.pull(BASE, options=PullOptions(retention=90))
+
+    h.pull(BASE, options=PullOptions(retention=30))
+
+    assert item_retention(h) is None
+
+
+def test_forever_on_an_item_in_a_workspace_without_retention_clears_the_items_own(h: Harness):
+    h.pull(BASE, options=PullOptions(retention=90))
+
+    h.pull(BASE, options=PullOptions(retention="forever"))
+
+    assert item_retention(h) is None
+
+
+def test_a_workspace_name_with_a_retention_sets_the_workspaces(h: Harness):
+    h.gateway.conversations[SECOND_CHANNEL] = [message(OCT_18)]
+    h.pull(BASE, options=PullOptions(retention=90))
+    h.pull(SECOND_LINK)
+
+    h.pull("naleidworkspace", options=PullOptions(retention=30))
+
+    assert h.archive.workspace_settings()[TEAM].retention == 30
+    assert item_retention(h) == 90
+    assert item_retention(h, SECOND_CHANNEL) is None
+
+
+def test_a_workspace_name_with_nothing_tracked_is_refused(h: Harness):
+    with pytest.raises(SlarcError, match="Nothing is tracked in workspace naleidworkspace"):
+        h.pull("naleidworkspace", options=PullOptions(retention=30))
+
+    assert h.archive.workspace_settings() == {}
+
+
+def test_a_pull_expires_what_is_past_retention_and_says_so(h: Harness):
+    h.pull(BASE)
+    h.set_workspace_retention(7)
+
+    h.pull()
+
+    assert stored(h) == {OCT_15, OCT_18}
+    assert "Expired 2 messages from naleidworkspace." in h.reporter.infos
+    assert h.last_run().counts["messages_expired"] == 2
+
+
+def test_a_pull_that_expires_nothing_says_nothing(h: Harness):
+    h.set_workspace_retention(7)
+    h.pull(BASE)
+
+    assert not any(info.startswith("Expired") for info in h.reporter.infos)
+
+
+def test_a_pull_never_downloads_what_it_just_expired(h: Harness):
+    h.gateway.conversations[CHANNEL] = channel_messages()
+    h.pull(BASE)
+    pending = {job.url for job in h.downloader.jobs}
+    assert pending
+    h.downloader.jobs.clear()
+    h.set_workspace_retention(1)
+    h.clock.advance(5 * 86400)
+
+    h.pull()
+
+    assert {job.url for job in h.downloader.jobs} & pending <= directory_images(h)
+
+
+def directory_images(h: Harness) -> set[str]:
+    """Avatar and custom emoji images, which belong to the workspace and never expire."""
+    avatars = {user["profile"]["image_512"] for user in h.gateway.users_list}
+    return avatars | set(h.gateway.emoji_map.values())

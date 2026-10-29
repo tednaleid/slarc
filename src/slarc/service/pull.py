@@ -15,6 +15,7 @@ from slarc.domain.links import (
     WorkspaceSel,
     message_link,
 )
+from slarc.domain.retention import FOREVER, Retention
 from slarc.domain.tracking import (
     ItemKey,
     TrackedItem,
@@ -45,6 +46,7 @@ from slarc.service.directory_refresh import (
     refresh_directory,
 )
 from slarc.service.downloads import drain_downloads, requeue_skipped
+from slarc.service.expiry import expire, expiry_line
 from slarc.service.held_conversation import HeldConversation
 from slarc.service.ingest import MESSAGES_SEEN, MessageWriter
 from slarc.service.selectors import only_workspace, resolve_conversation
@@ -64,7 +66,8 @@ type ThreadReason = Literal["link", "history", "search", "active", "full", "retr
 
 @dataclass
 class PullOptions:
-    """since and until are the window's exclusive ts bounds."""
+    """since and until are the window's exclusive ts bounds. retention, when given, is set on
+    each linked item, or on each named workspace."""
 
     since: str | None = None
     until: str | None = None
@@ -74,6 +77,7 @@ class PullOptions:
     downloads: int = 4
     max_file_bytes: int = 100 * 1024 * 1024
     active_thread_days: int = 7
+    retention: Retention | None = None
 
 
 @dataclass
@@ -135,6 +139,10 @@ def pull(
             except (NoSession, AuthFailed) as error:
                 run.skip_workspace(team_id, error)
                 unreachable.append(error)
+        for team_id in teams:
+            expired = expire(uow, [team_id], uow.blobs, reporter)
+            if expired.anything:
+                reporter.info(expiry_line(expired, _domain(uow, team_id)))
         if options.retry_skipped:
             run.requeue_skipped(items)
         drained = drain_downloads(
@@ -165,6 +173,11 @@ def pull(
         unreachable=unreachable,
         workspaces_pulled=len(teams) - len(unreachable),
     )
+
+
+def _domain(uow: UnitOfWork, team_id: str) -> str:
+    """The workspace's domain as this run's auth recorded it, else its team id."""
+    return next((a["domain"] for a in uow.run.auth if a["team_id"] == team_id), team_id)
 
 
 def _missing_message(domain: str, channel: str, ts: str) -> str:
@@ -222,6 +235,8 @@ class _PullRun:
                         f"Nothing is tracked in workspace {selector.domain}. "
                         "Pull a Slack link from it to start tracking it."
                     )
+                if self.options.retention is not None:
+                    self._set_workspace_retention(connection.team_id, self.options.retention)
                 for item in held:
                     items.setdefault(item.key, item)
                 continue
@@ -236,6 +251,8 @@ class _PullRun:
                 continue
             known = tracked.get(item.key)
             item = self._ranged(item, known) if item.kind == "conversation" else known or item
+            if self.options.retention is not None:
+                item = self._retained(item, self.options.retention)
             if item != known:
                 try:
                     self._record(item)
@@ -261,6 +278,21 @@ class _PullRun:
         if until is not None and known.until is not None and MessageTs(until) > known.until:
             known = msgspec.structs.replace(known, until=until, archived=False)
         return known
+
+    def _set_workspace_retention(self, team_id: str, retention: Retention) -> None:
+        """Commits the workspace's retention; forever is stored as no retention."""
+        archive = self.uow.archive
+        held = archive.workspace_settings().get(team_id, WorkspaceSetting(team_id=team_id))
+        value = None if retention == FOREVER else retention
+        self.uow.commit(settings=[msgspec.structs.replace(held, retention=value)])
+
+    def _retained(self, item: TrackedItem, retention: Retention) -> TrackedItem:
+        """The item with its own retention, or none when retention is what its workspace has."""
+        setting = self.uow.archive.workspace_settings().get(item.team_id)
+        workspace = setting.retention if setting is not None and setting.retention else FOREVER
+        return msgspec.structs.replace(
+            item, retention=None if retention == workspace else retention
+        )
 
     def _message_item(
         self, selector: MessageSel, connection: Connection, tracked: dict[ItemKey, TrackedItem]
@@ -819,8 +851,10 @@ def _within(item: TrackedItem, stamps: set[str]) -> set[str]:
 def _later(ts: str | None, other: str | None) -> str | None:
     """The later of two exclusive starts, where None is the beginning of the conversation."""
     if ts is None or other is None:
-        return other if ts is None else ts
-    return ts if MessageTs(ts) >= other else other
+        later = other if ts is None else ts
+    else:
+        later = ts if MessageTs(ts) >= other else other
+    return None if later is None else str(later)
 
 
 def _backfill_for(item: TrackedItem, start: str | None) -> TrackedItem:

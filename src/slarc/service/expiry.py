@@ -28,7 +28,8 @@ def expire(uow: UnitOfWork, teams: list[str], blobs: BlobStore, reporter: Report
 
     Each attempt reads the tracked items and settings afresh and commits only if none of the
     teams' items or settings changed meanwhile; after REMOVAL_ATTEMPTS conflicts it warns and
-    leaves the expiry to a later run. Download states it deletes leave run.downloads.
+    leaves the expiry to a later run. Download states it deletes leave run.downloads. The run's
+    counts add up what each call expired.
     """
     archive = uow.archive
     for _ in range(REMOVAL_ATTEMPTS):
@@ -48,9 +49,33 @@ def expire(uow: UnitOfWork, teams: list[str], blobs: BlobStore, reporter: Report
             continue
         uow.forget_downloads(deletion.downloads)
         result = Expiry(deletion.messages, deletion.files, deletion.images)
-        uow.run.counts["messages_expired"] = result.messages
-        uow.run.counts["files_expired"] = result.files
-        uow.run.counts["images_expired"] = result.images
+        counts = uow.run.counts
+        for name, count in (
+            ("messages_expired", result.messages),
+            ("files_expired", result.files),
+            ("images_expired", result.images),
+        ):
+            held = counts.get(name, 0)
+            counts[name] = (held if isinstance(held, int) else 0) + count
         return result
     reporter.warn(KEPT_CHANGING)
     return Expiry()
+
+
+def expiry_line(expiry: Expiry, workspace: str) -> str:
+    """Says what expiry removed from the workspace, naming only the kinds it removed."""
+    parts = [
+        _count(count, noun)
+        for count, noun in (
+            (expiry.messages, "message"),
+            (expiry.files, "file"),
+            (expiry.images, "image"),
+        )
+        if count
+    ]
+    listed = parts[0] if len(parts) == 1 else f"{', '.join(parts[:-1])} and {parts[-1]}"
+    return f"Expired {listed} from {workspace}."
+
+
+def _count(count: int, noun: str) -> str:
+    return f"{count:,} {noun}" if count == 1 else f"{count:,} {noun}s"

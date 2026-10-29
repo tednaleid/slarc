@@ -9,7 +9,7 @@ from slarc.domain.links import MessageTs
 
 type Retention = int | Literal["forever"]
 
-FOREVER = "forever"
+FOREVER: Literal["forever"] = "forever"
 RETENTION = re.compile(r"([1-9]\d*)([dw])")
 FORMS = "--retention must be a number of days or weeks, such as 30d or 12w, or forever."
 

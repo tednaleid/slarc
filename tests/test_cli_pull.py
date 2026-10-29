@@ -720,3 +720,23 @@ def test_reporter_shows_no_target_date_until_history_reaches_a_message():
 
     [row] = buffer.getvalue().splitlines()
     assert row.rstrip().endswith("0 read, 0 new")
+
+
+def test_retention_without_selectors_exits_2(f: Fixture):
+    result = f.pull("--yes", "--retention", "30d")
+    assert result.exit_code == 2
+    assert "--retention applies to links and workspace names." in result.output
+
+
+def test_malformed_retention_exits_2(f: Fixture):
+    result = f.pull("--yes", "--retention", "12h", BASE)
+    assert result.exit_code == 2
+    assert "--retention must be a number of days or weeks" in result.output
+    assert list(f.work.iterdir()) == []
+
+
+def test_pull_with_retention_stores_it_on_the_item(f: Fixture):
+    assert f.pull("--yes", "--retention", "12w", BASE).exit_code == 0
+
+    rows = lake_rows(f.work, f.ext_dir, "SELECT retention FROM tracked_item")
+    assert rows == [("84d",)]

@@ -31,6 +31,7 @@ from slarc.config import (
     read_global_config,
 )
 from slarc.domain.links import WorkspaceSel, parse_selector
+from slarc.domain.retention import parse_retention
 from slarc.domain.window import Window
 from slarc.formats import ExportFormat, OutputFormat, write_rows
 from slarc.ports import (
@@ -71,6 +72,7 @@ err = Console(stderr=True, highlight=False, soft_wrap=True)
 NO_SESSIONS = (
     "No Slack sessions found. Sign into the Slack desktop app or run `slarc auth --paste`."
 )
+RETENTION_NEEDS_SELECTORS = "--retention applies to links and workspace names."
 RANGE_NEEDS_SELECTORS = "--since and --until apply only to links named on the command line."
 RANGE_NOT_FOR_WORKSPACE = (
     "--since and --until apply to links and conversations, not to a whole workspace."
@@ -422,6 +424,14 @@ def pull_command(
             "--max-file-size", metavar="MB", min=0, help="Largest file to download, in megabytes."
         ),
     ] = None,
+    retention: Annotated[
+        str | None,
+        typer.Option(
+            metavar="DAYS",
+            help="Keep messages this long, such as 30d, 12w or forever, set on each link, or on "
+            "a workspace named for every item in it without its own.",
+        ),
+    ] = None,
     yes: Annotated[
         bool, typer.Option("--yes", help="Create an archive here without asking.")
     ] = False,
@@ -439,6 +449,12 @@ def pull_command(
         _fail(RANGE_NEEDS_SELECTORS)
     if (since or until) and any(isinstance(selector, WorkspaceSel) for selector in parsed):
         _fail(RANGE_NOT_FOR_WORKSPACE)
+    if retention is not None and not parsed:
+        _fail(RETENTION_NEEDS_SELECTORS)
+    try:
+        kept = parse_retention(retention) if retention is not None else None
+    except ValueError as error:
+        _fail(str(error))
     services: bootstrap.Services = ctx.obj
     window = _window(since, until, services.clock.now(), bootstrap.zone(services.env))
     all_workspaces = all(isinstance(selector, WorkspaceSel) for selector in parsed)
@@ -447,6 +463,7 @@ def pull_command(
         "--full": full,
         "--retry-skipped": retry_skipped,
         "--downloads": downloads,
+        "--retention": retention,
     }
     args = _run_args(texts, since, until, flags | {"--max-file-size": max_file_size})
     try:
@@ -466,6 +483,7 @@ def pull_command(
             downloads=settings.downloads,
             max_file_bytes=settings.max_file_size_mb * MB,
             active_thread_days=settings.active_thread_days,
+            retention=kept,
         )
         with RichReporter(err) as reporter:
             connector = services.connector(reporter.waiting)
