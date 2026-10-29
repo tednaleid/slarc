@@ -428,8 +428,10 @@ def pull_command(
         str | None,
         typer.Option(
             metavar="DAYS",
-            help="Keep messages this long, such as 30d, 12w or forever, set on each link, or on "
-            "a workspace named for every item in it without its own.",
+            help="How long to keep threads, counted from each thread's newest message: 30d, 12w "
+            "or forever. Given links keep it as their own; a workspace name sets it for every "
+            "item there without its own. Later pulls and listen remove older threads and the "
+            "files only they use.",
         ),
     ] = None,
     yes: Annotated[

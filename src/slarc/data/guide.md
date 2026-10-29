@@ -97,8 +97,13 @@ What the archive holds, one tracked conversation or thread per line:
 slarc list --format jsonl
 ```
 
-An item's `retention` (such as `30d`, or `forever`) says how long the archive keeps its threads:
-a thread with no message newer than that is removed, so the archive can hold less than Slack.
+An item's `retention` (such as `30d`, or `forever`) says how long the archive keeps its threads,
+counted from each thread's newest message; `retention_from` says whether it is the item's own
+(`item`) or its workspace's (`workspace`). `pull` and `listen` remove threads with no message
+newer than that, with the files only they use, and never read older ones from Slack, so the
+archive can hold less than Slack. Change it only when the user asks:
+`slarc pull <link> --retention 90d` sets one item's, `slarc pull acme --retention 30d` sets the
+workspace's for every item without its own, and `forever` keeps everything.
 
 Catch up on a conversation, or a whole workspace, since a date, as markdown with threads
 quoted under their parents:
