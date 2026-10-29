@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from slarc.domain.envelope import Envelope, Kind
-from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem
+from slarc.domain.tracking import (
+    DownloadState,
+    ItemKey,
+    RunRecord,
+    TrackedItem,
+    WorkspaceSetting,
+)
 from slarc.domain.window import Window
 
 PASTE_HINT = "Run `slarc auth --paste` to store a token and cookie instead."
@@ -231,7 +237,8 @@ class Commit:
     An item with revision 0 starts tracking; any other item, and each unchanged item, must
     still have the revision it was read with. In each complete team, the tracked items that
     are not removed must be exactly the items and unchanged items in that team. Each requires
-    ref must have a directory row.
+    ref must have a directory row. A setting with revision 0 starts one, and any other setting,
+    and each unchanged setting, must still have the revision it was read with.
     downloads are upserted and settled download states deleted. With downloads_exist, a
     download or settled key that has no download state is dropped, with the open batch's
     directory rows for its target, instead of failing the commit.
@@ -244,14 +251,18 @@ class Commit:
     requires: Collection[DirectoryRef] = frozenset()
     downloads_exist: bool = False
     complete_teams: Collection[str] = frozenset()
+    settings: Sequence[WorkspaceSetting] = ()
+    unchanged_settings: Sequence[WorkspaceSetting] = ()
 
 
 @dataclass(frozen=True)
 class Committed:
-    """The revision each committed item now has, and the download keys the commit dropped."""
+    """The revision each committed item and setting now has, and the download keys the commit
+    dropped."""
 
     revisions: dict[ItemKey, int]
     dropped: set[DownloadKey]
+    setting_revisions: dict[str, int] = field(default_factory=dict)
 
 
 class ArchiveStore(Protocol):
@@ -272,6 +283,7 @@ class ArchiveStore(Protocol):
     def directory_objects(self, team: str, kind: Kind) -> dict[str, dict]: ...
     def tracked_items(self) -> dict[tuple[str, str, str, str], TrackedItem]: ...
     def removed_items(self) -> dict[tuple[str, str, str, str], TrackedItem]: ...
+    def workspace_settings(self) -> dict[str, WorkspaceSetting]: ...  # by team
     def downloads(self) -> dict[DownloadKey, DownloadState]: ...
     def append_run(self, run: RunRecord, slarc_version: str) -> None: ...
     def directory_listed_at(self, team: str) -> str | None: ...  # last full directory listing

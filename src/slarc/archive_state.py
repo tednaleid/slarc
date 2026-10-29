@@ -3,8 +3,10 @@
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 
+import msgspec
+
 from slarc.domain.envelope import Envelope, Meta
-from slarc.domain.tracking import ItemKey, TrackedItem
+from slarc.domain.tracking import ItemKey, TrackedItem, WorkspaceSetting
 from slarc.ports import Commit, CommitConflict, DirectoryState, DownloadKey, StoredMessage
 
 type StoredRevisions = Mapping[ItemKey, tuple[int, str]]  # (revision, status) per tracked item
@@ -94,6 +96,30 @@ def item_revisions(change: Commit, stored: StoredRevisions) -> dict[ItemKey, int
         if held is None or held[0] != item.revision:
             raise CommitConflict()
     return revisions
+
+
+def setting_revisions(change: Commit, stored: Mapping[str, int]) -> dict[str, int]:
+    """The revision each of the commit's settings is written with, given the stored revision
+    per team.
+
+    Raises CommitConflict when a setting or unchanged setting no longer has the revision it was
+    read with, and ValueError when two settings share a team.
+    """
+    teams = [setting.team_id for setting in change.settings]
+    if len(set(teams)) != len(teams):
+        raise ValueError("A commit names each workspace setting at most once")
+    for setting in (*change.settings, *change.unchanged_settings):
+        if stored.get(setting.team_id, 0) != setting.revision:
+            raise CommitConflict()
+    return {setting.team_id: setting.revision + 1 for setting in change.settings}
+
+
+def written_settings(change: Commit, revisions: Mapping[str, int]) -> list[WorkspaceSetting]:
+    """The commit's settings with the revisions they are written with."""
+    return [
+        msgspec.structs.replace(setting, revision=revisions[setting.team_id])
+        for setting in change.settings
+    ]
 
 
 def require_complete_teams(change: Commit, stored: StoredRevisions) -> None:

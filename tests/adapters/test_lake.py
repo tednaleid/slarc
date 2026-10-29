@@ -16,7 +16,14 @@ from slarc.adapters.lake import (
 )
 from slarc.ports import ArchiveReadFailed
 
-TABLES = {"message_version", "directory_entry", "run", "tracked_item", "download_state"}
+TABLES = {
+    "message_version",
+    "directory_entry",
+    "run",
+    "tracked_item",
+    "download_state",
+    "workspace_setting",
+}
 
 
 def test_extension_directory_follows_xdg_cache_home(tmp_path: Path) -> None:
@@ -203,3 +210,33 @@ def test_connect_creates_a_lake_beside_empty_data_and_blob_directories(
     (tmp_path / "blobs").mkdir()
     connect_lake(tmp_path, ext_dir).close()
     assert (tmp_path / CATALOG).exists()
+
+
+def test_a_lake_from_before_retention_gains_its_column_and_table(
+    tmp_path: Path, ext_dir: Path
+) -> None:
+    con = connect_lake(tmp_path, ext_dir)
+    con.execute(
+        "INSERT INTO tracked_item (team, kind, channel, ts) VALUES ('T', 'conversation', 'C', '')"
+    )
+    con.execute("ALTER TABLE tracked_item DROP COLUMN retention")
+    con.execute("ALTER TABLE tracked_item DROP COLUMN backfilled_from")
+    con.execute("DROP TABLE workspace_setting")
+    con.close()
+
+    con = connect_lake(tmp_path, ext_dir)
+    rows = con.execute("SELECT team, retention, backfilled_from FROM tracked_item").fetchall()
+    settings = con.execute("SELECT count(*) FROM workspace_setting").fetchall()
+    con.close()
+
+    assert rows == [("T", None, None)]
+    assert settings == [(0,)]
+
+
+def test_reopening_a_current_lake_writes_no_snapshot(tmp_path: Path, ext_dir: Path) -> None:
+    connect_lake(tmp_path, ext_dir).close()
+    con = connect_lake(tmp_path, ext_dir)
+    query = "SELECT count(*) FROM __ducklake_metadata_lake.ducklake_snapshot"
+    snapshots = con.execute(query).fetchall()
+    con.close()
+    assert snapshots == [(2,)]

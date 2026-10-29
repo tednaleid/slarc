@@ -68,11 +68,19 @@ CREATE TABLE IF NOT EXISTS tracked_item (
     team VARCHAR, kind VARCHAR, channel VARCHAR, ts VARCHAR, revision INTEGER,
     since VARCHAR, until VARCHAR, newest_ts VARCHAR, oldest_ts VARCHAR,
     backfill_complete BOOLEAN, last_search_at VARCHAR, last_pull_at VARCHAR,
-    status VARCHAR, archived BOOLEAN, last_read JSON, retry_threads JSON);
+    status VARCHAR, archived BOOLEAN, last_read JSON, retry_threads JSON,
+    retention VARCHAR, backfilled_from VARCHAR);
 CREATE TABLE IF NOT EXISTS download_state (
     team VARCHAR, target_kind VARCHAR, target VARCHAR, url VARCHAR, status VARCHAR,
     attempts INTEGER, last_error VARCHAR);
+CREATE TABLE IF NOT EXISTS workspace_setting (
+    team VARCHAR, retention VARCHAR, revision INTEGER);
 """
+
+# Columns added after their table was first created, which an older lake gains when opened.
+ADDED_COLUMNS = {
+    "tracked_item": {"retention": "VARCHAR", "backfilled_from": "VARCHAR"},
+}
 
 
 class ExtensionsMissing(SlarcError):
@@ -239,11 +247,34 @@ def _create_missing(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("BEGIN")
     con.execute(SCHEMA)
     con.execute("COMMIT")
+    _add_missing_columns(con)
     con.execute(OWNER_SCHEMA)
     present = {row[0] for row in con.execute("SELECT option_name FROM lake.options()").fetchall()}
     for name, value in OPTIONS.items():
         if name not in present:
             con.execute("CALL lake.set_option(?, ?)", [name, value])
+
+
+def _add_missing_columns(con: duckdb.DuckDBPyConnection) -> None:
+    """Adds the columns an older lake lacks, in one transaction, writing no snapshot when none
+    is missing."""
+    present = set(
+        con.execute(
+            "SELECT table_name, column_name FROM duckdb_columns() WHERE database_name = 'lake'"
+        ).fetchall()
+    )
+    missing = [
+        (table, column, kind)
+        for table, columns in ADDED_COLUMNS.items()
+        for column, kind in columns.items()
+        if (table, column) not in present
+    ]
+    if not missing:
+        return
+    con.execute("BEGIN")
+    for table, column, kind in missing:
+        con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+    con.execute("COMMIT")
 
 
 def check_owner(

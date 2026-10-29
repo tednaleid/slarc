@@ -1,5 +1,5 @@
-# ABOUTME: Tracked items, download states and the run record written as a run line, and which
-# ABOUTME: messages an item covers; converts a RunRecord to and from its run envelope.
+# ABOUTME: Tracked items, workspace settings, download states and the run record written as a run
+# ABOUTME: line, and which messages an item covers; converts a RunRecord to and from its envelope.
 from typing import Literal
 
 import msgspec
@@ -7,6 +7,7 @@ import msgspec
 from slarc.domain.directory import DirectoryView
 from slarc.domain.envelope import Envelope, Meta
 from slarc.domain.links import MessageTs
+from slarc.domain.retention import Retention
 
 type ItemKey = tuple[str, str, str, str]
 
@@ -19,9 +20,11 @@ class TrackedItem(msgspec.Struct, kw_only=True):
     revision: int = 0
     since: str | None = None
     until: str | None = None
+    retention: Retention | None = None
     newest_ts: str | None = None
     oldest_ts: str | None = None
     backfill_complete: bool = False
+    backfilled_from: str | None = None
     last_search_at: str | None = None
     last_pull_at: str | None = None
     status: Literal["ok", "not_visible", "removed"] = "ok"
@@ -32,6 +35,15 @@ class TrackedItem(msgspec.Struct, kw_only=True):
     @property
     def key(self) -> ItemKey:
         return (self.team_id, self.kind, self.channel, self.ts or "")
+
+
+class WorkspaceSetting(msgspec.Struct, kw_only=True, frozen=True):
+    """A workspace's retention, which its tracked items without their own follow; None keeps
+    everything."""
+
+    team_id: str
+    retention: Retention | None = None
+    revision: int = 0
 
 
 def item_label(item: TrackedItem, view: DirectoryView) -> str:

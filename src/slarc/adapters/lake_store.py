@@ -12,7 +12,15 @@ from slarc import archive_state
 from slarc.adapters.lake import CATALOG, METADATA, connect_lake, failure_reason, lake_errors
 from slarc.archive_state import LatestMessages
 from slarc.domain.envelope import Envelope, Kind, Meta
-from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem, run_envelope
+from slarc.domain.retention import parse_retention, retention_text
+from slarc.domain.tracking import (
+    DownloadState,
+    ItemKey,
+    RunRecord,
+    TrackedItem,
+    WorkspaceSetting,
+    run_envelope,
+)
 from slarc.ports import (
     ArchiveLock,
     ArchiveReadFailed,
@@ -84,7 +92,10 @@ TRACKED_COLUMNS = {
     "archived": "BOOLEAN",
     "last_read": "JSON",
     "retry_threads": "JSON",
+    "retention": "VARCHAR",
+    "backfilled_from": "VARCHAR",
 }
+SETTING_COLUMNS = {"team": "VARCHAR", "retention": "VARCHAR", "revision": "INTEGER"}
 DOWNLOAD_COLUMNS = {
     "team": "VARCHAR",
     "target_kind": "VARCHAR",
@@ -95,6 +106,7 @@ DOWNLOAD_COLUMNS = {
     "last_error": "VARCHAR",
 }
 TRACKED_KEY = ("team", "kind", "channel", "ts")
+SETTING_KEY = ("team",)
 DOWNLOAD_KEY = ("team", "target")
 DIRECTORY_REF = ("team", "kind", "id")
 
@@ -219,6 +231,12 @@ class DuckLakeArchiveStore:
 
     def removed_items(self) -> dict[ItemKey, TrackedItem]:
         return self._tracked_where("status = 'removed'")
+
+    def workspace_settings(self) -> dict[str, WorkspaceSetting]:
+        names = ", ".join(SETTING_COLUMNS)
+        rows = self._read(f"SELECT {names} FROM workspace_setting ORDER BY team")
+        settings = [workspace_setting(dict(zip(SETTING_COLUMNS, row, strict=True))) for row in rows]
+        return {setting.team_id: setting for setting in settings}
 
     def downloads(self) -> dict[DownloadKey, DownloadState]:
         names = ", ".join(DOWNLOAD_COLUMNS)
@@ -426,6 +444,7 @@ class DuckLakeArchiveStore:
     def _commit(self, change: Commit) -> Committed:
         stored = self._stored_revisions()
         revisions = archive_state.item_revisions(change, stored)
+        setting_revisions = archive_state.setting_revisions(change, self._setting_revisions())
         archive_state.require_complete_teams(change, stored)
         existing = self._download_keys() if change.downloads_exist else set()
         dropped = archive_state.dropped_downloads(change, existing)
@@ -443,7 +462,11 @@ class DuckLakeArchiveStore:
         )
         settled = [{"team": team, "target": target} for team, target in change.settled]
         self._delete_keys("download_state", DOWNLOAD_KEY, settled)
-        return Committed(revisions=revisions, dropped=dropped)
+        settings = archive_state.written_settings(change, setting_revisions)
+        rows = [setting_row(setting) for setting in settings]
+        self._delete_keys("workspace_setting", SETTING_KEY, rows)
+        insert_rows(self._con, "workspace_setting", SETTING_COLUMNS, rows)
+        return Committed(revisions=revisions, dropped=dropped, setting_revisions=setting_revisions)
 
     def _stored_revisions(self) -> archive_state.StoredRevisions:
         rows = self._con.execute(
@@ -453,6 +476,10 @@ class DuckLakeArchiveStore:
             (team, kind, channel, ts): (rev, status)
             for team, kind, channel, ts, rev, status in rows
         }
+
+    def _setting_revisions(self) -> dict[str, int]:
+        rows = self._con.execute("SELECT team, revision FROM workspace_setting").fetchall()
+        return dict(rows)
 
     def _download_keys(self) -> set[DownloadKey]:
         rows = self._con.execute("SELECT team, target FROM download_state").fetchall()
@@ -658,6 +685,7 @@ def tracked_row(item: TrackedItem) -> dict:
     row = msgspec.to_builtins(item)
     row["team"] = row.pop("team_id")
     row["ts"] = item.ts or ""
+    row["retention"] = retention_text(item.retention) if item.retention is not None else None
     return row
 
 
@@ -666,7 +694,22 @@ def tracked_item(row: dict) -> TrackedItem:
     row["ts"] = row["ts"] or None
     row["last_read"] = _decode.decode(row["last_read"])
     row["retry_threads"] = _decode.decode(row["retry_threads"])
+    row["retention"] = parse_retention(row["retention"]) if row["retention"] else None
     return msgspec.convert(row, TrackedItem)
+
+
+def setting_row(setting: WorkspaceSetting) -> dict:
+    retention = setting.retention
+    return {
+        "team": setting.team_id,
+        "retention": retention_text(retention) if retention is not None else None,
+        "revision": setting.revision,
+    }
+
+
+def workspace_setting(row: dict) -> WorkspaceSetting:
+    retention = parse_retention(row["retention"]) if row["retention"] else None
+    return WorkspaceSetting(team_id=row["team"], retention=retention, revision=row["revision"])
 
 
 def download_row(state: DownloadState) -> dict:

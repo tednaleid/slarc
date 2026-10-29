@@ -15,7 +15,14 @@ from slarc.adapters.slack_gateway import MESSAGE_PAGE_LIMIT
 from slarc.archive_state import LatestMessages
 from slarc.domain.envelope import Envelope, Kind
 from slarc.domain.links import MessageTs
-from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem, run_envelope
+from slarc.domain.tracking import (
+    DownloadState,
+    ItemKey,
+    RunRecord,
+    TrackedItem,
+    WorkspaceSetting,
+    run_envelope,
+)
 from slarc.ports import (
     BlobStore,
     Commit,
@@ -52,6 +59,7 @@ class InMemoryArchiveStore:
         self.lines: list[Envelope] = []
         self.tracked: dict[ItemKey, TrackedItem] = {}
         self.download_states: dict[DownloadKey, DownloadState] = {}
+        self.settings: dict[str, WorkspaceSetting] = {}
         self._snapshot = 0
         self._batch: list[Envelope] = []
         self._line_drops: list[Callable[[Envelope], bool]] = []
@@ -104,6 +112,9 @@ class InMemoryArchiveStore:
 
     def removed_items(self) -> dict[ItemKey, TrackedItem]:
         return {key: item for key, item in self.tracked.items() if item.status == "removed"}
+
+    def workspace_settings(self) -> dict[str, WorkspaceSetting]:
+        return dict(self.settings)
 
     def downloads(self) -> dict[DownloadKey, DownloadState]:
         return dict(self.download_states)
@@ -179,6 +190,8 @@ class InMemoryArchiveStore:
     def _commit(self, change: Commit) -> Committed:
         stored = self._stored_revisions()
         revisions = archive_state.item_revisions(change, stored)
+        stored_settings = {team: setting.revision for team, setting in self.settings.items()}
+        setting_revisions = archive_state.setting_revisions(change, stored_settings)
         archive_state.require_complete_teams(change, stored)
         dropped = archive_state.dropped_downloads(change, set(self.download_states))
         batch = archive_state.without_targets(self._batch, dropped)
@@ -201,7 +214,9 @@ class InMemoryArchiveStore:
                 self.download_states[(state.team_id, state.target)] = state
         for key in change.settled:
             self.download_states.pop(key, None)
-        return Committed(revisions=revisions, dropped=dropped)
+        for setting in archive_state.written_settings(change, setting_revisions):
+            self.settings[setting.team_id] = setting
+        return Committed(revisions=revisions, dropped=dropped, setting_revisions=setting_revisions)
 
     def _stored_revisions(self) -> archive_state.StoredRevisions:
         return {key: (item.revision, item.status) for key, item in self.tracked.items()}

@@ -21,6 +21,7 @@ from slarc.domain.tracking import (
     DownloadState,
     RunRecord,
     TrackedItem,
+    WorkspaceSetting,
     run_envelope,
     run_from_envelope,
 )
@@ -836,3 +837,79 @@ def test_duplicate_item_keys_in_one_commit_are_rejected(store_and_reopen):
     assert set(store.stored_messages(TEAM, CHANNEL)) == {TS}
     for current in (store, reopen()):
         assert current.tracked_items() == {}
+
+
+def test_a_workspace_setting_round_trips_and_bumps_its_revision(store_and_reopen):
+    store, reopen = store_and_reopen
+    first = store.commit(Commit(settings=[WorkspaceSetting(team_id=TEAM, retention=30)]))
+    assert first.setting_revisions == {TEAM: 1}
+
+    held = store.workspace_settings()[TEAM]
+    second = store.commit(Commit(settings=[msgspec.structs.replace(held, retention="forever")]))
+    assert second.setting_revisions == {TEAM: 2}
+
+    expected = WorkspaceSetting(team_id=TEAM, retention="forever", revision=2)
+    for current in (store, reopen()):
+        assert current.workspace_settings() == {TEAM: expected}
+
+
+def test_a_stale_workspace_setting_conflicts_and_writes_nothing(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.commit(Commit(settings=[WorkspaceSetting(team_id=TEAM, retention=30)]))
+    stale = store.workspace_settings()[TEAM]
+    store.commit(Commit(settings=[msgspec.structs.replace(stale, retention=60)]))
+
+    for change in (
+        Commit(items=[tracked("1.000000")], settings=[stale]),
+        Commit(items=[tracked("1.000000")], unchanged_settings=[stale]),
+        Commit(settings=[WorkspaceSetting(team_id=TEAM, retention=7)]),
+    ):
+        with pytest.raises(CommitConflict):
+            store.commit(change)
+
+    for current in (store, reopen()):
+        assert current.tracked_items() == {}
+        assert current.workspace_settings()[TEAM].retention == 60
+
+
+def test_an_unchanged_workspace_setting_lets_the_commit_through(store_and_reopen):
+    store, _ = store_and_reopen
+    store.commit(Commit(settings=[WorkspaceSetting(team_id=TEAM, retention=30)]))
+    held = store.workspace_settings()[TEAM]
+
+    store.commit(Commit(items=[tracked("1.000000")], unchanged_settings=[held]))
+
+    assert store.workspace_settings()[TEAM].revision == 1
+    assert list(store.tracked_items()) == [KEY]
+
+
+def test_an_items_retention_and_backfill_start_round_trip(store_and_reopen):
+    store, reopen = store_and_reopen
+    weeks = msgspec.structs.replace(tracked("1.000000"), retention=84, backfilled_from=OLD_TS)
+    kept = TrackedItem(team_id=TEAM, kind="thread", channel=CHANNEL, ts=TS, retention="forever")
+    store.commit(Commit(items=[weeks, kept]))
+
+    for current in (store, reopen()):
+        items = current.tracked_items()
+        assert (items[KEY].retention, items[KEY].backfilled_from) == (84, OLD_TS)
+        assert items[(TEAM, "thread", CHANNEL, TS)].retention == "forever"
+        assert items[(TEAM, "thread", CHANNEL, TS)].backfilled_from is None
+
+
+def test_a_commit_of_only_a_setting_changes_the_snapshot(store_and_reopen):
+    store, _ = store_and_reopen
+    before = store.snapshot()
+
+    store.commit(Commit(settings=[WorkspaceSetting(team_id=TEAM, retention=30)]))
+
+    assert store.snapshot() != before
+
+
+def test_dropping_a_workspace_keeps_its_setting(store_and_reopen):
+    store, reopen = store_and_reopen
+    store.commit(Commit(settings=[WorkspaceSetting(team_id=TEAM, retention=30)]))
+    store.drop_workspace(TEAM)
+    store.commit(Commit())
+
+    for current in (store, reopen()):
+        assert current.workspace_settings()[TEAM].retention == 30
