@@ -32,6 +32,10 @@ class Deletion:
     blobs: set[str]
 
     @property
+    def messages(self) -> int:
+        return sum(len(stamps) for team in self.teams for stamps in team.stamps.values())
+
+    @property
     def lines(self) -> int:
         return sum(team.lines for team in self.teams)
 
@@ -42,6 +46,10 @@ class Deletion:
     @property
     def images(self) -> int:
         return sum(len(team.images) for team in self.teams)
+
+    @property
+    def downloads(self) -> set[DownloadKey]:
+        return {key for team in self.teams for key in team.downloads}
 
 
 def plan_deletion(

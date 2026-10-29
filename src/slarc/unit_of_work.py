@@ -6,7 +6,13 @@ from types import TracebackType
 import msgspec
 
 from slarc.domain.envelope import fetched_at, run_id
-from slarc.domain.tracking import DownloadState, ItemKey, RunRecord, TrackedItem
+from slarc.domain.tracking import (
+    DownloadState,
+    ItemKey,
+    RunRecord,
+    TrackedItem,
+    WorkspaceSetting,
+)
 from slarc.ports import (
     ArchiveStore,
     BlobStore,
@@ -69,9 +75,12 @@ class UnitOfWork:
         unchanged: Sequence[TrackedItem] = (),
         downloads_exist: bool = False,
         complete_teams: Collection[str] = frozenset(),
+        settings: Sequence[WorkspaceSetting] = (),
+        unchanged_settings: Sequence[WorkspaceSetting] = (),
     ) -> set[DownloadKey]:
-        """Commits the open batch with the items, the download states in run.downloads that
-        changed since the last commit, and the keys settled and refs required since then.
+        """Commits the open batch with the items and settings, the download states in
+        run.downloads that changed since the last commit, and the keys settled and refs
+        required since then.
 
         Each item is sent with the revision this run last committed for its key, so a stale
         copy of an item commits. Returns the download keys the commit dropped, which leave
@@ -91,6 +100,8 @@ class UnitOfWork:
             requires=frozenset(self._requires),
             downloads_exist=downloads_exist,
             complete_teams=frozenset(complete_teams),
+            settings=settings,
+            unchanged_settings=unchanged_settings,
         )
         try:
             committed = self.archive.commit(change)
@@ -112,6 +123,14 @@ class UnitOfWork:
         self.run.downloads[:] = self._committed_downloads
         self._settled.clear()
         self._requires.clear()
+
+    def forget_downloads(self, keys: Collection[DownloadKey]) -> None:
+        """Takes out of run.downloads the states a commit already deleted, so the run does not
+        download them."""
+        self.run.downloads[:] = [s for s in self.run.downloads if _download_key(s) not in keys]
+        self._committed_downloads = [
+            s for s in self._committed_downloads if _download_key(s) not in keys
+        ]
 
     def require(self, ref: DirectoryRef) -> None:
         """The next commit fails unless the directory row exists."""
