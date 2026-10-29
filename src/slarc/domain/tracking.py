@@ -1,5 +1,7 @@
 # ABOUTME: Tracked items, workspace settings, download states and the run record written as a run
 # ABOUTME: line, and which messages an item covers; converts a RunRecord to and from its envelope.
+from collections.abc import Mapping
+from datetime import datetime
 from typing import Literal
 
 import msgspec
@@ -7,7 +9,7 @@ import msgspec
 from slarc.domain.directory import DirectoryView
 from slarc.domain.envelope import Envelope, Meta
 from slarc.domain.links import MessageTs
-from slarc.domain.retention import Retention
+from slarc.domain.retention import Retention, cutoff, effective_retention
 
 type ItemKey = tuple[str, str, str, str]
 
@@ -44,6 +46,20 @@ class WorkspaceSetting(msgspec.Struct, kw_only=True, frozen=True):
     team_id: str
     retention: Retention | None = None
     revision: int = 0
+
+
+def workspace_retention(team_id: str, settings: Mapping[str, WorkspaceSetting]) -> Retention | None:
+    setting = settings.get(team_id)
+    return setting.retention if setting is not None else None
+
+
+def retention_cutoff(
+    item: TrackedItem, settings: Mapping[str, WorkspaceSetting], now: datetime
+) -> MessageTs | None:
+    """The ts the newest message of a thread the item covers must be after to be kept, or None
+    when the item keeps everything."""
+    workspace = workspace_retention(item.team_id, settings)
+    return cutoff(effective_retention(item.retention, workspace), now)
 
 
 def item_label(item: TrackedItem, view: DirectoryView) -> str:

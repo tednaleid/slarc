@@ -8,7 +8,7 @@ import pytest
 from slarc import __version__
 from slarc.domain.envelope import Kind
 from slarc.domain.links import parse_selector
-from slarc.domain.tracking import TrackedItem
+from slarc.domain.tracking import TrackedItem, WorkspaceSetting
 from slarc.ports import (
     ArchiveReadFailed,
     Commit,
@@ -113,7 +113,9 @@ def pull_and_download(h: Harness, *links: str) -> None:
 
 def plan(h: Harness, *texts: str, channel_mode: bool = False) -> Removal:
     selectors = [(text, parse_selector(text)) for text in texts]
-    return plan_removal(selectors, channel_mode, h.archive, h.blobs, WorkspaceIndex())
+    return plan_removal(
+        selectors, channel_mode, h.archive, h.blobs, WorkspaceIndex(), h.clock.now()
+    )
 
 
 def apply(h: Harness, removal: Removal, *texts: str) -> Removal:
@@ -213,6 +215,20 @@ def test_rm_conversation_deletes_its_lines_and_unreferenced_files(h: Harness):
         "images_deleted": removal.images,
         "blobs_deleted": removal.blobs,
     }
+
+
+def test_rm_leaves_out_messages_already_past_their_retention(h: Harness):
+    pull_and_download(h, BASE, SECOND_LINK)
+    h.archive.commit(Commit(settings=[WorkspaceSetting(team_id=TEAM, retention=1)]))
+    h.clock.advance(3 * 86400)
+
+    removal = rm(h, SECOND_LINK)
+
+    assert removal.lines == 1 + CHANNEL_MESSAGES
+    assert stored(h, TEAM, CHANNEL) == set()
+    assert stored(h, TEAM, SECOND_CHANNEL) == set()
+    assert keys(h.tracked()) == [item("conversation")]
+    assert file_ids(h) == set()
 
 
 def test_rm_reads_past_a_file_entry_without_an_id(h: Harness):

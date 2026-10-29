@@ -140,6 +140,7 @@ def requeue_skipped(uow: UnitOfWork, items: Sequence[TrackedItem], max_bytes: in
     """
     archive = uow.archive
     known = archive.downloads()
+    settings = archive.workspace_settings()
     places: dict[tuple[str, str], list[TrackedItem]] = {}
     for item in items:
         places.setdefault((item.team_id, item.channel), []).append(item)
@@ -150,7 +151,7 @@ def requeue_skipped(uow: UnitOfWork, items: Sequence[TrackedItem], max_bytes: in
         files = archive.directory_state(team_id, "file")
         images = archive.directory_state(team_id, "image")
         versions = message_versions(archive.message_lines(team_id, channel))
-        for ts in covered_stamps(versions, held):
+        for ts in covered_stamps(versions, held, settings, uow.clock.now()):
             message = versions[ts][-1].object
             if message:
                 queue_downloads(

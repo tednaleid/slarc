@@ -1239,7 +1239,7 @@ def rm_command(
         archive_root = _existing_archive(root, services.env, services.home)
         with bootstrap.archive_stores(archive_root, services.take_ownership) as (archive, blobs):
             with bootstrap.shared_index(archive_root, archive) as index:
-                removal = plan_removal(parsed, channel, archive, blobs, index)
+                removal = plan_removal(parsed, channel, archive, blobs, index, services.clock.now())
             if removal.nothing_to_do:
                 err.print(NOTHING_TO_REMOVE, markup=False)
                 return

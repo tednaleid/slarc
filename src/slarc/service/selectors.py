@@ -1,10 +1,12 @@
 # ABOUTME: Resolves a conversation selector to its channel id, any selector to the tracked items
 # ABOUTME: it names without Slack, and tracked items to the stored messages they cover.
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
+from datetime import datetime
 
 from slarc.domain.envelope import Envelope
-from slarc.domain.links import ConversationSel, Selector, WorkspaceSel
-from slarc.domain.tracking import ItemKey, TrackedItem
+from slarc.domain.links import ConversationSel, MessageTs, Selector, WorkspaceSel
+from slarc.domain.retention import thread_activity
+from slarc.domain.tracking import ItemKey, TrackedItem, WorkspaceSetting, retention_cutoff
 from slarc.ports import ArchiveFailed, ArchiveStore, SlackGateway, SlarcError
 
 
@@ -155,17 +157,33 @@ def message_versions(lines: Iterable[Envelope]) -> dict[str, list[Envelope]]:
     return versions
 
 
-def covered_stamps(versions: dict[str, list[Envelope]], items: list[TrackedItem]) -> set[str]:
-    """The stored messages of one channel that its tracked items cover.
+def covered_stamps(
+    versions: dict[str, list[Envelope]],
+    items: list[TrackedItem],
+    settings: Mapping[str, WorkspaceSetting],
+    now: datetime,
+) -> set[str]:
+    """The stored messages of one channel that its tracked items cover and keep.
 
     A conversation covers all of them. A thread or message covers the message at its ts and
     every message whose thread_ts in any version is that ts, since pull stores its replies.
+    Each item keeps only the threads whose newest stored message is after its retention cutoff.
     """
-    if any(item.kind == "conversation" for item in items):
-        return set(versions)
-    parents = {item.ts for item in items}
+    activity: dict[str, MessageTs] | None = None
+    covered: set[str] = set()
+    for item in items:
+        stamps = set(versions) if item.kind == "conversation" else _thread_stamps(versions, item)
+        limit = retention_cutoff(item, settings, now)
+        if limit is not None:
+            activity = activity if activity is not None else thread_activity(versions)
+            stamps = {ts for ts in stamps if activity[ts] > limit}
+        covered |= stamps
+    return covered
+
+
+def _thread_stamps(versions: dict[str, list[Envelope]], item: TrackedItem) -> set[str]:
     return {
         ts
         for ts, lines in versions.items()
-        if ts in parents or any((env.object or {}).get("thread_ts") in parents for env in lines)
+        if ts == item.ts or any((env.object or {}).get("thread_ts") == item.ts for env in lines)
     }
