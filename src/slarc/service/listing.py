@@ -9,7 +9,14 @@ from slarc.config import Settings
 from slarc.domain.directory import ConversationKind, DirectoryView, conversation_kind
 from slarc.domain.envelope import Kind
 from slarc.domain.links import Selector
-from slarc.domain.tracking import DownloadState, ItemKey, TrackedItem, item_label
+from slarc.domain.retention import effective_retention, retention_source, retention_text
+from slarc.domain.tracking import (
+    DownloadState,
+    ItemKey,
+    TrackedItem,
+    item_label,
+    workspace_retention,
+)
 from slarc.ports import (
     ArchiveStore,
     DirectoryState,
@@ -47,7 +54,9 @@ DOWNLOAD_ORDER = (
 
 @dataclass(frozen=True)
 class ListRow:
-    """A tracked item; pending and skipped count the downloads its messages reference."""
+    """A tracked item; pending and skipped count the downloads its messages reference.
+    retention is the one in effect, which retention_from says is the item's own, its
+    workspace's, or neither, when the item keeps everything."""
 
     workspace: str
     conversation: str
@@ -57,6 +66,8 @@ class ListRow:
     pending: int
     skipped: int
     status: str
+    retention: str
+    retention_from: Literal["item", "workspace"] | None
 
 
 @dataclass(frozen=True)
@@ -78,7 +89,8 @@ class ListedDownload:
 class ArchiveListing:
     """pending and skipped count every outstanding download, avatars and emoji included, or in a
     list scoped by selectors, those the listed items reference. downloads lists those, saved or
-    not, only in a scoped list."""
+    not, only in a scoped list. retention gives each workspace's retention, by domain, for the
+    workspaces that have one."""
 
     archive: Path
     config_files: list[Path]
@@ -86,6 +98,7 @@ class ArchiveListing:
     pending: int
     skipped: int
     downloads: list[ListedDownload] = field(default_factory=list)
+    retention: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -129,6 +142,7 @@ def list_archive(
     rows = []
     downloads: list[ListedDownload] = []
     referenced: set[DownloadKey] = set()
+    settings_by_team = archive.workspace_settings()
     for item in _listed(archive, domains, selectors):
         if item.team_id not in views:
             views[item.team_id] = stored_directory(archive, item.team_id)
@@ -140,6 +154,7 @@ def list_archive(
             ):
                 targets.setdefault(target.key, target)
         referenced |= targets.keys()
+        workspace = workspace_retention(item.team_id, settings_by_team)
         row = ListRow(
             workspace=domains.get(item.team_id) or item.team_id,
             conversation=item_label(item, views[item.team_id]),
@@ -149,6 +164,8 @@ def list_archive(
             pending=len(targets.keys() & pending),
             skipped=len(targets.keys() & skipped),
             status=item.status,
+            retention=retention_text(effective_retention(item.retention, workspace)),
+            retention_from=retention_source(item.retention, workspace),
         )
         rows.append(row)
         if selectors:
@@ -168,8 +185,19 @@ def list_archive(
     )
     if selectors:
         pending, skipped = pending & referenced, skipped & referenced
+    retention = {
+        domains.get(team) or team: retention_text(setting.retention)
+        for team, setting in sorted(settings_by_team.items())
+        if setting.retention is not None
+    }
     return ArchiveListing(
-        settings.archive, list(settings.sources), rows, len(pending), len(skipped), downloads
+        settings.archive,
+        list(settings.sources),
+        rows,
+        len(pending),
+        len(skipped),
+        downloads,
+        retention,
     )
 
 

@@ -11,7 +11,7 @@ from slarc.adapters.duckdb_index import DuckDbQueryIndex
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.config import load_settings, read_global_config
 from slarc.domain.links import parse_selector
-from slarc.domain.tracking import DownloadState, TrackedItem
+from slarc.domain.tracking import DownloadState, TrackedItem, WorkspaceSetting
 from slarc.ports import Commit, SlarcError
 from slarc.service.listing import ArchiveListing, ListRow, list_archive, list_remote
 from tests.fakes import FakeArchiveLock, FakeConnector, FakeSlackGateway
@@ -156,6 +156,8 @@ def test_list_counts_messages_and_pending(
         pending=1,
         skipped=1,
         status="ok",
+        retention="forever",
+        retention_from=None,
     )
     wave = rows[(f"#all-naleid thread {WAVE_PARENT}", "thread")]
     assert (wave.messages, wave.last_pull, wave.pending, wave.skipped) == (4, LATER, 0, 1)
@@ -286,3 +288,20 @@ def test_list_remote_marks_tracked(store: DuckLakeArchiveStore) -> None:
         ("naleidworkspace", "D0CAD7JE1QR", "@Jim", "dm", True),
     ]
     assert {call[0] for call in gateway.calls} == {"auth.test", "conversations.list"}
+
+
+def test_list_shows_each_items_retention_and_where_it_comes_from(
+    archive: Path, ext_dir: Path, store: DuckLakeArchiveStore
+) -> None:
+    store.commit(Commit(settings=[WorkspaceSetting(team_id=RECORDED_TEAM, retention=30)]))
+    [jim] = [i for i in store.tracked_items().values() if i.channel.startswith("D")]
+    commit(store, tracked=[msgspec.structs.replace(jim, retention=90)])
+
+    listing = listing_of(archive, ext_dir, store)
+
+    rows = rows_by_item(listing)
+    own = rows[("@Jim", "conversation")]
+    assert (own.retention, own.retention_from) == ("90d", "item")
+    channel = rows[("#all-naleid", "conversation")]
+    assert (channel.retention, channel.retention_from) == ("30d", "workspace")
+    assert listing.retention == {"naleidworkspace": "30d"}

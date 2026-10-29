@@ -632,6 +632,9 @@ def _print_listing(listing: ArchiveListing, settings: Settings) -> None:
         f"unheard_pull_minutes = {settings.unheard_pull_minutes}, tz = {settings.tz or 'local'}",
         markup=False,
     )
+    if listing.retention:
+        kept = ", ".join(f"{name} {value}" for name, value in listing.retention.items())
+        out.print(f"Retention: {kept}", markup=False)
     if listing.rows:
         headers = [
             "Workspace",
@@ -642,6 +645,7 @@ def _print_listing(listing: ArchiveListing, settings: Settings) -> None:
             "Pending",
             "Skipped",
             "Status",
+            "Retention",
         ]
         rows: list[list[object]] = [
             [
@@ -653,6 +657,7 @@ def _print_listing(listing: ArchiveListing, settings: Settings) -> None:
                 f"{row.pending:,}",
                 f"{row.skipped:,}",
                 row.status,
+                f"{row.retention} (own)" if row.retention_from == "item" else row.retention,
             ]
             for row in listing.rows
         ]

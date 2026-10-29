@@ -5,6 +5,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+import msgspec
 import pytest
 from typer.testing import CliRunner
 
@@ -12,9 +13,10 @@ from slarc import bootstrap, cli
 from slarc.adapters.credentials import CompositeSource, KeyringSource
 from slarc.adapters.lake_store import DuckLakeArchiveStore
 from slarc.cli import app
-from slarc.ports import Session
+from slarc.domain.tracking import WorkspaceSetting
+from slarc.ports import Commit, Session
 from tests.fakes import FakeArchiveLock, FakeCredentialSource, FakeKeyring, FakeSlackGateway
-from tests.recorded_fixtures import recorded_lake
+from tests.recorded_fixtures import RECORDED_TEAM, recorded_lake
 from tests.service.pull_harness import NALEID, spike
 from tests.service.test_listing import AVATAR, GIPHY, leave_downloads_outstanding
 
@@ -138,6 +140,8 @@ def test_cli_list_format_jsonl_emits_one_item_per_line(archive: Path, tmp_path: 
         "pending",
         "skipped",
         "status",
+        "retention",
+        "retention_from",
     ]
     assert "Archive:" not in result.stdout
     assert "Downloads:" not in result.stdout
@@ -256,3 +260,22 @@ def test_cli_list_remote_takes_no_links(archive: Path, tmp_path: Path) -> None:
     assert (
         result.output.strip() == "slarc list --remote lists every conversation; it takes no links."
     )
+
+
+def test_cli_list_shows_retention(archive: Path, tmp_path: Path, ext_dir: Path) -> None:
+    store = DuckLakeArchiveStore(archive, ext_dir, FakeArchiveLock())
+    try:
+        store.commit(Commit(settings=[WorkspaceSetting(team_id=RECORDED_TEAM, retention=30)]))
+        [jim] = [i for i in store.tracked_items().values() if i.channel.startswith("D")]
+        store.commit(Commit(items=[msgspec.structs.replace(jim, retention="forever")]))
+    finally:
+        store.close()
+
+    result = invoke(tmp_path, "list")
+
+    assert result.exit_code == 0, result.output
+    assert "Retention: naleidworkspace 30d" in result.stdout
+    [jim_line] = [line for line in result.stdout.splitlines() if "@Jim" in line]
+    assert "forever (own)" in jim_line
+    [channel_line] = [line for line in result.stdout.splitlines() if "#all-naleid " in line]
+    assert "30d" in channel_line
