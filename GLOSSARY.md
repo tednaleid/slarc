@@ -52,6 +52,14 @@ _Avoid_: cleanup, garbage collection, vacuum (except for the database step of th
 The span of posting times a command limits messages to, from a start to an end, either of which may be open.
 _Avoid_: range, date range, period
 
+**Retention**:
+How long an archive keeps a message, counted from the newest message of its thread, or from the message itself when it is not in a thread. Set for a workspace and optionally for one tracked item; without one, an archive keeps everything. A pull reads nothing older than it.
+_Avoid_: TTL, expiration policy, max age
+
+**Expiry**:
+Removing from an archive the messages past their retention, with the files and images only they referenced. Tracking is unchanged. A message past its retention is expired.
+_Avoid_: purge, prune, cleanup, removal (which is what `rm` does)
+
 **Owning machine**:
 The one machine allowed to open an archive. Another machine must take ownership, once a synced folder has finished syncing, before it opens the archive.
 _Avoid_: host (except in messages naming it), owner (unqualified)
