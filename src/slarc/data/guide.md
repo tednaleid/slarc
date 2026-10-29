@@ -97,6 +97,9 @@ What the archive holds, one tracked conversation or thread per line:
 slarc list --format jsonl
 ```
 
+An item's `retention` (such as `30d`, or `forever`) says how long the archive keeps its threads:
+a thread with no message newer than that is removed, so the archive can hold less than Slack.
+
 Catch up on a conversation, or a whole workspace, since a date, as markdown with threads
 quoted under their parents:
 

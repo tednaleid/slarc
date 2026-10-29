@@ -28,6 +28,7 @@ slarc pull                                                                    # 
 slarc pull acme                                                               # refresh everything tracked in workspace acme
 slarc pull --full                                                             # re-read everything tracked, catching edits and deletes
 slarc pull acme --retry-skipped                                               # also try again the downloads skipped in acme
+slarc pull acme --retention 30d                                               # keep a thread in acme only while it has a message from the last 30 days
 slarc listen                                                                  # keep everything tracked current as Slack pushes changes, until Ctrl-C
 slarc list                                                                    # the archive, its config files and each tracked item
 slarc search "deploy" --in '#general'                                         # archived messages, newest first, with their Slack links
@@ -60,7 +61,7 @@ An archive is a DuckLake: Parquet data files plus a SQLite catalog, read and wri
 
 A command that only reads, such as `search` or `sql`, cannot checkpoint the catalog through its read-only connection, so it may leave an empty `-wal` file and a small `-shm` file beside the catalog; they are harmless and expected.
 
-The archive is read through slarc (`search`, `sql`, `export`) or through DuckDB, not with `rg` or `jq`, and it is not meant to be kept in git. Every pull commits in small steps, so a crash leaves exactly what was last committed. `slarc rm` deletes what only the removed items kept; the bytes are physically deleted when it exits, or by the next pull, rm or hour of listen that finds no other slarc command running.
+The archive is read through slarc (`search`, `sql`, `export`) or through DuckDB, not with `rg` or `jq`, and it is not meant to be kept in git. Every pull commits in small steps, so a crash leaves exactly what was last committed. `slarc rm` deletes what only the removed items kept; the bytes are physically deleted when it exits, or by the next pull, rm or hour of listen that finds no other slarc command running. A retention, set for a workspace with `slarc pull acme --retention 30d` or for one link the same way, makes every pull and every hour of listen remove the threads with no message that recent, with the files and images only they used, and pulls read nothing older.
 
 The first run downloads two DuckDB extensions (`ducklake` and `sqlite_scanner`, about 27 MB each) into `~/.cache/slarc/duckdb`. `just install` fetches them too, so a machine set up while online works offline afterwards.
 
