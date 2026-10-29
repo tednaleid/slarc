@@ -201,6 +201,8 @@ class _PullRun:
         self.progress: _ItemProgress | None = None
         self.threads_read: dict[str, int] = {}
         self.settings: dict[str, WorkspaceSetting] = {}
+        # The cutoff of the item being pulled; a thread read with nothing newer is not stored.
+        self.limit: str | None = None
         self.pulled = 0
         self.messages_new = 0
         self.not_visible = 0
@@ -373,9 +375,11 @@ class _PullRun:
             held = HeldConversation(self.uow.archive, team_id, item.channel)
             label = item_label(item, view)
             self.progress = _ItemProgress(self.reporter, label, report_start=False)
+            limit = retention_cutoff(item, self.settings, self.uow.clock.now())
             try:
-                self.writer.append_unknown(connection, reads[item.key], view)
-                self.writer.append_thread(held, item.ts or "", reads[item.key], view)
+                if not _expired(reads[item.key], limit):
+                    self.writer.append_unknown(connection, reads[item.key], view)
+                    self.writer.append_thread(held, item.ts or "", reads[item.key], view)
                 self._finish(connection, held, item, view)
             except CommitConflict as error:
                 self._unfinished(label, error)
@@ -472,6 +476,7 @@ class _PullRun:
         for replies from two days before the cutoff, to find active threads with older parents.
         """
         limit = retention_cutoff(item, self.settings, self.uow.clock.now())
+        self.limit = limit
         start = _later(item.since, limit)
         if item.backfill_complete:
             item = _backfill_for(item, start)
@@ -718,8 +723,9 @@ class _PullRun:
                 held.failed_threads.add(ts)
                 continue
             self._count_thread_read(held.team_id, channel, ts, reason)
-            self.writer.append_unknown(connection, messages, view)
-            self.writer.append_thread(held, ts, messages, view)
+            if not _expired(messages, self.limit):
+                self.writer.append_unknown(connection, messages, view)
+                self.writer.append_thread(held, ts, messages, view)
             self._report_progress()
         if page and parents:
             self._reach(oldest)
@@ -846,6 +852,11 @@ def _within(item: TrackedItem, stamps: set[str]) -> set[str]:
         if (item.since is None or MessageTs(ts) > item.since)
         and (item.until is None or MessageTs(ts) < item.until)
     }
+
+
+def _expired(messages: list[dict], limit: str | None) -> bool:
+    """Whether a thread read has no message newer than the cutoff, so expiry would remove it."""
+    return limit is not None and all(MessageTs(m["ts"]) <= limit for m in messages)
 
 
 def _later(ts: str | None, other: str | None) -> str | None:

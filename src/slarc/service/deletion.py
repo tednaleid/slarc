@@ -3,8 +3,10 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 from slarc.domain.directory import directory_image_url
+from slarc.domain.envelope import Envelope
 from slarc.domain.tracking import DownloadState, ItemKey, TrackedItem, WorkspaceSetting
 from slarc.ports import ArchiveStore, BlobStore, DownloadKey
 from slarc.service.downloads import image_urls
@@ -59,9 +61,15 @@ def plan_deletion(
     now: datetime,
     archive: ArchiveStore,
     blobs: BlobStore,
+    *,
+    sweep: bool,
 ) -> Deletion:
     """What the teams lose when tracked holds the items still tracked, under the retention in
-    effect at now."""
+    effect at now.
+
+    With sweep, every file and image no kept message references goes, as rm needs; without it,
+    only those the deleted messages referenced, so expiry leaves earlier avatars and the like.
+    """
     known = archive.downloads()
     deletions = [
         _team_deletion(
@@ -71,6 +79,7 @@ def plan_deletion(
             now,
             known,
             archive,
+            sweep,
         )
         for team in teams
     ]
@@ -112,8 +121,10 @@ def _team_deletion(
     now: datetime,
     known: dict[DownloadKey, DownloadState],
     archive: ArchiveStore,
+    sweep: bool,
 ) -> TeamDeletion:
-    """Message lines no item keeps, then the files and images no kept message line references.
+    """Message lines no item keeps, then the files and images no kept message line references:
+    any such, with sweep, or else only those the deleted lines referenced.
 
     Avatars and custom emoji images stay while anything in the workspace is tracked.
     """
@@ -121,6 +132,8 @@ def _team_deletion(
     lines = 0
     file_refs: set[str] = set()
     image_refs: set[str] = set()
+    dropped_files: set[str] = set()
+    dropped_images: set[str] = set()
     for channel in archive.channels(team):
         versions = message_versions(archive.message_lines(team, channel))
         held = [item for item in tracked if item.channel == channel]
@@ -130,21 +143,40 @@ def _team_deletion(
             stamps[channel] = uncovered
             lines += sum(len(versions[ts]) for ts in uncovered)
         for ts in covered:
-            for env in versions[ts]:
-                message = env.object or {}
-                file_refs.update(f["id"] for f in message.get("files") or [] if f.get("id"))
-                image_refs.update(image_urls(message))
+            _add_references(versions[ts], file_refs, image_refs)
+        for ts in uncovered:
+            _add_references(versions[ts], dropped_files, dropped_images)
     if tracked:
         image_refs |= _directory_images(team, archive)
-    files = set(archive.directory_state(team, "file")) - file_refs
-    images = set(archive.directory_state(team, "image")) - image_refs
+    stored_files = set(archive.directory_state(team, "file"))
+    stored_images = set(archive.directory_state(team, "image"))
+    if sweep:
+        dropped_files = stored_files | _download_targets(known, team, "file")
+        dropped_images = stored_images | _download_targets(known, team, "image")
+    unused_files = dropped_files - file_refs
+    unused_images = dropped_images - image_refs
     downloads = [
         key
         for key, state in known.items()
         if state.team_id == team
-        and state.target not in (file_refs if state.target_kind == "file" else image_refs)
+        and state.target in (unused_files if state.target_kind == "file" else unused_images)
     ]
+    files = unused_files & stored_files
+    images = unused_images & stored_images
     return TeamDeletion(team, not tracked, stamps, lines, files, images, downloads)
+
+
+def _download_targets(
+    known: dict[DownloadKey, DownloadState], team: str, kind: Literal["file", "image"]
+) -> set[str]:
+    return {s.target for s in known.values() if (s.team_id, s.target_kind) == (team, kind)}
+
+
+def _add_references(lines: list[Envelope], files: set[str], images: set[str]) -> None:
+    for env in lines:
+        message = env.object or {}
+        files.update(f["id"] for f in message.get("files") or [] if f.get("id"))
+        images.update(image_urls(message))
 
 
 def _directory_images(team: str, archive: ArchiveStore) -> set[str]:

@@ -135,11 +135,19 @@ def test_commit_threads_revisions_through_stale_copies():
     with uow:
         uow.commit([ITEM])
         uow.commit([ITEM])
-        uow.commit(unchanged=[ITEM])
+        uow.commit(unchanged=[archive.tracked[ITEM.key]])
 
     assert [change.items[0].revision for change in archive.commits[:2]] == [0, 1]
     assert archive.commits[2].unchanged[0].revision == 2
     assert archive.tracked[ITEM.key].revision == 2
+
+
+def test_unchanged_items_are_sent_as_read_so_a_stale_copy_conflicts():
+    uow, _ = recording_uow()
+    with uow:
+        uow.commit([ITEM])
+        with pytest.raises(CommitConflict):
+            uow.commit(unchanged=[ITEM])
 
 
 def test_commit_sends_changed_download_states_only():

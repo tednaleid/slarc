@@ -83,14 +83,15 @@ class UnitOfWork:
         required since then.
 
         Each item is sent with the revision this run last committed for its key, so a stale
-        copy of an item commits. Returns the download keys the commit dropped, which leave
-        run.downloads. On CommitConflict the run is put back as it was at the last commit,
-        and the conflict is raised.
+        copy of an item commits. Unchanged items are sent as given, since they are read just
+        before the commit to check nothing else changed them. Returns the download keys the
+        commit dropped, which leave run.downloads. On CommitConflict the run is put back as it
+        was at the last commit, and the conflict is raised.
         """
         committed_states = {_download_key(state): state for state in self._committed_downloads}
         change = Commit(
             items=[self._current(item) for item in items],
-            unchanged=[self._current(item) for item in unchanged],
+            unchanged=list(unchanged),
             downloads=[
                 state
                 for state in self.run.downloads

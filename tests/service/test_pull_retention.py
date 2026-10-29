@@ -270,3 +270,16 @@ def directory_images(h: Harness) -> set[str]:
     """Avatar and custom emoji images, which belong to the workspace and never expire."""
     avatars = {user["profile"]["image_512"] for user in h.gateway.users_list}
     return avatars | set(h.gateway.emoji_map.values())
+
+
+def test_a_thread_item_past_its_cutoff_is_not_stored_again(h: Harness):
+    h.gateway.conversations[CHANNEL] = [*thread(OCT_1, ts_on(2, 9)), message(OCT_18)]
+    h.pull(f"{BASE}/p{OCT_1.replace('.', '')}")
+    h.set_workspace_retention(7)
+    h.pull()
+    assert stored(h) == set()
+
+    h.pull()
+
+    counts = h.last_run().counts
+    assert (counts.get("lines_appended", 0), counts.get("messages_expired", 0)) == (0, 0)

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+import msgspec
 import pytest
 
 from slarc import __version__
@@ -19,6 +20,7 @@ from slarc.ports import (
     SearchHit,
     SlarcError,
 )
+from slarc.service import remove
 from slarc.service.remove import Removal, apply_removal, plan_removal
 from slarc.unit_of_work import UnitOfWork
 from tests.service.pull_harness import (
@@ -558,3 +560,28 @@ def test_rm_recomputes_when_a_pull_starts_tracking_in_the_team(
     assert keys(h.tracked()) == [item("thread", ts=PARENT_TS)]
     assert stored(h, TEAM, CHANNEL) == set(THREAD_TS)
     assert file_ids(h) == {THREAD_FILE}
+
+
+def test_rm_retries_when_a_retention_changes_meanwhile(h: Harness, monkeypatch: pytest.MonkeyPatch):
+    pull_and_download(h, BASE, SECOND_LINK)
+    h.archive.commit(Commit(settings=[WorkspaceSetting(team_id=TEAM, retention=1)]))
+    h.clock.advance(3 * 86400)
+    planned = remove.plan_deletion
+    calls = []
+
+    def keep_everything_first(*args, **kwargs):
+        calls.append(1)
+        deletion = planned(*args, **kwargs)
+        if len(calls) == 1:
+            with h.archive.elsewhere():
+                held = h.archive.workspace_settings()[TEAM]
+                h.archive.commit(Commit(settings=[msgspec.structs.replace(held, retention=None)]))
+        return deletion
+
+    removal = plan(h, SECOND_LINK)
+    monkeypatch.setattr(remove, "plan_deletion", keep_everything_first)
+
+    apply(h, removal, SECOND_LINK)
+
+    assert len(calls) == 2
+    assert stored(h, TEAM, CHANNEL) != set()

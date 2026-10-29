@@ -96,6 +96,7 @@ def apply_removal(removal: Removal, uow: UnitOfWork, blobs: BlobStore) -> Remova
     uow.run.teams = list(removal.teams)
     for _ in range(REMOVAL_ATTEMPTS):
         tracked = archive.tracked_items()
+        settings = archive.workspace_settings()
         current, deletion = _plan(named, removal.teams, tracked, uow.clock.now(), archive, blobs)
         kept = [
             item
@@ -108,6 +109,7 @@ def apply_removal(removal: Removal, uow: UnitOfWork, blobs: BlobStore) -> Remova
                 [msgspec.structs.replace(item, status="removed") for item in current.items],
                 unchanged=kept,
                 complete_teams=current.teams,
+                unchanged_settings=[settings[t] for t in current.teams if t in settings],
             )
         except CommitConflict:
             continue
@@ -133,7 +135,7 @@ def _plan(
     items = [tracked[item.key] for item in named if item.key in tracked]
     remaining = {key: item for key, item in tracked.items() if key not in names}
     settings = archive.workspace_settings()
-    deletion = plan_deletion(teams, remaining, settings, now, archive, blobs)
+    deletion = plan_deletion(teams, remaining, settings, now, archive, blobs, sweep=True)
     removal = Removal(
         items=items,
         already_removed=[item for item in named if item.key not in tracked],

@@ -2,6 +2,7 @@
 # ABOUTME: used, in one commit that conflicts if a tracked item or workspace setting changed.
 from dataclasses import dataclass
 
+from slarc.domain.tracking import retention_cutoff
 from slarc.ports import BlobStore, CommitConflict, Reporter
 from slarc.service.deletion import plan_deletion, stage
 from slarc.service.remove import REMOVAL_ATTEMPTS
@@ -24,7 +25,8 @@ class Expiry:
 
 
 def expire(uow: UnitOfWork, teams: list[str], blobs: BlobStore, reporter: Reporter) -> Expiry:
-    """Commits the expiry of the teams that still have tracked items, and counts it in the run.
+    """Commits the expiry of the teams with a tracked item under a retention, and counts it in
+    the run.
 
     Each attempt reads the tracked items and settings afresh and commits only if none of the
     teams' items or settings changed meanwhile; after REMOVAL_ATTEMPTS conflicts it warns and
@@ -33,11 +35,20 @@ def expire(uow: UnitOfWork, teams: list[str], blobs: BlobStore, reporter: Report
     """
     archive = uow.archive
     for _ in range(REMOVAL_ATTEMPTS):
+        now = uow.clock.now()
         tracked = archive.tracked_items()
-        live = [team for team in teams if any(i.team_id == team for i in tracked.values())]
-        held = {key: item for key, item in tracked.items() if item.team_id in live}
         settings = archive.workspace_settings()
-        deletion = plan_deletion(live, held, settings, uow.clock.now(), archive, blobs)
+        live = [
+            team
+            for team in teams
+            if any(
+                retention_cutoff(item, settings, now) is not None
+                for item in tracked.values()
+                if item.team_id == team
+            )
+        ]
+        held = {key: item for key, item in tracked.items() if item.team_id in live}
+        deletion = plan_deletion(live, held, settings, now, archive, blobs, sweep=False)
         stage(deletion, archive)
         try:
             uow.commit(

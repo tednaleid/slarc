@@ -9,6 +9,7 @@ from slarc.domain.tracking import DownloadState
 from slarc.ports import Commit
 from slarc.service import expiry
 from slarc.service.expiry import Expiry, expire
+from slarc.service.pull import PullOptions
 from slarc.unit_of_work import UnitOfWork
 from tests.service.pull_harness import (
     BASE,
@@ -243,3 +244,54 @@ def test_expiry_never_wipes_a_workspace_with_nothing_tracked(h: Harness):
     run_expiry(h)
 
     assert content(h) == before
+
+
+def change_every_avatar(h: Harness) -> None:
+    h.gateway.users_list = [
+        {**user, "profile": {**user["profile"], "image_512": f"https://a.example/{user['id']}.png"}}
+        for user in h.gateway.users_list
+    ]
+
+
+def test_a_pull_without_retention_keeps_an_earlier_avatar(h: Harness):
+    pull_and_download(h, BASE)
+    images_before = image_ids(h)
+    change_every_avatar(h)
+    h.clock.advance(2 * DAY)
+
+    h.pull(options=PullOptions(full=True))
+
+    assert images_before <= image_ids(h)
+    assert avatar(ME) in image_ids(h)
+    assert not [info for info in h.reporter.infos if info.startswith("Expired")]
+
+
+def test_expiry_keeps_an_earlier_avatar_under_a_retention(h: Harness):
+    pull_and_download(h, BASE)
+    assert avatar(ME) in image_ids(h)
+    h.set_workspace_retention(1)
+    change_every_avatar(h)
+    h.clock.advance(2 * DAY)
+
+    h.pull(options=PullOptions(full=True))
+
+    assert stored(h, TEAM, CHANNEL) == set()
+    assert avatar(ME) in image_ids(h)
+
+
+def test_expiry_in_a_run_that_committed_the_items_uses_fresh_revisions(h: Harness):
+    h.pull(SECOND_LINK)
+    h.set_workspace_retention(1)
+    h.clock.advance(5 * DAY)
+
+    uow = UnitOfWork(h.archive, h.blobs, h.clock, "pull", [], __version__)
+    with uow:
+        item = h.archive.tracked_items()[SECOND_KEY]
+        uow.commit([msgspec.structs.replace(item, last_pull_at="2026-10-24T00:00:00Z")])
+        with h.archive.elsewhere():
+            moved = h.archive.tracked_items()[SECOND_KEY]
+            h.archive.commit(Commit(items=[msgspec.structs.replace(moved, retention=2)]))
+        result = expire(uow, [TEAM], h.blobs, h.reporter)
+
+    assert result.messages == 3
+    assert h.reporter.warnings == []
