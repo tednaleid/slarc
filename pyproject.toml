@@ -39,6 +39,10 @@ dev = [
 requires = ["uv_build>=0.13,<0.14"]
 build-backend = "uv_build"
 
+# Supply-chain guard: resolve only to versions published at least 7 days ago.
+[tool.uv]
+exclude-newer = "7 days"
+
 # The Homebrew formula installs the locked dependency versions from the sdist.
 [tool.uv.build-backend]
 source-include = ["uv.lock"]
